@@ -2,10 +2,13 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 
 from app.models import (
     BookProgressResponse,
     DueReviewsResponse,
+    ExportFullBookRequest,
+    ExportFullBookResponse,
     ImportBookWordsResponse,
     PrepareJobRequest,
     PrepareJobResponse,
@@ -16,7 +19,9 @@ from app.models import (
 )
 from app.repositories import get_book_progress, import_book_words_csv
 from app.services import (
+    ExportNotReadyError,
     ReviewConflictError,
+    export_full_book_anki,
     get_due_reviews,
     prepare_book_words,
     review_card,
@@ -85,3 +90,16 @@ def create_card_review(
 @router.get("/reviews/due")
 def reviews_due(date: date) -> DueReviewsResponse:
     return get_due_reviews(date)
+
+
+@router.post("/export/anki/full-book")
+def export_anki_full_book(
+    request: ExportFullBookRequest,
+) -> ExportFullBookResponse:
+    try:
+        return export_full_book_anki(request)
+    except ExportNotReadyError as error:
+        return JSONResponse(
+            status_code=409,
+            content=error.readiness.model_dump(),
+        )

@@ -84,3 +84,19 @@ class DueReviewsResponse(BaseModel):
     date: Date
     total: int
     cards: list[StudyCardResponse]
+
+
+class ExportFullBookRequest(BaseModel):
+    deckName: str
+    includeChineseNote: bool = True
+
+
+class ExportReadinessError(BaseModel):
+    totalWords: int
+    preparedWords: int
+    missingWords: int
+
+
+class ExportFullBookResponse(BaseModel):
+    downloadUrl: str
+    cardCount: int

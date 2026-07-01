@@ -8,6 +8,9 @@ from app.db import connect
 from app.enrichment import FallbackEnrichmentProvider
 from app.models import (
     DueReviewsResponse,
+    ExportFullBookRequest,
+    ExportFullBookResponse,
+    ExportReadinessError,
     PrepareJobRequest,
     PrepareJobResponse,
     ReviewCardRequest,
@@ -23,6 +26,12 @@ from app.scheduling import transition
 
 class ReviewConflictError(ValueError):
     pass
+
+
+class ExportNotReadyError(ValueError):
+    def __init__(self, readiness: ExportReadinessError):
+        super().__init__("Full book export is not ready")
+        self.readiness = readiness
 
 
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
@@ -288,6 +297,22 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
     )
 
 
+def export_full_book_anki(
+    request: ExportFullBookRequest,
+) -> ExportFullBookResponse:
+    with connect() as connection:
+        readiness = _get_full_book_export_readiness(connection)
+        if readiness.totalWords == 0 or readiness.missingWords > 0:
+            raise ExportNotReadyError(readiness)
+
+        card_count = _get_full_book_export_card_count(connection)
+
+    return ExportFullBookResponse(
+        downloadUrl=f"/api/export/anki/files/{_slugify_deck_name(request.deckName)}.apkg",
+        cardCount=card_count,
+    )
+
+
 def _upsert_word(
     connection,
     word_text: str,
@@ -323,6 +348,52 @@ def _word_card_count(connection, word_id: str) -> int:
         (word_id,),
     ).fetchone()
     return row["total"]
+
+
+def _get_full_book_export_readiness(connection) -> ExportReadinessError:
+    total_row = connection.execute(
+        "select count(*) as total from book_words"
+    ).fetchone()
+    prepared_row = connection.execute(
+        """
+        select count(distinct book_words.normalized_text) as total
+        from book_words
+        join words on words.normalized_text = book_words.normalized_text
+        join entries on entries.word_id = words.id
+        join cards on cards.entry_id = entries.id
+        """
+    ).fetchone()
+
+    total_words = total_row["total"]
+    prepared_words = prepared_row["total"]
+    return ExportReadinessError(
+        totalWords=total_words,
+        preparedWords=prepared_words,
+        missingWords=max(total_words - prepared_words, 0),
+    )
+
+
+def _get_full_book_export_card_count(connection) -> int:
+    row = connection.execute(
+        """
+        select count(distinct cards.id) as total
+        from book_words
+        join words on words.normalized_text = book_words.normalized_text
+        join entries on entries.word_id = words.id
+        join cards on cards.entry_id = entries.id
+        """
+    ).fetchone()
+    return row["total"]
+
+
+def _slugify_deck_name(deck_name: str) -> str:
+    slug = "".join(
+        character.lower() if character.isalnum() else "-"
+        for character in deck_name.strip()
+    ).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "full-book"
 
 
 def _get_due_study_cards(
