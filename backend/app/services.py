@@ -356,16 +356,25 @@ def _get_full_book_export_readiness(connection) -> ExportReadinessError:
     ).fetchone()
     prepared_row = connection.execute(
         """
-        select count(distinct book_words.normalized_text) as total
+        select sum(
+            case
+                when exists (
+                    select 1
+                    from words
+                    join entries on entries.word_id = words.id
+                    join cards on cards.entry_id = entries.id
+                    where words.normalized_text = book_words.normalized_text
+                )
+                then 1
+                else 0
+            end
+        ) as total
         from book_words
-        join words on words.normalized_text = book_words.normalized_text
-        join entries on entries.word_id = words.id
-        join cards on cards.entry_id = entries.id
         """
     ).fetchone()
 
     total_words = total_row["total"]
-    prepared_words = prepared_row["total"]
+    prepared_words = prepared_row["total"] or 0
     return ExportReadinessError(
         totalWords=total_words,
         preparedWords=prepared_words,
