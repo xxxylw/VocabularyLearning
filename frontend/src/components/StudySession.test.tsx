@@ -57,4 +57,36 @@ describe('StudySession', () => {
 
     expect(onReview).toHaveBeenCalledWith('card-1', 'known');
   });
+
+  it('reveals the card back when Space is pressed', async () => {
+    const user = userEvent.setup();
+    render(<StudySession cards={cards} onReview={vi.fn()} onExit={vi.fn()} />);
+
+    await user.keyboard('[Space]');
+
+    expect(screen.getByText(/showing great attention to detail/i)).toBeInTheDocument();
+    expect(screen.getByText(/researcher kept meticulous notes/i)).toBeInTheDocument();
+    expect(screen.getByText(cards[0].chineseNote!)).toBeInTheDocument();
+  });
+
+  it('submits known with the 1 key after reveal', async () => {
+    const user = userEvent.setup();
+    const onReview = vi.fn().mockResolvedValue(undefined);
+    render(<StudySession cards={cards} onReview={onReview} onExit={vi.fn()} />);
+
+    await user.keyboard('[Space]');
+    await user.keyboard('1');
+
+    expect(onReview).toHaveBeenCalledWith('card-1', 'known');
+  });
+
+  it('does not submit a rating shortcut before reveal', async () => {
+    const user = userEvent.setup();
+    const onReview = vi.fn().mockResolvedValue(undefined);
+    render(<StudySession cards={cards} onReview={onReview} onExit={vi.fn()} />);
+
+    await user.keyboard('1');
+
+    expect(onReview).not.toHaveBeenCalled();
+  });
 });

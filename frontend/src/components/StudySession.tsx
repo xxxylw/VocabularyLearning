@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StudyCard } from '../api';
 import type { ReviewRating } from '../api';
 
@@ -19,8 +19,69 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
   const [isRevealed, setIsRevealed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
 
   const card = cards[currentIndex];
+
+  const handleRating = useCallback(
+    async (rating: ReviewRating) => {
+      if (!card || submittingRef.current) {
+        return;
+      }
+
+      submittingRef.current = true;
+      setIsSubmitting(true);
+      setError(null);
+
+      try {
+        await onReview(card.cardId, rating);
+        setCurrentIndex((index) => index + 1);
+        setIsRevealed(false);
+      } catch {
+        setError('The review did not save. Try that rating again.');
+      } finally {
+        submittingRef.current = false;
+        setIsSubmitting(false);
+      }
+    },
+    [card, onReview]
+  );
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!card) {
+        return;
+      }
+
+      if (!isRevealed && (event.key === ' ' || event.code === 'Space')) {
+        event.preventDefault();
+        setIsRevealed(true);
+        return;
+      }
+
+      if (!isRevealed || submittingRef.current) {
+        return;
+      }
+
+      const shortcutRatings: Record<string, ReviewRating> = {
+        '1': 'known',
+        '2': 'uncertain',
+        '3': 'unknown'
+      };
+      const rating = shortcutRatings[event.key];
+
+      if (rating) {
+        event.preventDefault();
+        void handleRating(rating);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [card, handleRating, isRevealed]);
 
   if (!card) {
     return (
@@ -39,23 +100,12 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
 
   const primaryExample = card.examples.find((example) => example.isPrimary) ?? card.examples[0];
 
-  async function handleRating(rating: ReviewRating) {
-    if (!card) {
+  async function handleRatingClick(rating: ReviewRating) {
+    if (isSubmitting) {
       return;
     }
 
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      await onReview(card.cardId, rating);
-      setCurrentIndex((index) => index + 1);
-      setIsRevealed(false);
-    } catch {
-      setError('The review did not save. Try that rating again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    await handleRating(rating);
   }
 
   return (
@@ -103,7 +153,7 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
                   className={`rating-button rating-${item.rating}`}
                   type="button"
                   key={item.rating}
-                  onClick={() => void handleRating(item.rating)}
+                  onClick={() => void handleRatingClick(item.rating)}
                   disabled={isSubmitting}
                 >
                   {item.label}
