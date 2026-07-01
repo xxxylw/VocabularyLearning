@@ -16,6 +16,11 @@ export type TodaySession = {
   cards: StudyCard[];
 };
 
+export type BookProgress = {
+  totalWords: number;
+  nextSequenceIndex: number | null;
+};
+
 export type ExportResult =
   | { status: 'ready'; downloadUrl: string; cardCount: number }
   | { status: 'missing'; totalWords: number; preparedWords: number; missingWords: number };
@@ -51,6 +56,30 @@ async function postJson<T>(url: string, body: unknown, options: PostJsonOptions 
     return JSON.parse(bodyText) as T;
   } catch {
     throw new Error(`POST ${url} returned an invalid JSON response`);
+  }
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    const errorBody = await readResponseBody(response);
+    const statusText = response.statusText ? ` ${response.statusText}` : '';
+    const detail = errorBody ? `: ${errorBody}` : '';
+
+    throw new Error(`GET ${url} failed with ${response.status}${statusText}${detail}`);
+  }
+
+  const bodyText = await response.text();
+
+  if (!bodyText) {
+    return undefined as T;
+  }
+
+  try {
+    return JSON.parse(bodyText) as T;
+  } catch {
+    throw new Error(`GET ${url} returned an invalid JSON response`);
   }
 }
 
@@ -98,6 +127,10 @@ export function startTodaySession(dailyNewWordTarget = 20): Promise<TodaySession
   return postJson<TodaySession>('/api/study/today/start', {
     dailyNewWordTarget
   });
+}
+
+export function getBookProgress(): Promise<BookProgress> {
+  return getJson<BookProgress>('/api/book-words/progress');
 }
 
 export function reviewCard(cardId: string, rating: ReviewRating): Promise<unknown> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exportFullBook, reviewCard, startTodaySession } from './api';
+import { exportFullBook, getBookProgress, reviewCard, startTodaySession } from './api';
 
 describe('api', () => {
   afterEach(() => {
@@ -37,6 +37,18 @@ describe('api', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dailyNewWordTarget: 12 })
     });
+  });
+
+  it('loads book progress', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({ totalWords: 0, nextSequenceIndex: null }))
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getBookProgress()).resolves.toEqual({ totalWords: 0, nextSequenceIndex: null });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/book-words/progress');
   });
 
   it('reviews a card with ISO reviewedAt and local YYYY-MM-DD reviewedDate', async () => {

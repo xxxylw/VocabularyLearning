@@ -215,10 +215,20 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
 
 def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
     study_date = request.date or date.today()
-    cards = _get_due_review_cards(study_date) + _get_due_new_cards(
-        study_date,
-        request.dailyNewWordTarget,
-    )
+    review_cards = _get_due_review_cards(study_date)
+    new_cards = _get_due_new_cards(study_date, request.dailyNewWordTarget)
+    if len(new_cards) < request.dailyNewWordTarget:
+        prepare_book_words(
+            PrepareJobRequest(
+                scope="next",
+                count=request.dailyNewWordTarget - len(new_cards),
+                maxSensesPerWord=5,
+                overwriteExisting=False,
+            )
+        )
+        new_cards = _get_due_new_cards(study_date, request.dailyNewWordTarget)
+
+    cards = review_cards + new_cards
     return TodaySessionResponse(totalCards=len(cards), cards=cards)
 
 

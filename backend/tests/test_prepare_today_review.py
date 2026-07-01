@@ -286,6 +286,33 @@ def test_today_session_combines_ready_cards_and_records_known_review(
     assert review["nextDueAt"] == "2026-07-02"
 
 
+def test_today_session_prepares_next_book_words_when_no_new_cards_exist(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n2,decline\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": "2026-07-01", "dailyNewWordTarget": 2},
+    ).json()
+
+    assert session["totalCards"] == 2
+    assert [card["word"] for card in session["cards"]] == ["charge", "decline"]
+    assert _count_rows("prepare_jobs") == 1
+
+
 def test_duplicate_same_day_review_returns_conflict_without_mutation(
     tmp_path, monkeypatch
 ):
