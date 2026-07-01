@@ -20,14 +20,20 @@ export type ExportResult =
   | { status: 'ready'; downloadUrl: string; cardCount: number }
   | { status: 'missing'; totalWords: number; preparedWords: number; missingWords: number };
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+type PostJsonOptions = {
+  allowConflictData?: boolean;
+};
+
+async function postJson<T>(url: string, body: unknown, options: PostJsonOptions = {}): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
 
-  if (!response.ok && response.status !== 409) {
+  const canReadConflictAsData = options.allowConflictData === true && response.status === 409;
+
+  if (!response.ok && !canReadConflictAsData) {
     const errorBody = await readResponseBody(response);
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
@@ -111,6 +117,8 @@ export async function exportFullBook(): Promise<ExportResult> {
   >('/api/export/anki/full-book', {
     deckName: 'Vocabulary Learning Full Book',
     includeChineseNote: true
+  }, {
+    allowConflictData: true
   });
 
   if ('downloadUrl' in data) {

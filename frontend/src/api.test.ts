@@ -77,4 +77,42 @@ describe('api', () => {
       'POST /api/study/today/start failed with 500 Internal Server Error: upstream unavailable'
     );
   });
+
+  it('rejects review conflicts so unsaved cards do not advance', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: () => Promise.resolve(JSON.stringify({ message: 'Review already exists for this card today' }))
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(reviewCard('card-1', 'known')).rejects.toThrow(
+      'POST /api/cards/card-1/reviews failed with 409 Conflict: Review already exists for this card today'
+    );
+  });
+
+  it('resolves export readiness data from a 409 response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            totalWords: 100,
+            preparedWords: 72,
+            missingWords: 28
+          })
+        )
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(exportFullBook()).resolves.toEqual({
+      status: 'missing',
+      totalWords: 100,
+      preparedWords: 72,
+      missingWords: 28
+    });
+  });
 });
