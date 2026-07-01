@@ -48,6 +48,12 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 5. Confirm the review schedule advances, for example by checking that the review response moves the card to the next stage and sets a later `nextDueAt`.
 6. Confirm full-book export readiness with `POST /api/export/anki/full-book`; it should report missing words until all imported book words are prepared.
 
+## Verification
+
+- Backend: `cd backend; .venv/Scripts/python.exe -m pytest -v` -> 18 passed, 1 existing warning
+- Frontend: `cd frontend; pnpm test` -> 10 passed
+- Frontend: `cd frontend; pnpm build` -> passed
+
 ## Current MVP Limitations
 
 - Enrichment uses the local fallback provider only; Oxford, API, and AI providers are not connected yet.
