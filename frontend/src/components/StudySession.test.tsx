@@ -18,7 +18,7 @@ const cards: StudyCard[] = [
         isPrimary: true
       }
     ],
-    chineseNote: '中文备注：费用；收费。',
+    chineseNote: '中文备注：仔细；一丝不苟。',
     queueType: 'new'
   }
 ];
@@ -41,7 +41,7 @@ describe('StudySession', () => {
 
     expect(screen.getByText(/showing great attention to detail/i)).toBeInTheDocument();
     expect(screen.getByText(/researcher kept meticulous notes/i)).toBeInTheDocument();
-    expect(screen.getByText(/中文备注：费用；收费。/)).toBeInTheDocument();
+    expect(screen.getByText('中文备注：仔细；一丝不苟。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^known$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^uncertain$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^unknown$/i })).toBeInTheDocument();
@@ -78,6 +78,28 @@ describe('StudySession', () => {
     await user.keyboard('1');
 
     expect(onReview).toHaveBeenCalledWith('card-1', 'known');
+  });
+
+  it('submits uncertain with the 2 key after reveal', async () => {
+    const user = userEvent.setup();
+    const onReview = vi.fn().mockResolvedValue(undefined);
+    render(<StudySession cards={cards} onReview={onReview} onExit={vi.fn()} />);
+
+    await user.keyboard('[Space]');
+    await user.keyboard('2');
+
+    expect(onReview).toHaveBeenCalledWith('card-1', 'uncertain');
+  });
+
+  it('submits unknown with the 3 key after reveal', async () => {
+    const user = userEvent.setup();
+    const onReview = vi.fn().mockResolvedValue(undefined);
+    render(<StudySession cards={cards} onReview={onReview} onExit={vi.fn()} />);
+
+    await user.keyboard('[Space]');
+    await user.keyboard('3');
+
+    expect(onReview).toHaveBeenCalledWith('card-1', 'unknown');
   });
 
   it('does not submit a rating shortcut before reveal', async () => {

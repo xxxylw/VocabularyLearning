@@ -9,9 +9,9 @@ type StudySessionProps = {
 };
 
 const ratingLabels: Array<{ rating: ReviewRating; label: string }> = [
-  { rating: 'unknown', label: 'Unknown' },
+  { rating: 'known', label: 'Known' },
   { rating: 'uncertain', label: 'Uncertain' },
-  { rating: 'known', label: 'Known' }
+  { rating: 'unknown', label: 'Unknown' }
 ];
 
 export function StudySession({ cards, onReview, onExit }: StudySessionProps) {

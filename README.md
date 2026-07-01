@@ -1,6 +1,6 @@
 # VocabularyLearning
 
-VocabularyLearning is an MVP for turning a vocabulary book word list into study cards. The backend imports `book_words.csv`, prepares deterministic fallback-enriched entries and cards, schedules reviews, and reports full-book Anki export readiness. The frontend provides a local Today cards study flow and export readiness action.
+VocabularyLearning is an MVP for turning a vocabulary book word list into study cards. The backend imports `book_words.csv`, prepares deterministic fallback-enriched entries and cards, schedules reviews, and generates a full-book Anki `.apkg`. The frontend provides a local Today cards study flow and export action.
 
 ## Prerequisites
 
@@ -47,11 +47,12 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 4. Reveal a card and mark it `Known`.
 5. Confirm the review schedule advances, for example by checking that the review response moves the card to the next stage and sets a later `nextDueAt`.
 6. Confirm full-book export readiness with `POST /api/export/anki/full-book`; it should report missing words until all imported book words are prepared.
+7. After all imported book words are prepared, use the returned download URL to download the generated `.apkg`.
 
 ## Verification
 
 - Backend: `cd backend; .venv/Scripts/python.exe -m pytest -v` -> 18 passed, 1 existing warning
-- Frontend: `cd frontend; pnpm test` -> 10 passed
+- Frontend: `cd frontend; pnpm test` -> 15 passed
 - Frontend: `cd frontend; pnpm build` -> passed
 - Backend local server smoke: started on `http://127.0.0.1:8000`; `GET /api/health` returned `{ "ok": true, "version": "0.1.0" }`.
 - Frontend local server smoke: running on `http://localhost:5173`.
@@ -61,5 +62,5 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 ## Current MVP Limitations
 
 - Enrichment uses the local fallback provider only; Oxford, API, and AI providers are not connected yet.
-- The full-book export endpoint returns readiness data and a deterministic download URL; actual `genanki` file generation can be refined later if not implemented.
+- The full-book export endpoint generates a local `.apkg` with `genanki`.
 - The PDF OCR pipeline is not implemented yet. Use `book_words.csv` as the source input for local smoke testing.
