@@ -68,6 +68,7 @@ class TodaySessionResponse(BaseModel):
 class ReviewCardRequest(BaseModel):
     rating: Literal["known", "uncertain", "unknown"]
     reviewedAt: datetime
+    reviewedDate: Date | None = None
 
 
 class ReviewCardResponse(BaseModel):

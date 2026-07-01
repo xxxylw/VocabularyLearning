@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.repositories import get_book_progress, import_book_words_csv
 from app.services import (
+    ReviewConflictError,
     get_due_reviews,
     prepare_book_words,
     review_card,
@@ -73,6 +74,8 @@ def create_card_review(
 ) -> ReviewCardResponse:
     try:
         return review_card(card_id, request)
+    except ReviewConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:

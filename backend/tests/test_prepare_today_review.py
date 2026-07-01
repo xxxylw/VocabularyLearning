@@ -274,12 +274,150 @@ def test_today_session_combines_ready_cards_and_records_known_review(
 
     review = client.post(
         f"/api/cards/{card['cardId']}/reviews",
-        json={"rating": "known", "reviewedAt": "2026-07-01T09:00:00+08:00"},
+        json={
+            "rating": "known",
+            "reviewedAt": "2026-07-01T09:00:00+08:00",
+            "reviewedDate": "2026-07-01",
+        },
     ).json()
 
     assert review["previousStage"] == 0
     assert review["nextStage"] == 1
     assert review["nextDueAt"] == "2026-07-02"
+
+
+def test_duplicate_same_day_review_returns_conflict_without_mutation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 5},
+    )
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+    ).json()
+    card_id = session["cards"][0]["cardId"]
+    review_payload = {
+        "rating": "known",
+        "reviewedAt": "2026-07-01T09:00:00+08:00",
+        "reviewedDate": "2026-07-01",
+    }
+
+    first_review = client.post(
+        f"/api/cards/{card_id}/reviews",
+        json=review_payload,
+    )
+    second_review = client.post(
+        f"/api/cards/{card_id}/reviews",
+        json=review_payload,
+    )
+
+    assert first_review.status_code == 200
+    assert first_review.json()["previousStage"] == 0
+    assert first_review.json()["nextStage"] == 1
+    assert second_review.status_code == 409
+    assert _card_stage(card_id) == 1
+    assert _count_reviews(card_id) == 1
+
+
+def test_reviewed_date_controls_scheduling_date(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 5},
+    )
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+    ).json()
+    card_id = session["cards"][0]["cardId"]
+
+    review = client.post(
+        f"/api/cards/{card_id}/reviews",
+        json={
+            "rating": "known",
+            "reviewedAt": "2026-06-30T16:30:00+00:00",
+            "reviewedDate": "2026-07-01",
+        },
+    ).json()
+
+    assert review["nextDueAt"] == "2026-07-02"
+
+
+def test_today_session_limits_new_cards_but_includes_all_due_reviews(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n2,decline\n3,appeal\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 3, "maxSensesPerWord": 5},
+    )
+
+    with connect() as connection:
+        card_ids = [
+            row["id"]
+            for row in connection.execute(
+                "select id from cards order by created_on, id"
+            ).fetchall()
+        ]
+        connection.executemany(
+            """
+            update cards
+            set stage = 1,
+                due_at = '2026-07-01',
+                last_reviewed_at = '2026-06-30T09:00:00+08:00'
+            where id = ?
+            """,
+            [(card_ids[0],), (card_ids[1],)],
+        )
+
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+    ).json()
+
+    queue_types = [card["queueType"] for card in session["cards"]]
+    assert session["totalCards"] == 3
+    assert queue_types.count("review") == 2
+    assert queue_types.count("new") == 1
 
 
 def test_due_reviews_returns_cards_due_on_or_before_date(tmp_path, monkeypatch):
@@ -307,7 +445,11 @@ def test_due_reviews_returns_cards_due_on_or_before_date(tmp_path, monkeypatch):
     card = session["cards"][0]
     client.post(
         f"/api/cards/{card['cardId']}/reviews",
-        json={"rating": "known", "reviewedAt": "2026-07-01T09:00:00+08:00"},
+        json={
+            "rating": "known",
+            "reviewedAt": "2026-07-01T09:00:00+08:00",
+            "reviewedDate": "2026-07-01",
+        },
     )
 
     response = client.get("/api/reviews/due?date=2026-07-02")
@@ -334,6 +476,24 @@ def _count_rows(table_name: str) -> int:
             f"select count(*) as total from {table_name}"
         ).fetchone()
     return row["total"]
+
+
+def _count_reviews(card_id: str) -> int:
+    with connect() as connection:
+        row = connection.execute(
+            "select count(*) as total from reviews where card_id = ?",
+            (card_id,),
+        ).fetchone()
+    return row["total"]
+
+
+def _card_stage(card_id: str) -> int:
+    with connect() as connection:
+        row = connection.execute(
+            "select stage from cards where id = ?",
+            (card_id,),
+        ).fetchone()
+    return row["stage"]
 
 
 def _count_prepared_graph_rows() -> int:

@@ -21,6 +21,10 @@ from app.repositories import normalize_word
 from app.scheduling import transition
 
 
+class ReviewConflictError(ValueError):
+    pass
+
+
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     if request.scope != "next":
         raise ValueError("Only scope='next' is supported")
@@ -198,7 +202,10 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
 
 def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
     study_date = request.date or date.today()
-    cards = _get_due_study_cards(study_date, request.dailyNewWordTarget)
+    cards = _get_due_review_cards(study_date) + _get_due_new_cards(
+        study_date,
+        request.dailyNewWordTarget,
+    )
     return TodaySessionResponse(totalCards=len(cards), cards=cards)
 
 
@@ -208,16 +215,20 @@ def get_due_reviews(due_date: date) -> DueReviewsResponse:
 
 
 def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
-    reviewed_on = request.reviewedAt.date()
+    reviewed_on = request.reviewedDate or request.reviewedAt.date()
     reviewed_at = request.reviewedAt.isoformat()
 
     with connect() as connection:
         card = connection.execute(
-            "select id, stage from cards where id = ?",
+            "select id, stage, due_at from cards where id = ?",
             (card_id,),
         ).fetchone()
         if card is None:
             raise LookupError("Card not found")
+        if date.fromisoformat(card["due_at"]) > reviewed_on:
+            raise ReviewConflictError("Card is not due on the reviewed date")
+        if _review_exists_on_date(connection, card_id, reviewed_on):
+            raise ReviewConflictError("Card was already reviewed on this date")
 
         previous_stage = card["stage"]
         next_stage, next_due_at, status = transition(
@@ -318,6 +329,37 @@ def _get_due_study_cards(
     due_date: date,
     limit: int | None,
 ) -> list[StudyCardResponse]:
+    return _get_due_study_cards_by_queue(
+        due_date=due_date,
+        queue_condition="1 = 1",
+        limit=limit,
+    )
+
+
+def _get_due_review_cards(due_date: date) -> list[StudyCardResponse]:
+    return _get_due_study_cards_by_queue(
+        due_date=due_date,
+        queue_condition="cards.last_reviewed_at is not null",
+        limit=None,
+    )
+
+
+def _get_due_new_cards(
+    due_date: date,
+    limit: int,
+) -> list[StudyCardResponse]:
+    return _get_due_study_cards_by_queue(
+        due_date=due_date,
+        queue_condition="cards.last_reviewed_at is null",
+        limit=limit,
+    )
+
+
+def _get_due_study_cards_by_queue(
+    due_date: date,
+    queue_condition: str,
+    limit: int | None,
+) -> list[StudyCardResponse]:
     limit_clause = "" if limit is None else "limit ?"
     params: tuple[object, ...]
     params = (
@@ -345,6 +387,7 @@ def _get_due_study_cards(
             join words on words.id = entries.word_id
             where cards.due_at <= ?
               and cards.status in ('new', 'learning', 'mastered')
+              and {queue_condition}
             order by cards.due_at, cards.created_on, words.text, entries.sense_order
             {limit_clause}
             """,
@@ -354,22 +397,26 @@ def _get_due_study_cards(
         if not card_rows:
             return []
 
-        card_ids = [row["card_id"] for row in card_rows]
-        placeholders = ", ".join("?" for _ in card_ids)
-        example_rows = connection.execute(
-            f"""
-            select
-                cards.id as card_id,
-                entry_examples.id as example_id,
-                entry_examples.sentence,
-                entry_examples.is_primary
-            from cards
-            join entry_examples on entry_examples.entry_id = cards.entry_id
-            where cards.id in ({placeholders})
-            order by entry_examples.example_order
-            """,
-            tuple(card_ids),
-        ).fetchall()
+        return _study_cards_from_rows(connection, card_rows)
+
+
+def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
+    card_ids = [row["card_id"] for row in card_rows]
+    placeholders = ", ".join("?" for _ in card_ids)
+    example_rows = connection.execute(
+        f"""
+        select
+            cards.id as card_id,
+            entry_examples.id as example_id,
+            entry_examples.sentence,
+            entry_examples.is_primary
+        from cards
+        join entry_examples on entry_examples.entry_id = cards.entry_id
+        where cards.id in ({placeholders})
+        order by entry_examples.example_order
+        """,
+        tuple(card_ids),
+    ).fetchall()
 
     examples_by_card: dict[str, list[StudyExampleResponse]] = {
         card_id: [] for card_id in card_ids
@@ -399,6 +446,20 @@ def _get_due_study_cards(
         )
         for row in card_rows
     ]
+
+
+def _review_exists_on_date(connection, card_id: str, reviewed_on: date) -> bool:
+    row = connection.execute(
+        """
+        select 1
+        from reviews
+        where card_id = ?
+          and substr(reviewed_at, 1, 10) = ?
+        limit 1
+        """,
+        (card_id, reviewed_on.isoformat()),
+    ).fetchone()
+    return row is not None
 
 
 def _utc_now() -> str:
