@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from datetime import date as Date, datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -28,3 +33,53 @@ class PrepareJobResponse(BaseModel):
     readyCards: int
     needsReview: int
     failedWords: list[str]
+
+
+class TodayStartRequest(BaseModel):
+    date: Date | None = None
+    dailyNewWordTarget: int = Field(default=20, gt=0)
+
+
+class StudyExampleResponse(BaseModel):
+    exampleId: str
+    sentence: str
+    isPrimary: bool
+
+
+class StudyCardResponse(BaseModel):
+    cardId: str
+    word: str
+    partOfSpeech: str
+    senseLabel: str
+    definition: str
+    examples: list[StudyExampleResponse]
+    chineseNote: str | None
+    status: str
+    stage: int
+    dueAt: Date
+    queueType: Literal["new", "review"]
+
+
+class TodaySessionResponse(BaseModel):
+    totalCards: int
+    cards: list[StudyCardResponse]
+
+
+class ReviewCardRequest(BaseModel):
+    rating: Literal["known", "uncertain", "unknown"]
+    reviewedAt: datetime
+
+
+class ReviewCardResponse(BaseModel):
+    cardId: str
+    rating: Literal["known", "uncertain", "unknown"]
+    previousStage: int
+    nextStage: int
+    nextDueAt: Date
+    status: str
+
+
+class DueReviewsResponse(BaseModel):
+    date: Date
+    total: int
+    cards: list[StudyCardResponse]

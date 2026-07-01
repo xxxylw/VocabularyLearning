@@ -6,8 +6,19 @@ from uuid import uuid4
 
 from app.db import connect
 from app.enrichment import FallbackEnrichmentProvider
-from app.models import PrepareJobRequest, PrepareJobResponse
+from app.models import (
+    DueReviewsResponse,
+    PrepareJobRequest,
+    PrepareJobResponse,
+    ReviewCardRequest,
+    ReviewCardResponse,
+    StudyCardResponse,
+    StudyExampleResponse,
+    TodaySessionResponse,
+    TodayStartRequest,
+)
 from app.repositories import normalize_word
+from app.scheduling import transition
 
 
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
@@ -185,6 +196,87 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     )
 
 
+def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
+    study_date = request.date or date.today()
+    cards = _get_due_study_cards(study_date, request.dailyNewWordTarget)
+    return TodaySessionResponse(totalCards=len(cards), cards=cards)
+
+
+def get_due_reviews(due_date: date) -> DueReviewsResponse:
+    cards = _get_due_study_cards(due_date, None)
+    return DueReviewsResponse(date=due_date, total=len(cards), cards=cards)
+
+
+def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
+    reviewed_on = request.reviewedAt.date()
+    reviewed_at = request.reviewedAt.isoformat()
+
+    with connect() as connection:
+        card = connection.execute(
+            "select id, stage from cards where id = ?",
+            (card_id,),
+        ).fetchone()
+        if card is None:
+            raise LookupError("Card not found")
+
+        previous_stage = card["stage"]
+        next_stage, next_due_at, status = transition(
+            previous_stage,
+            request.rating,
+            reviewed_on,
+        )
+
+        connection.execute(
+            """
+            insert into reviews (
+                id,
+                card_id,
+                rating,
+                reviewed_at,
+                previous_stage,
+                next_stage,
+                next_due_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                card_id,
+                request.rating,
+                reviewed_at,
+                previous_stage,
+                next_stage,
+                next_due_at.isoformat(),
+            ),
+        )
+        connection.execute(
+            """
+            update cards
+            set status = ?,
+                stage = ?,
+                due_at = ?,
+                last_reviewed_at = ?
+            where id = ?
+            """,
+            (
+                status,
+                next_stage,
+                next_due_at.isoformat(),
+                reviewed_at,
+                card_id,
+            ),
+        )
+
+    return ReviewCardResponse(
+        cardId=card_id,
+        rating=request.rating,
+        previousStage=previous_stage,
+        nextStage=next_stage,
+        nextDueAt=next_due_at,
+        status=status,
+    )
+
+
 def _upsert_word(
     connection,
     word_text: str,
@@ -220,6 +312,93 @@ def _word_card_count(connection, word_id: str) -> int:
         (word_id,),
     ).fetchone()
     return row["total"]
+
+
+def _get_due_study_cards(
+    due_date: date,
+    limit: int | None,
+) -> list[StudyCardResponse]:
+    limit_clause = "" if limit is None else "limit ?"
+    params: tuple[object, ...]
+    params = (
+        (due_date.isoformat(),)
+        if limit is None
+        else (due_date.isoformat(), limit)
+    )
+
+    with connect() as connection:
+        card_rows = connection.execute(
+            f"""
+            select
+                cards.id as card_id,
+                cards.status,
+                cards.stage,
+                cards.due_at,
+                cards.last_reviewed_at,
+                words.text as word,
+                entries.part_of_speech,
+                entries.sense_label,
+                entries.definition,
+                entries.chinese_note
+            from cards
+            join entries on entries.id = cards.entry_id
+            join words on words.id = entries.word_id
+            where cards.due_at <= ?
+              and cards.status in ('new', 'learning', 'mastered')
+            order by cards.due_at, cards.created_on, words.text, entries.sense_order
+            {limit_clause}
+            """,
+            params,
+        ).fetchall()
+
+        if not card_rows:
+            return []
+
+        card_ids = [row["card_id"] for row in card_rows]
+        placeholders = ", ".join("?" for _ in card_ids)
+        example_rows = connection.execute(
+            f"""
+            select
+                cards.id as card_id,
+                entry_examples.id as example_id,
+                entry_examples.sentence,
+                entry_examples.is_primary
+            from cards
+            join entry_examples on entry_examples.entry_id = cards.entry_id
+            where cards.id in ({placeholders})
+            order by entry_examples.example_order
+            """,
+            tuple(card_ids),
+        ).fetchall()
+
+    examples_by_card: dict[str, list[StudyExampleResponse]] = {
+        card_id: [] for card_id in card_ids
+    }
+    for row in example_rows:
+        examples_by_card[row["card_id"]].append(
+            StudyExampleResponse(
+                exampleId=row["example_id"],
+                sentence=row["sentence"],
+                isPrimary=bool(row["is_primary"]),
+            )
+        )
+
+    return [
+        StudyCardResponse(
+            cardId=row["card_id"],
+            word=row["word"],
+            partOfSpeech=row["part_of_speech"],
+            senseLabel=row["sense_label"],
+            definition=row["definition"],
+            examples=examples_by_card[row["card_id"]],
+            chineseNote=row["chinese_note"],
+            status=row["status"],
+            stage=row["stage"],
+            dueAt=date.fromisoformat(row["due_at"]),
+            queueType="new" if row["last_reviewed_at"] is None else "review",
+        )
+        for row in card_rows
+    ]
 
 
 def _utc_now() -> str:

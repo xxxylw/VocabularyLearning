@@ -240,6 +240,86 @@ def test_prepare_schema_rejects_duplicate_entries_and_cards(
             )
 
 
+def test_today_session_combines_ready_cards_and_records_known_review(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 5},
+    )
+
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+    ).json()
+
+    assert session["totalCards"] >= 1
+    card = session["cards"][0]
+    assert card["word"] == "charge"
+    assert card["definition"]
+    assert card["examples"][0]["sentence"]
+
+    review = client.post(
+        f"/api/cards/{card['cardId']}/reviews",
+        json={"rating": "known", "reviewedAt": "2026-07-01T09:00:00+08:00"},
+    ).json()
+
+    assert review["previousStage"] == 0
+    assert review["nextStage"] == 1
+    assert review["nextDueAt"] == "2026-07-02"
+
+
+def test_due_reviews_returns_cards_due_on_or_before_date(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 5},
+    )
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+    ).json()
+    card = session["cards"][0]
+    client.post(
+        f"/api/cards/{card['cardId']}/reviews",
+        json={"rating": "known", "reviewedAt": "2026-07-01T09:00:00+08:00"},
+    )
+
+    response = client.get("/api/reviews/due?date=2026-07-02")
+
+    assert response.status_code == 200
+    due = response.json()
+    assert due["date"] == "2026-07-02"
+    assert due["total"] == 1
+    assert due["cards"][0]["cardId"] == card["cardId"]
+    assert due["cards"][0]["queueType"] == "review"
+
+
 def _count_rows(table_name: str) -> int:
     allowed_tables = {
         "words",
