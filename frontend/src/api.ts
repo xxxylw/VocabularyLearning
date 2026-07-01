@@ -26,13 +26,59 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  const data = (await response.json()) as T;
 
   if (!response.ok && response.status !== 409) {
-    throw new Error(`Request failed: ${response.status}`);
+    const errorBody = await readResponseBody(response);
+    const statusText = response.statusText ? ` ${response.statusText}` : '';
+    const detail = errorBody ? `: ${errorBody}` : '';
+
+    throw new Error(`POST ${url} failed with ${response.status}${statusText}${detail}`);
   }
 
-  return data;
+  const bodyText = await response.text();
+
+  if (!bodyText) {
+    return undefined as T;
+  }
+
+  try {
+    return JSON.parse(bodyText) as T;
+  } catch {
+    throw new Error(`POST ${url} returned an invalid JSON response`);
+  }
+}
+
+async function readResponseBody(response: Response): Promise<string> {
+  const bodyText = await response.text().catch(() => '');
+
+  if (!bodyText) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(bodyText) as unknown;
+
+    if (typeof parsed === 'string') {
+      return parsed;
+    }
+
+    if (isErrorObject(parsed)) {
+      return parsed.message ?? parsed.error ?? '';
+    }
+  } catch {
+    return bodyText;
+  }
+
+  return bodyText;
+}
+
+function isErrorObject(value: unknown): value is { message?: string; error?: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (typeof (value as { message?: unknown }).message === 'string' ||
+      typeof (value as { error?: unknown }).error === 'string')
+  );
 }
 
 function localDateString(date: Date): string {

@@ -10,7 +10,7 @@ describe('api', () => {
   it('starts today session with the default new-word target', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ totalCards: 0, cards: [] })
+      text: () => Promise.resolve(JSON.stringify({ totalCards: 0, cards: [] }))
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -28,7 +28,7 @@ describe('api', () => {
     vi.setSystemTime(new Date(2026, 6, 1, 9, 30, 0));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ nextDueDate: '2026-07-02' })
+      text: () => Promise.resolve(JSON.stringify({ nextDueDate: '2026-07-02' }))
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -48,7 +48,7 @@ describe('api', () => {
   it('requests the full-book Anki export with the MVP defaults', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ downloadUrl: '/download.apkg', cardCount: 42 })
+      text: () => Promise.resolve(JSON.stringify({ downloadUrl: '/download.apkg', cardCount: 42 }))
     });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -62,5 +62,19 @@ describe('api', () => {
         includeChineseNote: true
       })
     });
+  });
+
+  it('throws a useful error when an API error response is not JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: () => Promise.resolve('upstream unavailable')
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(startTodaySession()).rejects.toThrow(
+      'POST /api/study/today/start failed with 500 Internal Server Error: upstream unavailable'
+    );
   });
 });

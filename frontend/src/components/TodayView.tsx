@@ -9,9 +9,9 @@ export function TodayView({ onStart, isLoading, error }: TodayViewProps) {
     <section className="today-view" aria-labelledby="today-title">
       <div className="today-copy">
         <p className="eyebrow">Today</p>
-        <h1 id="today-title">Settle into a focused vocabulary round.</h1>
+        <h1 id="today-title">Ready for today&apos;s cards</h1>
         <p className="today-note">
-          A quiet desk, a short queue, and no clutter between you and the next word.
+          A quiet desk, a short queue, and a focused pass through the words waiting for you.
         </p>
       </div>
 

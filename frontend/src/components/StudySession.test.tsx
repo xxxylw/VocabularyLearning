@@ -18,7 +18,7 @@ const cards: StudyCard[] = [
         isPrimary: true
       }
     ],
-    chineseNote: '一丝不苟的；非常细心的',
+    chineseNote: '中文备注：费用；收费。',
     queueType: 'new'
   }
 ];
@@ -41,7 +41,7 @@ describe('StudySession', () => {
 
     expect(screen.getByText(/showing great attention to detail/i)).toBeInTheDocument();
     expect(screen.getByText(/researcher kept meticulous notes/i)).toBeInTheDocument();
-    expect(screen.getByText(/一丝不苟/)).toBeInTheDocument();
+    expect(screen.getByText(/中文备注：费用；收费。/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^known$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^uncertain$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^unknown$/i })).toBeInTheDocument();
