@@ -12,13 +12,14 @@ export function App() {
   const [cards, setCards] = useState<StudyCard[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newWordTarget, setNewWordTarget] = useState(20);
 
-  async function handleStart() {
+  async function handleStart(target: number) {
     setIsLoading(true);
     setError(null);
 
     try {
-      const session = await startTodaySession();
+      const session = await startTodaySession(target);
       setCards(session.cards);
       setScreen(session.cards.length > 0 ? 'study' : 'empty');
     } catch {
@@ -34,7 +35,13 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <TodayView onStart={() => void handleStart()} isLoading={isLoading} error={error} />
+      <TodayView
+        onStart={(target) => void handleStart(target)}
+        isLoading={isLoading}
+        newWordTarget={newWordTarget}
+        onNewWordTargetChange={setNewWordTarget}
+        error={error}
+      />
       {screen === 'empty' ? (
         <section className="empty-state" aria-live="polite">
           <p className="eyebrow">All clear</p>

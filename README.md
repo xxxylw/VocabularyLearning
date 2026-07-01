@@ -52,7 +52,7 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 ## Verification
 
 - Backend: `cd backend; .venv/Scripts/python.exe -m pytest -v` -> 18 passed, 1 existing warning
-- Frontend: `cd frontend; pnpm test` -> 15 passed
+- Frontend: `cd frontend; pnpm test` -> 17 passed
 - Frontend: `cd frontend; pnpm build` -> passed
 - Backend local server smoke: started on `http://127.0.0.1:8000`; `GET /api/health` returned `{ "ok": true, "version": "0.1.0" }`.
 - Frontend local server smoke: running on `http://localhost:5173`.

@@ -94,9 +94,9 @@ function localDateString(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-export function startTodaySession(): Promise<TodaySession> {
+export function startTodaySession(dailyNewWordTarget = 20): Promise<TodaySession> {
   return postJson<TodaySession>('/api/study/today/start', {
-    dailyNewWordTarget: 20
+    dailyNewWordTarget
   });
 }
 

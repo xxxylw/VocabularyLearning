@@ -23,6 +23,22 @@ describe('api', () => {
     });
   });
 
+  it('starts today session with a custom new-word target', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({ totalCards: 0, cards: [] }))
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await startTodaySession(12);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/study/today/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dailyNewWordTarget: 12 })
+    });
+  });
+
   it('reviews a card with ISO reviewedAt and local YYYY-MM-DD reviewedDate', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 6, 1, 9, 30, 0));
