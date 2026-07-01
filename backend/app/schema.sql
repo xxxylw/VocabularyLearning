@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS book_words (
     normalized_text text not null,
     part_of_speech text null,
     definition text null,
-    definition_source text null,
+    definition_source text null check (
+        definition_source is null
+        or definition_source in ('manual', 'ocr', 'oxford_api', 'ai', 'experimental_html')
+    ),
     chinese_note text null,
     import_status text not null check (import_status in ('pending', 'ready', 'needs_review')),
     created_at text not null,
@@ -37,7 +40,17 @@ CREATE TABLE IF NOT EXISTS entries (
     part_of_speech text not null,
     sense_label text not null default '',
     definition text not null,
-    definition_source text not null,
+    definition_source text not null check (
+        definition_source in (
+            'manual',
+            'oxford_api',
+            'open_api',
+            'imported',
+            'ai',
+            'experimental_html',
+            'fallback'
+        )
+    ),
     chinese_note text null,
     created_at text not null,
     updated_at text not null
@@ -48,7 +61,17 @@ CREATE TABLE IF NOT EXISTS entry_examples (
     entry_id text not null references entries(id),
     example_order integer not null,
     sentence text not null,
-    source text not null,
+    source text not null check (
+        source in (
+            'manual',
+            'oxford_api',
+            'ai',
+            'template',
+            'imported',
+            'experimental_html',
+            'fallback'
+        )
+    ),
     is_primary integer not null,
     created_at text not null,
     updated_at text not null
