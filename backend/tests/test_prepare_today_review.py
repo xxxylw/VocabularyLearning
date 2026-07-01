@@ -1,5 +1,9 @@
+import sqlite3
+
+import pytest
 from fastapi.testclient import TestClient
 
+from app.db import connect
 from app.main import create_app
 
 
@@ -34,7 +38,233 @@ def test_prepare_next_creates_one_or_more_cards_per_word(tmp_path, monkeypatch):
     assert body["processedWords"] == 2
     assert body["readyCards"] >= 2
     assert body["needsReview"] == 0
+    assert _count_rows("words") == 2
+    assert _count_rows("entries") == 2
+    assert _count_rows("entry_examples") == 2
+    assert _count_rows("cards") == 2
+    assert _count_rows("prepare_jobs") == 1
+    assert _count_prepared_graph_rows() == 2
 
     progress = client.get("/api/book-words/progress")
     assert progress.status_code == 200
     assert progress.json()["nextSequenceIndex"] is None
+
+
+def test_prepare_next_rejects_negative_count_without_preparing(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+
+    response = client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": -1, "maxSensesPerWord": 5},
+    )
+
+    assert response.status_code == 422
+    assert _count_rows("cards") == 0
+    assert _count_rows("prepare_jobs") == 0
+    progress = client.get("/api/book-words/progress")
+    assert progress.json()["nextSequenceIndex"] == 1
+
+
+def test_prepare_next_does_not_duplicate_cards_for_existing_word(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    first_response = client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 5},
+    )
+    assert first_response.status_code == 200
+    assert _count_rows("cards") == 1
+
+    with connect() as connection:
+        connection.execute(
+            "update book_words set import_status = 'needs_review'"
+        )
+
+    second_response = client.post(
+        "/api/prepare-jobs",
+        json={
+            "scope": "next",
+            "count": 1,
+            "maxSensesPerWord": 5,
+            "overwriteExisting": False,
+        },
+    )
+
+    assert second_response.status_code == 200
+    body = second_response.json()
+    assert body["processedWords"] == 1
+    assert body["readyCards"] == 0
+    assert _count_rows("cards") == 1
+    assert _count_rows("entries") == 1
+    assert _count_rows("entry_examples") == 1
+
+
+def test_prepare_next_rejects_overwrite_existing_until_supported(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+
+    response = client.post(
+        "/api/prepare-jobs",
+        json={
+            "scope": "next",
+            "count": 1,
+            "maxSensesPerWord": 5,
+            "overwriteExisting": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert _count_rows("cards") == 0
+    assert _count_rows("prepare_jobs") == 0
+
+
+def test_prepare_schema_rejects_duplicate_entries_and_cards(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    response = client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 5},
+    )
+    assert response.status_code == 200
+
+    with connect() as connection:
+        entry = connection.execute(
+            """
+            select entries.id, entries.word_id
+            from entries
+            join cards on cards.entry_id = entries.id
+            """
+        ).fetchone()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                insert into entries (
+                    id,
+                    word_id,
+                    sense_order,
+                    part_of_speech,
+                    sense_label,
+                    definition,
+                    definition_source,
+                    created_at,
+                    updated_at
+                )
+                values (
+                    'entry-duplicate',
+                    ?,
+                    1,
+                    'word',
+                    'duplicate',
+                    'duplicate',
+                    'fallback',
+                    '2026-07-01T00:00:00+00:00',
+                    '2026-07-01T00:00:00+00:00'
+                )
+                """,
+                (entry["word_id"],),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                insert into cards (
+                    id,
+                    entry_id,
+                    status,
+                    stage,
+                    due_at,
+                    created_on,
+                    last_reviewed_at
+                )
+                values (
+                    'card-duplicate',
+                    ?,
+                    'learning',
+                    0,
+                    '2026-07-01',
+                    '2026-07-01',
+                    null
+                )
+                """,
+                (entry["id"],),
+            )
+
+
+def _count_rows(table_name: str) -> int:
+    allowed_tables = {
+        "words",
+        "entries",
+        "entry_examples",
+        "cards",
+        "prepare_jobs",
+    }
+    assert table_name in allowed_tables
+    with connect() as connection:
+        row = connection.execute(
+            f"select count(*) as total from {table_name}"
+        ).fetchone()
+    return row["total"]
+
+
+def _count_prepared_graph_rows() -> int:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            select count(*) as total
+            from words
+            join entries on entries.word_id = words.id
+            join entry_examples on entry_examples.entry_id = entries.id
+            join cards on cards.entry_id = entries.id
+            """
+        ).fetchone()
+    return row["total"]

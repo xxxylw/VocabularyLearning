@@ -122,3 +122,9 @@ DROP INDEX IF EXISTS idx_book_words_source_normalized;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_book_words_source_normalized
 ON book_words (source_id, normalized_text);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_word_sense_order
+ON entries (word_id, sense_order);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_entry
+ON cards (entry_id);

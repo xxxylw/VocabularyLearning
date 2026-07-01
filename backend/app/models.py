@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ImportBookWordsResponse(BaseModel):
@@ -15,7 +15,7 @@ class BookProgressResponse(BaseModel):
 
 class PrepareJobRequest(BaseModel):
     scope: str
-    count: int | None = None
+    count: int | None = Field(default=None, gt=0)
     maxSensesPerWord: int = 5
     overwriteExisting: bool = False
 

@@ -13,6 +13,8 @@ from app.repositories import normalize_word
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     if request.scope != "next":
         raise ValueError("Only scope='next' is supported")
+    if request.overwriteExisting:
+        raise ValueError("overwriteExisting=true is not supported yet")
 
     count = request.count if request.count is not None else 20
     max_senses = max(request.maxSensesPerWord, 1)
@@ -45,6 +47,18 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                 normalized_text=normalized_text,
                 now=now,
             )
+
+            if _word_card_count(connection, word_id) > 0:
+                connection.execute(
+                    """
+                    update book_words
+                    set import_status = 'ready', updated_at = ?
+                    where id = ?
+                    """,
+                    (now, book_word["id"]),
+                )
+                processed_words += 1
+                continue
 
             senses = provider.prepare(word_text, max_senses)
             for sense_order, sense in enumerate(senses, start=1):
@@ -193,6 +207,19 @@ def _upsert_word(
         (word_id, word_text, normalized_text, now, now),
     )
     return word_id
+
+
+def _word_card_count(connection, word_id: str) -> int:
+    row = connection.execute(
+        """
+        select count(*) as total
+        from entries
+        join cards on cards.entry_id = entries.id
+        where entries.word_id = ?
+        """,
+        (word_id,),
+    ).fetchone()
+    return row["total"]
 
 
 def _utc_now() -> str:
