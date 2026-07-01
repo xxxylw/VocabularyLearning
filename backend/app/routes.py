@@ -2,7 +2,7 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.models import (
     BookProgressResponse,
@@ -22,6 +22,7 @@ from app.services import (
     ExportNotReadyError,
     ReviewConflictError,
     export_full_book_anki,
+    get_anki_export_file_path,
     get_due_reviews,
     prepare_book_words,
     review_card,
@@ -103,3 +104,16 @@ def export_anki_full_book(
             status_code=409,
             content=error.readiness.model_dump(),
         )
+
+
+@router.get("/export/anki/files/{fileName}")
+def download_anki_export(fileName: str) -> FileResponse:
+    try:
+        export_path = get_anki_export_file_path(fileName)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return FileResponse(
+        export_path,
+        media_type="application/octet-stream",
+        filename=fileName,
+    )

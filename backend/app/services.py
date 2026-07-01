@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import json
 from datetime import date, datetime, timezone
+from hashlib import sha1
+from html import escape
+from pathlib import Path
+import json
+import os
 from uuid import uuid4
 
 from app.db import connect
@@ -305,12 +309,30 @@ def export_full_book_anki(
         if readiness.totalWords == 0 or readiness.missingWords > 0:
             raise ExportNotReadyError(readiness)
 
-        card_count = _get_full_book_export_card_count(connection)
+        export_cards = _get_full_book_export_cards(connection)
 
-    return ExportFullBookResponse(
-        downloadUrl=f"/api/export/anki/files/{_slugify_deck_name(request.deckName)}.apkg",
-        cardCount=card_count,
+    file_name = f"{_slugify_deck_name(request.deckName)}.apkg"
+    export_path = _get_export_dir() / file_name
+    _write_anki_package(
+        export_path=export_path,
+        deck_name=request.deckName,
+        include_chinese_note=request.includeChineseNote,
+        cards=export_cards,
     )
+    return ExportFullBookResponse(
+        downloadUrl=f"/api/export/anki/files/{file_name}",
+        cardCount=len(export_cards),
+    )
+
+
+def get_anki_export_file_path(file_name: str) -> Path:
+    if file_name != Path(file_name).name or not file_name.endswith(".apkg"):
+        raise LookupError("Export file not found")
+
+    export_path = _get_export_dir() / file_name
+    if not export_path.is_file():
+        raise LookupError("Export file not found")
+    return export_path
 
 
 def _upsert_word(
@@ -382,17 +404,135 @@ def _get_full_book_export_readiness(connection) -> ExportReadinessError:
     )
 
 
-def _get_full_book_export_card_count(connection) -> int:
-    row = connection.execute(
+def _get_full_book_export_cards(connection) -> list[dict[str, object]]:
+    card_rows = connection.execute(
         """
-        select count(distinct cards.id) as total
+        select
+            cards.id as card_id,
+            words.text as word,
+            entries.part_of_speech,
+            entries.sense_label,
+            entries.definition,
+            entries.chinese_note,
+            min(book_words.sequence_index) as first_sequence_index,
+            entries.sense_order
         from book_words
         join words on words.normalized_text = book_words.normalized_text
         join entries on entries.word_id = words.id
         join cards on cards.entry_id = entries.id
+        group by cards.id
+        order by first_sequence_index, entries.sense_order, words.text
         """
-    ).fetchone()
-    return row["total"]
+    ).fetchall()
+    if not card_rows:
+        return []
+
+    card_ids = [row["card_id"] for row in card_rows]
+    placeholders = ", ".join("?" for _ in card_ids)
+    example_rows = connection.execute(
+        f"""
+        select
+            cards.id as card_id,
+            entry_examples.sentence
+        from cards
+        join entry_examples on entry_examples.entry_id = cards.entry_id
+        where cards.id in ({placeholders})
+          and entry_examples.is_primary = 1
+        order by entry_examples.example_order
+        """,
+        tuple(card_ids),
+    ).fetchall()
+
+    examples_by_card: dict[str, list[str]] = {card_id: [] for card_id in card_ids}
+    for row in example_rows:
+        examples_by_card[row["card_id"]].append(row["sentence"])
+
+    return [
+        {
+            "card_id": row["card_id"],
+            "word": row["word"],
+            "part_of_speech": row["part_of_speech"],
+            "sense_label": row["sense_label"],
+            "definition": row["definition"],
+            "chinese_note": row["chinese_note"],
+            "examples": examples_by_card[row["card_id"]],
+        }
+        for row in card_rows
+    ]
+
+
+def _write_anki_package(
+    export_path: Path,
+    deck_name: str,
+    include_chinese_note: bool,
+    cards: list[dict[str, object]],
+) -> None:
+    import genanki
+
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    model = genanki.Model(
+        _anki_id(f"model:{deck_name}"),
+        "Vocabulary Learning Basic",
+        fields=[
+            {"name": "Front"},
+            {"name": "Back"},
+        ],
+        templates=[
+            {
+                "name": "Card 1",
+                "qfmt": "{{Front}}",
+                "afmt": '{{FrontSide}}<hr id="answer">{{Back}}',
+            }
+        ],
+    )
+    deck = genanki.Deck(_anki_id(f"deck:{deck_name}"), deck_name)
+
+    for card in cards:
+        note = genanki.Note(
+            model=model,
+            fields=[
+                _format_anki_front(card),
+                _format_anki_back(card, include_chinese_note),
+            ],
+            guid=str(card["card_id"]),
+        )
+        deck.add_note(note)
+
+    genanki.Package(deck).write_to_file(str(export_path))
+
+
+def _format_anki_front(card: dict[str, object]) -> str:
+    details = [
+        str(card["part_of_speech"]),
+        str(card["sense_label"]),
+    ]
+    return (
+        f"<div>{escape(str(card['word']))}</div>"
+        f"<div>{escape(' | '.join(detail for detail in details if detail))}</div>"
+    )
+
+
+def _format_anki_back(card: dict[str, object], include_chinese_note: bool) -> str:
+    parts = [f"<div>{escape(str(card['definition']))}</div>"]
+    examples = [escape(example) for example in card["examples"]]
+    if examples:
+        parts.append(
+            "<ul>"
+            + "".join(f"<li>{example}</li>" for example in examples)
+            + "</ul>"
+        )
+    chinese_note = card["chinese_note"]
+    if include_chinese_note and chinese_note:
+        parts.append(f"<div>{escape(str(chinese_note))}</div>")
+    return "".join(parts)
+
+
+def _anki_id(value: str) -> int:
+    return int(sha1(value.encode("utf-8")).hexdigest()[:8], 16) % 2_000_000_000
+
+
+def _get_export_dir() -> Path:
+    return Path(os.environ.get("VOCAB_EXPORT_DIR", "./data/exports"))
 
 
 def _slugify_deck_name(deck_name: str) -> str:

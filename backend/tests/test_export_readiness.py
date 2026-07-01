@@ -44,6 +44,8 @@ def test_full_book_export_returns_download_when_all_book_words_are_prepared(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    export_dir = tmp_path / "exports"
+    monkeypatch.setenv("VOCAB_EXPORT_DIR", str(export_dir))
     client = TestClient(create_app())
     client.post(
         "/api/book-words/import",
@@ -73,6 +75,20 @@ def test_full_book_export_returns_download_when_all_book_words_are_prepared(
     body = response.json()
     assert body["cardCount"] == _count_local_export_cards()
     assert body["downloadUrl"] == "/api/export/anki/files/ielts-vocabulary-book.apkg"
+
+    download_response = client.get(body["downloadUrl"])
+
+    assert download_response.status_code == 200
+    assert "application" in download_response.headers["content-type"]
+    assert (
+        'filename="ielts-vocabulary-book.apkg"'
+        in download_response.headers["content-disposition"]
+    )
+    assert len(download_response.content) > 0
+
+    exported_file = export_dir / "ielts-vocabulary-book.apkg"
+    assert exported_file.exists()
+    assert exported_file.stat().st_size > 0
 
 
 def test_full_book_export_counts_duplicate_normalized_words_by_book_row(
