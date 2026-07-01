@@ -123,7 +123,12 @@ def get_book_progress() -> BookProgressResponse:
             """
             select
                 count(*) as total_words,
-                min(sequence_index) as next_sequence_index
+                min(
+                    case
+                        when import_status in ('pending', 'needs_review')
+                        then sequence_index
+                    end
+                ) as next_sequence_index
             from book_words
             """
         ).fetchone()

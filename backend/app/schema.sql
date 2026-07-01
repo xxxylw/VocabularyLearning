@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS book_words (
     definition text null,
     definition_source text null,
     chinese_note text null,
-    import_status text not null,
+    import_status text not null check (import_status in ('pending', 'ready', 'needs_review')),
     created_at text not null,
     updated_at text not null
 );
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS entry_examples (
 CREATE TABLE IF NOT EXISTS cards (
     id text primary key,
     entry_id text not null references entries(id),
-    status text not null,
+    status text not null check (status in ('new', 'learning', 'mastered', 'suspended')),
     stage integer not null,
     due_at text not null,
     created_on text not null,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE TABLE IF NOT EXISTS reviews (
     id text primary key,
     card_id text not null references cards(id),
-    rating text not null,
+    rating text not null check (rating in ('known', 'uncertain', 'unknown')),
     reviewed_at text not null,
     previous_stage integer not null,
     next_stage integer not null,
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS prepare_jobs (
     id text primary key,
     scope text not null,
-    status text not null,
+    status text not null check (status in ('queued', 'running', 'completed', 'failed')),
     total_words integer not null,
     processed_words integer not null,
     ready_cards integer not null,
@@ -95,5 +95,7 @@ CREATE TABLE IF NOT EXISTS prepare_jobs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_book_words_source_sequence
 ON book_words (source_id, sequence_index);
 
-CREATE INDEX IF NOT EXISTS idx_book_words_source_normalized
+DROP INDEX IF EXISTS idx_book_words_source_normalized;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_book_words_source_normalized
 ON book_words (source_id, normalized_text);
