@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from hashlib import sha1
 from html import escape
 from pathlib import Path
+from typing import Literal
 import json
 import os
 from uuid import uuid4
@@ -21,6 +22,7 @@ from app.models import (
     ReviewCardResponse,
     StudyCardResponse,
     StudyExampleResponse,
+    StudySenseResponse,
     TodaySessionResponse,
     TodayStartRequest,
 )
@@ -590,14 +592,6 @@ def _get_due_study_cards_by_queue(
     queue_condition: str,
     limit: int | None,
 ) -> list[StudyCardResponse]:
-    limit_clause = "" if limit is None else "limit ?"
-    params: tuple[object, ...]
-    params = (
-        (due_date.isoformat(),)
-        if limit is None
-        else (due_date.isoformat(), limit)
-    )
-
     with connect() as connection:
         card_rows = connection.execute(
             f"""
@@ -608,6 +602,7 @@ def _get_due_study_cards_by_queue(
                 cards.due_at,
                 cards.last_reviewed_at,
                 words.text as word,
+                words.normalized_text,
                 entries.part_of_speech,
                 entries.sense_label,
                 entries.definition,
@@ -630,19 +625,66 @@ def _get_due_study_cards_by_queue(
                 cards.due_at,
                 cards.created_on,
                 words.text
-            {limit_clause}
             """,
-            params,
+            (due_date.isoformat(),),
         ).fetchall()
 
         if not card_rows:
             return []
 
-        return _study_cards_from_rows(connection, card_rows)
+        cards = _study_cards_from_rows(connection, card_rows)
+        return cards if limit is None else cards[:limit]
 
 
 def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
-    card_ids = [row["card_id"] for row in card_rows]
+    due_card_ids_by_word: dict[str, list[str]] = {}
+    queue_type_by_word: dict[str, Literal["new", "review"]] = {}
+    for row in card_rows:
+        normalized_text = row["normalized_text"]
+        due_card_ids_by_word.setdefault(normalized_text, []).append(row["card_id"])
+        queue_type_by_word.setdefault(
+            normalized_text,
+            "new" if row["last_reviewed_at"] is None else "review",
+        )
+
+    normalized_words = list(due_card_ids_by_word)
+    normalized_placeholders = ", ".join("?" for _ in normalized_words)
+    all_sense_rows = connection.execute(
+        f"""
+        select
+            cards.id as card_id,
+            cards.status,
+            cards.stage,
+            cards.due_at,
+            cards.last_reviewed_at,
+            words.text as word,
+            words.normalized_text,
+            entries.part_of_speech,
+            entries.sense_label,
+            entries.definition,
+            entries.chinese_note,
+            (
+                select min(book_words.sequence_index)
+                from book_words
+                where book_words.normalized_text = words.normalized_text
+            ) as book_sequence_index
+        from cards
+        join entries on entries.id = cards.entry_id
+        join words on words.id = entries.word_id
+        where words.normalized_text in ({normalized_placeholders})
+          and cards.status in ('new', 'learning', 'mastered')
+        order by
+            case when book_sequence_index is null then 1 else 0 end,
+            book_sequence_index,
+            entries.sense_order,
+            cards.due_at,
+            cards.created_on,
+            words.text
+        """,
+        tuple(normalized_words),
+    ).fetchall()
+
+    card_ids = [row["card_id"] for row in all_sense_rows]
     placeholders = ", ".join("?" for _ in card_ids)
     example_rows = connection.execute(
         f"""
@@ -671,22 +713,43 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
             )
         )
 
-    return [
-        StudyCardResponse(
-            cardId=row["card_id"],
-            word=row["word"],
-            partOfSpeech=row["part_of_speech"],
-            senseLabel=row["sense_label"],
-            definition=row["definition"],
-            examples=examples_by_card[row["card_id"]],
-            chineseNote=row["chinese_note"],
-            status=row["status"],
-            stage=row["stage"],
-            dueAt=date.fromisoformat(row["due_at"]),
-            queueType="new" if row["last_reviewed_at"] is None else "review",
+    grouped_rows: dict[str, list] = {}
+    for row in all_sense_rows:
+        grouped_rows.setdefault(row["normalized_text"], []).append(row)
+
+    study_cards: list[StudyCardResponse] = []
+    for rows in grouped_rows.values():
+        first = rows[0]
+        senses = [
+            StudySenseResponse(
+                cardId=row["card_id"],
+                partOfSpeech=row["part_of_speech"],
+                senseLabel=row["sense_label"],
+                definition=row["definition"],
+                examples=examples_by_card[row["card_id"]],
+                chineseNote=row["chinese_note"],
+            )
+            for row in rows
+        ]
+        study_cards.append(
+            StudyCardResponse(
+                cardId=first["card_id"],
+                cardIds=due_card_ids_by_word[first["normalized_text"]],
+                word=first["word"],
+                partOfSpeech=first["part_of_speech"],
+                senseLabel=first["sense_label"],
+                definition=first["definition"],
+                examples=examples_by_card[first["card_id"]],
+                chineseNote=first["chinese_note"],
+                senses=senses,
+                status=first["status"],
+                stage=first["stage"],
+                dueAt=date.fromisoformat(first["due_at"]),
+                queueType=queue_type_by_word[first["normalized_text"]],
+            )
         )
-        for row in card_rows
-    ]
+
+    return study_cards
 
 
 def _review_exists_on_date(connection, card_id: str, reviewed_on: date) -> bool:

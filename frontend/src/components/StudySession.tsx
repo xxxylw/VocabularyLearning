@@ -4,7 +4,7 @@ import type { ReviewRating } from '../api';
 
 type StudySessionProps = {
   cards: StudyCard[];
-  onReview: (cardId: string, rating: ReviewRating) => Promise<unknown> | unknown;
+  onReview: (card: StudyCard, rating: ReviewRating) => Promise<unknown> | unknown;
   onExit: () => void;
 };
 
@@ -34,7 +34,7 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
       setError(null);
 
       try {
-        await onReview(card.cardId, rating);
+        await onReview(card, rating);
         setCurrentIndex((index) => index + 1);
         setIsRevealed(false);
       } catch {
@@ -98,7 +98,18 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
     );
   }
 
-  const primaryExample = card.examples.find((example) => example.isPrimary) ?? card.examples[0];
+  const senses = card.senses.length > 0
+    ? card.senses
+    : [
+        {
+          cardId: card.cardId,
+          partOfSpeech: card.partOfSpeech,
+          senseLabel: card.senseLabel,
+          definition: card.definition,
+          examples: card.examples,
+          chineseNote: card.chineseNote
+        }
+      ];
 
   async function handleRatingClick(rating: ReviewRating) {
     if (isSubmitting) {
@@ -124,7 +135,6 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
         <div className="card-front">
           <p className="part-of-speech">{card.partOfSpeech}</p>
           <h1 id="study-word">{card.word}</h1>
-          <p className="sense-label">{card.senseLabel}</p>
         </div>
 
         {!isRevealed ? (
@@ -133,19 +143,33 @@ export function StudySession({ cards, onReview, onExit }: StudySessionProps) {
           </button>
         ) : (
           <div className="card-back">
-            <div className="definition-block">
-              <span>Definition</span>
-              <p>{card.definition}</p>
-            </div>
+            <div className="sense-list">
+              {senses.map((sense, index) => {
+                const primaryExample = sense.examples.find((example) => example.isPrimary) ?? sense.examples[0];
 
-            {primaryExample ? (
-              <div className="example-block">
-                <span>IELTS example</span>
-                <p>{primaryExample.sentence}</p>
+                return (
+                  <section className="sense-card" key={sense.cardId} aria-label={`Sense ${index + 1}`}>
+                    <div className="definition-block">
+                      <span>
+                        Definition {index + 1}
+                        {sense.partOfSpeech ? ` · ${sense.partOfSpeech}` : ''}
+                      </span>
+                      {sense.senseLabel ? <strong>{sense.senseLabel}</strong> : null}
+                      <p>{sense.definition}</p>
+                    </div>
+
+                    {primaryExample ? (
+                      <div className="example-block">
+                        <span>IELTS example</span>
+                        <p>{primaryExample.sentence}</p>
+                      </div>
+                    ) : null}
+
+                    {sense.chineseNote ? <p className="chinese-note">{sense.chineseNote}</p> : null}
+                  </section>
+                );
+              })}
               </div>
-            ) : null}
-
-            {card.chineseNote ? <p className="chinese-note">{card.chineseNote}</p> : null}
 
             <div className="rating-row" aria-label="Rate this card">
               {ratingLabels.map((item) => (

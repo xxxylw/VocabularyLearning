@@ -46,14 +46,25 @@ class StudyExampleResponse(BaseModel):
     isPrimary: bool
 
 
+class StudySenseResponse(BaseModel):
+    cardId: str
+    partOfSpeech: str
+    senseLabel: str
+    definition: str
+    examples: list[StudyExampleResponse]
+    chineseNote: str | None
+
+
 class StudyCardResponse(BaseModel):
     cardId: str
+    cardIds: list[str]
     word: str
     partOfSpeech: str
     senseLabel: str
     definition: str
     examples: list[StudyExampleResponse]
     chineseNote: str | None
+    senses: list[StudySenseResponse]
     status: str
     stage: int
     dueAt: Date

@@ -280,6 +280,23 @@ a {
   gap: 22px;
 }
 
+.sense-list {
+  display: grid;
+  gap: 18px;
+}
+
+.sense-card {
+  display: grid;
+  gap: 14px;
+  border-bottom: 1px solid rgba(110, 91, 68, 0.12);
+  padding-bottom: 18px;
+}
+
+.sense-card:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 .definition-block,
 .example-block {
   display: grid;
@@ -299,6 +316,11 @@ a {
   margin: 0;
   color: #332e27;
   font-size: clamp(1.1rem, 2vw, 1.45rem);
+}
+
+.definition-block strong {
+  color: #5f564b;
+  font-size: 0.98rem;
 }
 
 .example-block {

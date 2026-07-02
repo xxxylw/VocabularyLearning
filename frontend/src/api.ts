@@ -1,11 +1,20 @@
 export type StudyCard = {
   cardId: string;
+  cardIds: string[];
   word: string;
   partOfSpeech: string;
   senseLabel: string;
   definition: string;
   examples: Array<{ exampleId: string; sentence: string; isPrimary: boolean }>;
   chineseNote: string | null;
+  senses: Array<{
+    cardId: string;
+    partOfSpeech: string;
+    senseLabel: string;
+    definition: string;
+    examples: Array<{ exampleId: string; sentence: string; isPrimary: boolean }>;
+    chineseNote: string | null;
+  }>;
   queueType: 'new' | 'review';
 };
 

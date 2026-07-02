@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { exportFullBook, getBookProgress, reviewCard, startTodaySession } from './api';
-import type { StudyCard } from './api';
+import type { ReviewRating, StudyCard } from './api';
 import { ExportView } from './components/ExportView';
 import { StudySession } from './components/StudySession';
 import { TodayView } from './components/TodayView';
@@ -38,8 +38,13 @@ export function App() {
     }
   }
 
+  async function reviewWordCard(card: StudyCard, rating: ReviewRating) {
+    const cardIds = card.cardIds.length > 0 ? card.cardIds : [card.cardId];
+    await Promise.all(cardIds.map((cardId) => reviewCard(cardId, rating)));
+  }
+
   if (screen === 'study') {
-    return <StudySession cards={cards} onReview={reviewCard} onExit={() => setScreen('today')} />;
+    return <StudySession cards={cards} onReview={reviewWordCard} onExit={() => setScreen('today')} />;
   }
 
   return (

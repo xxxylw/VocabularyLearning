@@ -350,6 +350,228 @@ def test_today_session_orders_new_cards_by_book_sequence(
     ]
 
 
+def test_today_session_groups_multiple_senses_into_one_word_card(
+    tmp_path, monkeypatch
+):
+    today = date.today()
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,atmosphere\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 1},
+    )
+
+    with connect() as connection:
+        word_id = connection.execute(
+            "select id from words where normalized_text = 'atmosphere'"
+        ).fetchone()["id"]
+        entry_id = "entry-atmosphere-2"
+        card_id = "card-atmosphere-2"
+        connection.execute(
+            """
+            insert into entries (
+                id,
+                word_id,
+                sense_order,
+                part_of_speech,
+                sense_label,
+                definition,
+                definition_source,
+                created_at,
+                updated_at
+            )
+            values (
+                ?,
+                ?,
+                2,
+                'noun',
+                'mood in a place',
+                'the mood or feeling in a place',
+                'manual',
+                '2026-07-02T00:00:00+00:00',
+                '2026-07-02T00:00:00+00:00'
+            )
+            """,
+            (entry_id, word_id),
+        )
+        connection.execute(
+            """
+            insert into entry_examples (
+                id,
+                entry_id,
+                example_order,
+                sentence,
+                source,
+                is_primary,
+                created_at,
+                updated_at
+            )
+            values (
+                'example-atmosphere-2',
+                ?,
+                1,
+                'The atmosphere in the classroom helped students focus on the task.',
+                'manual',
+                1,
+                '2026-07-02T00:00:00+00:00',
+                '2026-07-02T00:00:00+00:00'
+            )
+            """,
+            (entry_id,),
+        )
+        connection.execute(
+            """
+            insert into cards (
+                id,
+                entry_id,
+                status,
+                stage,
+                due_at,
+                created_on,
+                last_reviewed_at
+            )
+            values (?, ?, 'learning', 0, ?, ?, null)
+            """,
+            (card_id, entry_id, today.isoformat(), today.isoformat()),
+        )
+
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
+    ).json()
+
+    assert session["totalCards"] == 1
+    assert session["cards"][0]["word"] == "atmosphere"
+    assert len(session["cards"][0]["cardIds"]) == 2
+    assert len(session["cards"][0]["senses"]) == 2
+    assert session["cards"][0]["senses"][1]["definition"] == "the mood or feeling in a place"
+
+
+def test_today_session_shows_all_senses_for_a_due_word_card(
+    tmp_path, monkeypatch
+):
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,atmosphere\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 1, "maxSensesPerWord": 1},
+    )
+
+    with connect() as connection:
+        word_id = connection.execute(
+            "select id from words where normalized_text = 'atmosphere'"
+        ).fetchone()["id"]
+        connection.execute(
+            """
+            insert into entries (
+                id,
+                word_id,
+                sense_order,
+                part_of_speech,
+                sense_label,
+                definition,
+                definition_source,
+                created_at,
+                updated_at
+            )
+            values (
+                'entry-atmosphere-future',
+                ?,
+                2,
+                'noun',
+                'mood in a place',
+                'the mood or feeling in a place',
+                'manual',
+                '2026-07-02T00:00:00+00:00',
+                '2026-07-02T00:00:00+00:00'
+            )
+            """,
+            (word_id,),
+        )
+        connection.execute(
+            """
+            insert into entry_examples (
+                id,
+                entry_id,
+                example_order,
+                sentence,
+                source,
+                is_primary,
+                created_at,
+                updated_at
+            )
+            values (
+                'example-atmosphere-future',
+                'entry-atmosphere-future',
+                1,
+                'A calm classroom atmosphere can improve concentration.',
+                'manual',
+                1,
+                '2026-07-02T00:00:00+00:00',
+                '2026-07-02T00:00:00+00:00'
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into cards (
+                id,
+                entry_id,
+                status,
+                stage,
+                due_at,
+                created_on,
+                last_reviewed_at
+            )
+            values (
+                'card-atmosphere-future',
+                'entry-atmosphere-future',
+                'learning',
+                0,
+                ?,
+                ?,
+                null
+            )
+            """,
+            (tomorrow.isoformat(), today.isoformat()),
+        )
+
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
+    ).json()
+
+    assert session["totalCards"] == 1
+    assert session["cards"][0]["cardIds"] != ["card-atmosphere-future"]
+    assert len(session["cards"][0]["cardIds"]) == 1
+    assert len(session["cards"][0]["senses"]) == 2
+    assert session["cards"][0]["senses"][1]["definition"] == "the mood or feeling in a place"
+
+
 def test_duplicate_same_day_review_returns_conflict_without_mutation(
     tmp_path, monkeypatch
 ):
