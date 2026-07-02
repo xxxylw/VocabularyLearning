@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -243,6 +244,8 @@ def test_prepare_schema_rejects_duplicate_entries_and_cards(
 def test_today_session_combines_ready_cards_and_records_known_review(
     tmp_path, monkeypatch
 ):
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     client = TestClient(create_app())
     client.post(
@@ -263,7 +266,7 @@ def test_today_session_combines_ready_cards_and_records_known_review(
 
     session = client.post(
         "/api/study/today/start",
-        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
     ).json()
 
     assert session["totalCards"] >= 1
@@ -276,19 +279,20 @@ def test_today_session_combines_ready_cards_and_records_known_review(
         f"/api/cards/{card['cardId']}/reviews",
         json={
             "rating": "known",
-            "reviewedAt": "2026-07-01T09:00:00+08:00",
-            "reviewedDate": "2026-07-01",
+            "reviewedAt": f"{today.isoformat()}T09:00:00+08:00",
+            "reviewedDate": today.isoformat(),
         },
     ).json()
 
     assert review["previousStage"] == 0
     assert review["nextStage"] == 1
-    assert review["nextDueAt"] == "2026-07-02"
+    assert review["nextDueAt"] == tomorrow.isoformat()
 
 
 def test_today_session_prepares_next_book_words_when_no_new_cards_exist(
     tmp_path, monkeypatch
 ):
+    today = date.today()
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     client = TestClient(create_app())
     client.post(
@@ -305,7 +309,7 @@ def test_today_session_prepares_next_book_words_when_no_new_cards_exist(
 
     session = client.post(
         "/api/study/today/start",
-        json={"date": "2026-07-01", "dailyNewWordTarget": 2},
+        json={"date": today.isoformat(), "dailyNewWordTarget": 2},
     ).json()
 
     assert session["totalCards"] == 2
@@ -313,9 +317,43 @@ def test_today_session_prepares_next_book_words_when_no_new_cards_exist(
     assert _count_rows("prepare_jobs") == 1
 
 
+def test_today_session_orders_new_cards_by_book_sequence(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/book-words/import",
+        files={
+            "file": (
+                "book_words.csv",
+                b"sequence_index,word\n1,charge\n2,decline\n3,appeal\n",
+                "text/csv",
+            )
+        },
+        data={"sourceName": "IELTS Book", "replaceExisting": "false"},
+    )
+    client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": 3, "maxSensesPerWord": 5},
+    )
+
+    session = client.post(
+        "/api/study/today/start",
+        json={"date": date.today().isoformat(), "dailyNewWordTarget": 3},
+    ).json()
+
+    assert [card["word"] for card in session["cards"]] == [
+        "charge",
+        "decline",
+        "appeal",
+    ]
+
+
 def test_duplicate_same_day_review_returns_conflict_without_mutation(
     tmp_path, monkeypatch
 ):
+    today = date.today()
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     client = TestClient(create_app())
     client.post(
@@ -335,13 +373,13 @@ def test_duplicate_same_day_review_returns_conflict_without_mutation(
     )
     session = client.post(
         "/api/study/today/start",
-        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
     ).json()
     card_id = session["cards"][0]["cardId"]
     review_payload = {
         "rating": "known",
-        "reviewedAt": "2026-07-01T09:00:00+08:00",
-        "reviewedDate": "2026-07-01",
+        "reviewedAt": f"{today.isoformat()}T09:00:00+08:00",
+        "reviewedDate": today.isoformat(),
     }
 
     first_review = client.post(
@@ -362,6 +400,8 @@ def test_duplicate_same_day_review_returns_conflict_without_mutation(
 
 
 def test_reviewed_date_controls_scheduling_date(tmp_path, monkeypatch):
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     client = TestClient(create_app())
     client.post(
@@ -381,7 +421,7 @@ def test_reviewed_date_controls_scheduling_date(tmp_path, monkeypatch):
     )
     session = client.post(
         "/api/study/today/start",
-        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
     ).json()
     card_id = session["cards"][0]["cardId"]
 
@@ -389,17 +429,19 @@ def test_reviewed_date_controls_scheduling_date(tmp_path, monkeypatch):
         f"/api/cards/{card_id}/reviews",
         json={
             "rating": "known",
-            "reviewedAt": "2026-06-30T16:30:00+00:00",
-            "reviewedDate": "2026-07-01",
+            "reviewedAt": f"{today.isoformat()}T00:30:00+00:00",
+            "reviewedDate": today.isoformat(),
         },
     ).json()
 
-    assert review["nextDueAt"] == "2026-07-02"
+    assert review["nextDueAt"] == tomorrow.isoformat()
 
 
 def test_today_session_limits_new_cards_but_includes_all_due_reviews(
     tmp_path, monkeypatch
 ):
+    today = date.today()
+    yesterday = today - timedelta(days=1)
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     client = TestClient(create_app())
     client.post(
@@ -429,16 +471,19 @@ def test_today_session_limits_new_cards_but_includes_all_due_reviews(
             """
             update cards
             set stage = 1,
-                due_at = '2026-07-01',
-                last_reviewed_at = '2026-06-30T09:00:00+08:00'
+                due_at = ?,
+                last_reviewed_at = ?
             where id = ?
             """,
-            [(card_ids[0],), (card_ids[1],)],
+            [
+                (today.isoformat(), f"{yesterday.isoformat()}T09:00:00+08:00", card_ids[0]),
+                (today.isoformat(), f"{yesterday.isoformat()}T09:00:00+08:00", card_ids[1]),
+            ],
         )
 
     session = client.post(
         "/api/study/today/start",
-        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
     ).json()
 
     queue_types = [card["queueType"] for card in session["cards"]]
@@ -448,6 +493,8 @@ def test_today_session_limits_new_cards_but_includes_all_due_reviews(
 
 
 def test_due_reviews_returns_cards_due_on_or_before_date(tmp_path, monkeypatch):
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     client = TestClient(create_app())
     client.post(
@@ -467,23 +514,23 @@ def test_due_reviews_returns_cards_due_on_or_before_date(tmp_path, monkeypatch):
     )
     session = client.post(
         "/api/study/today/start",
-        json={"date": "2026-07-01", "dailyNewWordTarget": 1},
+        json={"date": today.isoformat(), "dailyNewWordTarget": 1},
     ).json()
     card = session["cards"][0]
     client.post(
         f"/api/cards/{card['cardId']}/reviews",
         json={
             "rating": "known",
-            "reviewedAt": "2026-07-01T09:00:00+08:00",
-            "reviewedDate": "2026-07-01",
+            "reviewedAt": f"{today.isoformat()}T09:00:00+08:00",
+            "reviewedDate": today.isoformat(),
         },
     )
 
-    response = client.get("/api/reviews/due?date=2026-07-02")
+    response = client.get(f"/api/reviews/due?date={tomorrow.isoformat()}")
 
     assert response.status_code == 200
     due = response.json()
-    assert due["date"] == "2026-07-02"
+    assert due["date"] == tomorrow.isoformat()
     assert due["total"] == 1
     assert due["cards"][0]["cardId"] == card["cardId"]
     assert due["cards"][0]["queueType"] == "review"

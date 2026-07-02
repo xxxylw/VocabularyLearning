@@ -611,14 +611,25 @@ def _get_due_study_cards_by_queue(
                 entries.part_of_speech,
                 entries.sense_label,
                 entries.definition,
-                entries.chinese_note
+                entries.chinese_note,
+                (
+                    select min(book_words.sequence_index)
+                    from book_words
+                    where book_words.normalized_text = words.normalized_text
+                ) as book_sequence_index
             from cards
             join entries on entries.id = cards.entry_id
             join words on words.id = entries.word_id
             where cards.due_at <= ?
               and cards.status in ('new', 'learning', 'mastered')
               and {queue_condition}
-            order by cards.due_at, cards.created_on, words.text, entries.sense_order
+            order by
+                case when book_sequence_index is null then 1 else 0 end,
+                book_sequence_index,
+                entries.sense_order,
+                cards.due_at,
+                cards.created_on,
+                words.text
             {limit_clause}
             """,
             params,
