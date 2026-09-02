@@ -1,14 +1,28 @@
 import { useEffect, useState } from 'react';
+import type { CheckInRecord } from '../checkins';
+import { CheckInGrid } from './CheckInGrid';
 
 type TodayViewProps = {
   onStart: (newWordTarget: number) => void;
   isLoading: boolean;
   newWordTarget: number;
   onNewWordTargetChange: (newWordTarget: number) => void;
+  onPracticeSpelling?: () => void;
+  canPracticeSpelling?: boolean;
+  checkIns?: CheckInRecord[];
   error?: string | null;
 };
 
-export function TodayView({ onStart, isLoading, newWordTarget, onNewWordTargetChange, error }: TodayViewProps) {
+export function TodayView({
+  onStart,
+  isLoading,
+  newWordTarget,
+  onNewWordTargetChange,
+  onPracticeSpelling,
+  canPracticeSpelling = false,
+  checkIns = [],
+  error
+}: TodayViewProps) {
   const [targetDraft, setTargetDraft] = useState(String(newWordTarget));
 
   useEffect(() => {
@@ -68,8 +82,15 @@ export function TodayView({ onStart, isLoading, newWordTarget, onNewWordTargetCh
         <button className="primary-action" type="button" onClick={handleStart} disabled={isLoading}>
           {isLoading ? 'Preparing cards' : 'Start today cards'}
         </button>
+        {canPracticeSpelling && onPracticeSpelling ? (
+          <button className="secondary-action" type="button" onClick={onPracticeSpelling} disabled={isLoading}>
+            Practice spelling
+          </button>
+        ) : null}
         {error ? <p className="inline-error">{error}</p> : null}
       </div>
+
+      <CheckInGrid checkIns={checkIns} />
     </section>
   );
 }

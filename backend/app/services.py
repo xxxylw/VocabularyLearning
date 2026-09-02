@@ -10,7 +10,7 @@ import os
 from uuid import uuid4
 
 from app.db import connect
-from app.enrichment import FallbackEnrichmentProvider
+from app.enrichment import FallbackEnrichmentProvider, OxfordEnrichmentProvider
 from app.models import (
     DueReviewsResponse,
     ExportFullBookRequest,
@@ -43,14 +43,12 @@ class ExportNotReadyError(ValueError):
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     if request.scope != "next":
         raise ValueError("Only scope='next' is supported")
-    if request.overwriteExisting:
-        raise ValueError("overwriteExisting=true is not supported yet")
 
     count = request.count if request.count is not None else 20
     max_senses = max(request.maxSensesPerWord, 1)
     now = _utc_now()
     today = date.today().isoformat()
-    provider = FallbackEnrichmentProvider()
+    provider = _create_enrichment_provider()
 
     with connect() as connection:
         book_words = connection.execute(
@@ -77,6 +75,9 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                 normalized_text=normalized_text,
                 now=now,
             )
+
+            if request.overwriteExisting:
+                _delete_word_study_material(connection, word_id)
 
             if _word_card_count(connection, word_id) > 0:
                 connection.execute(
@@ -116,7 +117,7 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                         sense.part_of_speech,
                         sense.sense_label,
                         sense.definition,
-                        "fallback",
+                        sense.definition_source,
                         sense.chinese_note,
                         now,
                         now,
@@ -141,7 +142,7 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                         entry_id,
                         1,
                         sense.example,
-                        "fallback",
+                        sense.example_source,
                         1,
                         now,
                         now,
@@ -218,17 +219,25 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
 def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
     study_date = request.date or date.today()
     review_cards = _get_due_review_cards(study_date)
-    new_cards = _get_due_new_cards(study_date, request.dailyNewWordTarget)
-    if len(new_cards) < request.dailyNewWordTarget:
+    new_word_target_remaining = max(
+        request.dailyNewWordTarget - _count_new_words_studied_on(study_date),
+        0,
+    )
+    new_cards = (
+        _get_due_new_cards(study_date, new_word_target_remaining)
+        if new_word_target_remaining > 0
+        else []
+    )
+    if len(new_cards) < new_word_target_remaining:
         prepare_book_words(
             PrepareJobRequest(
                 scope="next",
-                count=request.dailyNewWordTarget - len(new_cards),
+                count=new_word_target_remaining - len(new_cards),
                 maxSensesPerWord=5,
                 overwriteExisting=False,
             )
         )
-        new_cards = _get_due_new_cards(study_date, request.dailyNewWordTarget)
+        new_cards = _get_due_new_cards(study_date, new_word_target_remaining)
 
     cards = review_cards + new_cards
     return TodaySessionResponse(totalCards=len(cards), cards=cards)
@@ -382,6 +391,43 @@ def _word_card_count(connection, word_id: str) -> int:
         (word_id,),
     ).fetchone()
     return row["total"]
+
+
+def _delete_word_study_material(connection, word_id: str) -> None:
+    entry_rows = connection.execute(
+        "select id from entries where word_id = ?",
+        (word_id,),
+    ).fetchall()
+    if not entry_rows:
+        return
+
+    entry_ids = [row["id"] for row in entry_rows]
+    placeholders = ", ".join("?" for _ in entry_ids)
+    card_rows = connection.execute(
+        f"select id from cards where entry_id in ({placeholders})",
+        tuple(entry_ids),
+    ).fetchall()
+    card_ids = [row["id"] for row in card_rows]
+
+    if card_ids:
+        card_placeholders = ", ".join("?" for _ in card_ids)
+        connection.execute(
+            f"delete from reviews where card_id in ({card_placeholders})",
+            tuple(card_ids),
+        )
+        connection.execute(
+            f"delete from cards where id in ({card_placeholders})",
+            tuple(card_ids),
+        )
+
+    connection.execute(
+        f"delete from entry_examples where entry_id in ({placeholders})",
+        tuple(entry_ids),
+    )
+    connection.execute(
+        f"delete from entries where id in ({placeholders})",
+        tuple(entry_ids),
+    )
 
 
 def _get_full_book_export_readiness(connection) -> ExportReadinessError:
@@ -606,6 +652,7 @@ def _get_due_study_cards_by_queue(
                 entries.part_of_speech,
                 entries.sense_label,
                 entries.definition,
+                entries.definition_source,
                 entries.chinese_note,
                 (
                     select min(book_words.sequence_index)
@@ -636,6 +683,35 @@ def _get_due_study_cards_by_queue(
         return cards if limit is None else cards[:limit]
 
 
+def _count_new_words_studied_on(study_date: date) -> int:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            select count(*) as total
+            from (
+                select words.normalized_text
+                from reviews
+                join cards on cards.id = reviews.card_id
+                join entries on entries.id = cards.entry_id
+                join words on words.id = entries.word_id
+                where substr(reviews.reviewed_at, 1, 10) = ?
+                  and not exists (
+                    select 1
+                    from reviews previous_reviews
+                    join cards previous_cards on previous_cards.id = previous_reviews.card_id
+                    join entries previous_entries on previous_entries.id = previous_cards.entry_id
+                    where previous_entries.word_id = entries.word_id
+                      and substr(previous_reviews.reviewed_at, 1, 10) < ?
+                  )
+                group by words.normalized_text
+            )
+            """,
+            (study_date.isoformat(), study_date.isoformat()),
+        ).fetchone()
+
+    return row["total"]
+
+
 def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
     due_card_ids_by_word: dict[str, list[str]] = {}
     queue_type_by_word: dict[str, Literal["new", "review"]] = {}
@@ -662,6 +738,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
             entries.part_of_speech,
             entries.sense_label,
             entries.definition,
+            entries.definition_source,
             entries.chinese_note,
             (
                 select min(book_words.sequence_index)
@@ -726,11 +803,19 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
                 partOfSpeech=row["part_of_speech"],
                 senseLabel=row["sense_label"],
                 definition=row["definition"],
+                definitionSource=row["definition_source"],
                 examples=examples_by_card[row["card_id"]],
                 chineseNote=row["chinese_note"],
             )
             for row in rows
         ]
+        # A card is "degraded" when any of its senses came from the fallback
+        # enrichment provider. Frontend uses this to swap fake text for a
+        # "Definition preparing" placeholder so the user is never shown
+        # template content as if it were real Oxford data.
+        degraded = any(
+            sense.definitionSource == "fallback" for sense in senses
+        )
         study_cards.append(
             StudyCardResponse(
                 cardId=first["card_id"],
@@ -739,6 +824,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
                 partOfSpeech=first["part_of_speech"],
                 senseLabel=first["sense_label"],
                 definition=first["definition"],
+                definitionSource=first["definition_source"],
                 examples=examples_by_card[first["card_id"]],
                 chineseNote=first["chinese_note"],
                 senses=senses,
@@ -746,6 +832,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
                 stage=first["stage"],
                 dueAt=date.fromisoformat(first["due_at"]),
                 queueType=queue_type_by_word[first["normalized_text"]],
+                degraded=degraded,
             )
         )
 
@@ -768,3 +855,10 @@ def _review_exists_on_date(connection, card_id: str, reviewed_on: date) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _create_enrichment_provider():
+    source = os.environ.get("VOCAB_ENRICHMENT_SOURCE", "oxford").lower()
+    if source == "fallback":
+        return FallbackEnrichmentProvider()
+    return OxfordEnrichmentProvider()

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exportFullBook, getBookProgress, reviewCard, startTodaySession } from './api';
+import { exportFullBook, getBookProgress, lookupOxfordWord, reviewCard, startTodaySession } from './api';
 
 describe('api', () => {
   afterEach(() => {
@@ -49,6 +49,39 @@ describe('api', () => {
     await expect(getBookProgress()).resolves.toEqual({ totalWords: 0, nextSequenceIndex: null });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/book-words/progress');
+  });
+
+  it('looks up a selected word through the local Oxford proxy', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            word: 'atmosphere',
+            sourceUrl: 'https://www.oxfordlearnersdictionaries.com/definition/english/atmosphere?q=atmosphere',
+            senses: [
+              {
+                partOfSpeech: 'noun',
+                definition: 'the mixture of gases that surrounds the earth',
+                example: 'Wind power does not release carbon dioxide into the atmosphere.'
+              }
+            ]
+          })
+        )
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(lookupOxfordWord('atmosphere')).resolves.toMatchObject({
+      word: 'atmosphere',
+      senses: [
+        {
+          partOfSpeech: 'noun',
+          definition: 'the mixture of gases that surrounds the earth'
+        }
+      ]
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/lookup/oxford?word=atmosphere');
   });
 
   it('reviews a card with ISO reviewedAt and local YYYY-MM-DD reviewedDate', async () => {

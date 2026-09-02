@@ -1,3 +1,12 @@
+export type DefinitionSource =
+  | 'manual'
+  | 'oxford_api'
+  | 'open_api'
+  | 'imported'
+  | 'ai'
+  | 'experimental_html'
+  | 'fallback';
+
 export type StudyCard = {
   cardId: string;
   cardIds: string[];
@@ -5,6 +14,7 @@ export type StudyCard = {
   partOfSpeech: string;
   senseLabel: string;
   definition: string;
+  definitionSource: DefinitionSource;
   examples: Array<{ exampleId: string; sentence: string; isPrimary: boolean }>;
   chineseNote: string | null;
   senses: Array<{
@@ -12,10 +22,12 @@ export type StudyCard = {
     partOfSpeech: string;
     senseLabel: string;
     definition: string;
+    definitionSource: DefinitionSource;
     examples: Array<{ exampleId: string; sentence: string; isPrimary: boolean }>;
     chineseNote: string | null;
   }>;
   queueType: 'new' | 'review';
+  degraded: boolean;
 };
 
 export type ReviewRating = 'known' | 'uncertain' | 'unknown';
@@ -33,6 +45,28 @@ export type BookProgress = {
 export type ExportResult =
   | { status: 'ready'; downloadUrl: string; cardCount: number }
   | { status: 'missing'; totalWords: number; preparedWords: number; missingWords: number };
+
+export type OxfordLookupResult = {
+  word: string;
+  sourceUrl: string;
+  senses: Array<{
+    partOfSpeech: string;
+    definition: string;
+    example: string | null;
+  }>;
+};
+
+export type Pronunciation = {
+  word: string;
+  ipa: string | null;
+  audioUrl: string | null;
+  sourceUrl: string;
+  audioSourceUrl: string | null;
+  attribution: string | null;
+  license: string | null;
+  licenseUrl: string | null;
+  status: 'ready' | 'unavailable';
+};
 
 type PostJsonOptions = {
   allowConflictData?: boolean;
@@ -140,6 +174,14 @@ export function startTodaySession(dailyNewWordTarget = 20): Promise<TodaySession
 
 export function getBookProgress(): Promise<BookProgress> {
   return getJson<BookProgress>('/api/book-words/progress');
+}
+
+export function lookupOxfordWord(word: string): Promise<OxfordLookupResult> {
+  return getJson<OxfordLookupResult>(`/api/lookup/oxford?word=${encodeURIComponent(word)}`);
+}
+
+export function lookupPronunciation(word: string): Promise<Pronunciation> {
+  return getJson<Pronunciation>(`/api/pronunciations/${encodeURIComponent(word)}`);
 }
 
 export function reviewCard(cardId: string, rating: ReviewRating): Promise<unknown> {

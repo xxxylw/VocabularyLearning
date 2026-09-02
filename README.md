@@ -7,6 +7,24 @@ VocabularyLearning is an MVP for turning a vocabulary book word list into study 
 - Python >= 3.11
 - pnpm
 
+## One-Command Local Start
+
+From the repository root:
+
+```powershell
+.\start.ps1
+```
+
+Open `http://127.0.0.1:5173`.
+
+The script creates `backend/.venv` when needed, installs backend dependencies, installs frontend dependencies when `frontend/node_modules` is missing, starts the FastAPI backend on `http://127.0.0.1:8000`, and starts the Vite frontend on `http://127.0.0.1:5173`.
+
+Logs and PID files are written to `tmp/`. To stop services started by the script:
+
+```powershell
+.\stop.ps1
+```
+
 ## Backend Setup And Run
 
 From the repository root:

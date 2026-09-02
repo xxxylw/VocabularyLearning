@@ -46,11 +46,33 @@ class StudyExampleResponse(BaseModel):
     isPrimary: bool
 
 
+DefinitionSource = Literal[
+    "manual",
+    "oxford_api",
+    "open_api",
+    "imported",
+    "ai",
+    "experimental_html",
+    "fallback",
+]
+
+ExampleSource = Literal[
+    "manual",
+    "oxford_api",
+    "ai",
+    "template",
+    "imported",
+    "experimental_html",
+    "fallback",
+]
+
+
 class StudySenseResponse(BaseModel):
     cardId: str
     partOfSpeech: str
     senseLabel: str
     definition: str
+    definitionSource: DefinitionSource
     examples: list[StudyExampleResponse]
     chineseNote: str | None
 
@@ -62,6 +84,7 @@ class StudyCardResponse(BaseModel):
     partOfSpeech: str
     senseLabel: str
     definition: str
+    definitionSource: DefinitionSource
     examples: list[StudyExampleResponse]
     chineseNote: str | None
     senses: list[StudySenseResponse]
@@ -69,6 +92,7 @@ class StudyCardResponse(BaseModel):
     stage: int
     dueAt: Date
     queueType: Literal["new", "review"]
+    degraded: bool = False
 
 
 class TodaySessionResponse(BaseModel):
@@ -95,6 +119,30 @@ class DueReviewsResponse(BaseModel):
     date: Date
     total: int
     cards: list[StudyCardResponse]
+
+
+class OxfordLookupSenseResponse(BaseModel):
+    partOfSpeech: str
+    definition: str
+    example: str | None = None
+
+
+class OxfordLookupResponse(BaseModel):
+    word: str
+    sourceUrl: str
+    senses: list[OxfordLookupSenseResponse]
+
+
+class PronunciationResponse(BaseModel):
+    word: str
+    ipa: str | None = None
+    audioUrl: str | None = None
+    sourceUrl: str
+    audioSourceUrl: str | None = None
+    attribution: str | None = None
+    license: str | None = None
+    licenseUrl: str | None = None
+    status: Literal["ready", "unavailable"]
 
 
 class ExportFullBookRequest(BaseModel):

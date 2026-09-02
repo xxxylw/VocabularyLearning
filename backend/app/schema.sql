@@ -102,6 +102,14 @@ CREATE TABLE IF NOT EXISTS settings (
     value text not null
 );
 
+CREATE TABLE IF NOT EXISTS pronunciation_cache (
+    normalized_word text primary key,
+    response_json text not null,
+    status text not null check (status in ('ready', 'unavailable')),
+    retry_after text null,
+    cached_at text not null
+);
+
 CREATE TABLE IF NOT EXISTS prepare_jobs (
     id text primary key,
     scope text not null,

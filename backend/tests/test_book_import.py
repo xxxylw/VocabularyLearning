@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.db import connect
 from app.main import create_app
+from app.repositories import import_book_words_markdown
 
 
 def test_import_book_words_csv_creates_ordered_words(tmp_path, monkeypatch):
@@ -27,6 +28,56 @@ def test_import_book_words_csv_creates_ordered_words(tmp_path, monkeypatch):
     progress = client.get("/api/book-words/progress").json()
     assert progress["totalWords"] == 2
     assert progress["nextSequenceIndex"] == 1
+
+
+def test_import_book_words_markdown_creates_ordered_words(tmp_path, monkeypatch):
+    db_path = tmp_path / "vocabulary.sqlite"
+    monkeypatch.setenv("VOCAB_DB_PATH", str(db_path))
+
+    markdown = b"""# VOCABULARY For IELTS
+
+## Ordered Vocabulary
+
+1. atmosphere
+2. carbon dioxide
+3. New Zealand
+"""
+
+    response = import_book_words_markdown(
+        markdown,
+        source_name="IELTS Book",
+        replace_existing=False,
+    )
+
+    assert response.imported == 3
+    assert response.skipped == 0
+
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            select sequence_index, word_text, normalized_text
+            from book_words
+            order by sequence_index
+            """
+        ).fetchall()
+
+    assert [dict(row) for row in rows] == [
+        {
+            "sequence_index": 1,
+            "word_text": "atmosphere",
+            "normalized_text": "atmosphere",
+        },
+        {
+            "sequence_index": 2,
+            "word_text": "carbon dioxide",
+            "normalized_text": "carbon dioxide",
+        },
+        {
+            "sequence_index": 3,
+            "word_text": "New Zealand",
+            "normalized_text": "new zealand",
+        },
+    ]
 
 
 def test_book_progress_skips_ready_words(tmp_path, monkeypatch):

@@ -117,6 +117,26 @@ def import_book_words_csv(
     )
 
 
+def import_book_words_markdown(
+    file_bytes: bytes, source_name: str, replace_existing: bool
+) -> ImportBookWordsResponse:
+    markdown_text = file_bytes.decode("utf-8-sig")
+    csv_rows = ["sequence_index,word"]
+    for line in markdown_text.splitlines():
+        match = re.match(r"^\s*(\d+)\.\s+(.+?)\s*$", line)
+        if match is None:
+            continue
+        sequence_index = match.group(1)
+        word = match.group(2).replace('"', '""')
+        csv_rows.append(f'{sequence_index},"{word}"')
+
+    return import_book_words_csv(
+        "\n".join(csv_rows).encode("utf-8"),
+        source_name=source_name,
+        replace_existing=replace_existing,
+    )
+
+
 def get_book_progress() -> BookProgressResponse:
     with connect() as connection:
         row = connection.execute(
