@@ -123,31 +123,32 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                         now,
                     ),
                 )
-                connection.execute(
-                    """
-                    insert into entry_examples (
-                        id,
-                        entry_id,
-                        example_order,
-                        sentence,
-                        source,
-                        is_primary,
-                        created_at,
-                        updated_at
+                if sense.example:
+                    connection.execute(
+                        """
+                        insert into entry_examples (
+                            id,
+                            entry_id,
+                            example_order,
+                            sentence,
+                            source,
+                            is_primary,
+                            created_at,
+                            updated_at
+                        )
+                        values (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(uuid4()),
+                            entry_id,
+                            1,
+                            sense.example,
+                            sense.example_source or "fallback",
+                            1,
+                            now,
+                            now,
+                        ),
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(uuid4()),
-                        entry_id,
-                        1,
-                        sense.example,
-                        sense.example_source,
-                        1,
-                        now,
-                        now,
-                    ),
-                )
                 connection.execute(
                     """
                     insert into cards (

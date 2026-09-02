@@ -297,12 +297,11 @@ export function StudySession({
         <div className="queue-pill">{card.queueType}</div>
         <div className="card-front">
           <h1 id="study-word" className="word-headline">{card.word}</h1>
-          <div className="phonetics-slot" aria-label="Pronunciation placeholder">
-            <span className="phonetics-placeholder">Pronunciation · coming in v2</span>
-            {onLookupPronunciation ? (
-              <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} mode="placeholder" />
-            ) : null}
-          </div>
+          {/* PRD decision 1: render real UK/US IPA when data exists; when the
+              panel has no real IPA it renders nothing (no placeholder copy). */}
+          {onLookupPronunciation ? (
+            <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} />
+          ) : null}
         </div>
 
         {!isRevealed ? (
@@ -320,7 +319,10 @@ export function StudySession({
 
             <div className="sense-list" onDoubleClick={() => void handleLookupSelection()}>
               {visibleSenses.map((sense, index) => {
-                const primaryExample = sense.examples.find((example) => example.isPrimary) ?? sense.examples[0];
+                // PRD decision 2: show every real example sentence attached
+                // to this sense (usually 1-2 from Oxford); senses without
+                // examples get no example block at all.
+                const senseExamples = sense.examples;
                 const shouldShowSenseLabel =
                   sense.senseLabel && isDistinctSenseLabel(sense.senseLabel, sense.definition);
                 const isPrimary = index === 0;
@@ -348,9 +350,11 @@ export function StudySession({
                       )}
                     </div>
 
-                    {primaryExample && !senseIsDegraded ? (
+                    {senseExamples.length > 0 && !senseIsDegraded ? (
                       <div className="example-block">
-                        <p>{primaryExample.sentence}</p>
+                        {senseExamples.map((example) => (
+                          <p key={example.exampleId}>{example.sentence}</p>
+                        ))}
                       </div>
                     ) : null}
 

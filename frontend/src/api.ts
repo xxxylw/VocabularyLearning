@@ -59,6 +59,8 @@ export type OxfordLookupResult = {
 export type Pronunciation = {
   word: string;
   ipa: string | null;
+  ipaUk?: string | null;
+  ipaUs?: string | null;
   audioUrl: string | null;
   sourceUrl: string;
   audioSourceUrl: string | null;

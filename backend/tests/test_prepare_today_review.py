@@ -42,7 +42,8 @@ def test_prepare_next_creates_one_or_more_cards_per_word(tmp_path, monkeypatch):
     assert body["needsReview"] == 0
     assert _count_rows("words") == 2
     assert _count_rows("entries") == 2
-    assert _count_rows("entry_examples") == 2
+    # fallback enrichment no longer emits template examples (PRD decision 2)
+    assert _count_rows("entry_examples") == 0
     assert _count_rows("cards") == 2
     assert _count_rows("prepare_jobs") == 1
     assert _count_prepared_graph_rows() == 2
@@ -172,7 +173,7 @@ def test_prepare_next_does_not_duplicate_cards_for_existing_word(
     assert body["readyCards"] == 0
     assert _count_rows("cards") == 1
     assert _count_rows("entries") == 1
-    assert _count_rows("entry_examples") == 1
+    assert _count_rows("entry_examples") == 0
 
 
 def test_prepare_next_overwrites_existing_study_material(tmp_path, monkeypatch):
@@ -378,7 +379,8 @@ def test_today_session_combines_ready_cards_and_records_known_review(
     card = session["cards"][0]
     assert card["word"] == "charge"
     assert card["definition"]
-    assert card["examples"][0]["sentence"]
+    # fallback sense has no example rows anymore — no template text
+    assert card["examples"] == []
 
     review = client.post(
         f"/api/cards/{card['cardId']}/reviews",
@@ -1163,7 +1165,6 @@ def _count_prepared_graph_rows() -> int:
             select count(*) as total
             from words
             join entries on entries.word_id = words.id
-            join entry_examples on entry_examples.entry_id = entries.id
             join cards on cards.entry_id = entries.id
             """
         ).fetchone()

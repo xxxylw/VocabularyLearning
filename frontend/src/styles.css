@@ -1014,21 +1014,12 @@ a {
   overflow-wrap: anywhere;
 }
 
-.phonetics-slot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 38px;
+.pronunciation-ipa-item {
+  white-space: nowrap;
 }
 
-.phonetics-placeholder {
-  margin: 0;
+.pronunciation-ipa-separator {
   color: #8b8175;
-  font-size: 0.92rem;
-  font-style: italic;
-  letter-spacing: 0.01em;
 }
 
 .definition-preparing {

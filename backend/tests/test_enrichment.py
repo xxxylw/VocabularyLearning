@@ -24,7 +24,7 @@ def test_oxford_enrichment_provider_uses_oxford_examples(monkeypatch):
     assert senses[0].example == "Wind power doesn't release carbon dioxide into the atmosphere."
 
 
-def test_oxford_enrichment_provider_writes_ielts_style_fallback_examples(monkeypatch):
+def test_oxford_enrichment_provider_leaves_example_empty_when_source_has_none(monkeypatch):
     def fake_lookup(word: str) -> OxfordLookupResponse:
         return OxfordLookupResponse(
             word=word,
@@ -42,8 +42,15 @@ def test_oxford_enrichment_provider_writes_ielts_style_fallback_examples(monkeyp
 
     senses = OxfordEnrichmentProvider().prepare("hydrosphere", 5)
 
-    assert senses[0].example == (
-        "In an IELTS essay, hydrosphere can help explain environmental "
-        "change, resource use, or long-term planning."
-    )
-    assert senses[0].example_source == "fallback"
+    assert senses[0].example is None
+    assert senses[0].example_source is None
+
+
+def test_fallback_enrichment_provider_emits_no_template_example():
+    from app.enrichment import FallbackEnrichmentProvider
+
+    senses = FallbackEnrichmentProvider().prepare("hydrosphere", 5)
+
+    assert senses[0].definition_source == "fallback"
+    assert senses[0].example is None
+    assert senses[0].example_source is None

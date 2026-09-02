@@ -136,6 +136,8 @@ class OxfordLookupResponse(BaseModel):
 class PronunciationResponse(BaseModel):
     word: str
     ipa: str | None = None
+    ipaUk: str | None = None
+    ipaUs: str | None = None
     audioUrl: str | None = None
     sourceUrl: str
     audioSourceUrl: str | None = None

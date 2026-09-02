@@ -11,10 +11,12 @@ class PreparedSense:
     part_of_speech: str
     sense_label: str
     definition: str
-    example: str
+    # None = the source page has no example for this sense; we render no
+    # example block rather than inventing template text (PRD decision 2).
+    example: str | None = None
     chinese_note: str | None = None
     definition_source: EnrichmentSource = "fallback"
-    example_source: EnrichmentSource = "fallback"
+    example_source: EnrichmentSource | None = None
 
 
 class FallbackEnrichmentProvider:
@@ -24,13 +26,10 @@ class FallbackEnrichmentProvider:
                 part_of_speech="word",
                 sense_label="general IELTS use",
                 definition=f"A learner-friendly IELTS study meaning for '{word}'.",
-                example=(
-                    f"In IELTS writing, students should use '{word}' accurately "
-                    "and naturally."
-                ),
+                example=None,
                 chinese_note=None,
                 definition_source="fallback",
-                example_source="fallback",
+                example_source=None,
             )
         ]
         return senses[:max_senses]
@@ -51,19 +50,12 @@ class OxfordEnrichmentProvider:
                 part_of_speech=sense.partOfSpeech,
                 sense_label=sense.definition,
                 definition=sense.definition,
-                example=sense.example or self._fallback_example(word),
+                example=sense.example,
                 chinese_note=None,
                 definition_source="oxford_api",
-                example_source="oxford_api" if sense.example else "fallback",
+                example_source="oxford_api" if sense.example else None,
             )
             for sense in lookup.senses[:max_senses]
         ]
 
         return senses or self.fallback.prepare(word, max_senses)
-
-    @staticmethod
-    def _fallback_example(word: str) -> str:
-        return (
-            f"In an IELTS essay, {word} can help explain environmental "
-            "change, resource use, or long-term planning."
-        )
