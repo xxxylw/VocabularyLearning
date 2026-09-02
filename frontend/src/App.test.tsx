@@ -12,6 +12,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 0, cards: [] }))
@@ -23,6 +24,7 @@ describe('App', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
+    expect(await screen.findByText('单词书：雅思词汇真经')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /start today cards/i }));
 
     expect(await screen.findByText('No book words imported yet.')).toBeInTheDocument();
@@ -33,6 +35,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [studyCard()] }))
@@ -58,6 +61,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [studyCard()] }))
@@ -94,6 +98,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [studyCard()] }))
@@ -115,6 +120,21 @@ describe('App', () => {
     expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
   });
 });
+
+function currentBookResponse() {
+  return {
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify({
+      id: 'book-default',
+      title: '雅思词汇真经',
+      description: 'IELTS vocabulary book imported from the default CSV.',
+      source: 'book_words.csv',
+      createdAt: '2026-07-01T00:00:00Z',
+      updatedAt: '2026-07-01T00:00:00Z',
+      totalWords: 3383
+    }))
+  };
+}
 
 function studyCard() {
   return {

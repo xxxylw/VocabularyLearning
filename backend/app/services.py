@@ -9,9 +9,11 @@ import json
 import os
 from uuid import uuid4
 
+from app.books import get_current_book_id
 from app.db import connect
 from app.enrichment import FallbackEnrichmentProvider, OxfordEnrichmentProvider
 from app.models import (
+    BookSummaryResponse,
     DueReviewsResponse,
     ExportFullBookRequest,
     ExportFullBookResponse,
@@ -40,6 +42,30 @@ class ExportNotReadyError(ValueError):
         self.readiness = readiness
 
 
+def get_current_book() -> BookSummaryResponse:
+    with connect() as connection:
+        book_id = get_current_book_id(connection)
+        book_row = connection.execute(
+            "select id, title, description, source, created_at, updated_at"
+            " from vocabulary_books where id = ?",
+            (book_id,),
+        ).fetchone()
+        word_count_row = connection.execute(
+            "select count(*) as total from book_words where book_id = ?",
+            (book_id,),
+        ).fetchone()
+
+    return BookSummaryResponse(
+        id=book_row["id"],
+        title=book_row["title"],
+        description=book_row["description"],
+        source=book_row["source"],
+        createdAt=book_row["created_at"],
+        updatedAt=book_row["updated_at"],
+        totalWords=word_count_row["total"],
+    )
+
+
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     if request.scope != "next":
         raise ValueError("Only scope='next' is supported")
@@ -51,15 +77,17 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     provider = _create_enrichment_provider()
 
     with connect() as connection:
+        book_id = get_current_book_id(connection)
         book_words = connection.execute(
             """
             select id, word_text, normalized_text
             from book_words
             where import_status in ('pending', 'needs_review')
+              and book_id = ?
             order by sequence_index
             limit ?
             """,
-            (count,),
+            (book_id, count),
         ).fetchall()
 
         job_id = str(uuid4())
@@ -432,8 +460,10 @@ def _delete_word_study_material(connection, word_id: str) -> None:
 
 
 def _get_full_book_export_readiness(connection) -> ExportReadinessError:
+    book_id = get_current_book_id(connection)
     total_row = connection.execute(
-        "select count(*) as total from book_words"
+        "select count(*) as total from book_words where book_id = ?",
+        (book_id,),
     ).fetchone()
     prepared_row = connection.execute(
         """
@@ -451,7 +481,9 @@ def _get_full_book_export_readiness(connection) -> ExportReadinessError:
             end
         ) as total
         from book_words
-        """
+        where book_id = ?
+        """,
+        (book_id,),
     ).fetchone()
 
     total_words = total_row["total"]
@@ -464,6 +496,7 @@ def _get_full_book_export_readiness(connection) -> ExportReadinessError:
 
 
 def _get_full_book_export_cards(connection) -> list[dict[str, object]]:
+    book_id = get_current_book_id(connection)
     card_rows = connection.execute(
         """
         select
@@ -479,9 +512,11 @@ def _get_full_book_export_cards(connection) -> list[dict[str, object]]:
         join words on words.normalized_text = book_words.normalized_text
         join entries on entries.word_id = words.id
         join cards on cards.entry_id = entries.id
+        where book_words.book_id = ?
         group by cards.id
         order by first_sequence_index, entries.sense_order, words.text
-        """
+        """,
+        (book_id,),
     ).fetchall()
     if not card_rows:
         return []
@@ -640,6 +675,7 @@ def _get_due_study_cards_by_queue(
     limit: int | None,
 ) -> list[StudyCardResponse]:
     with connect() as connection:
+        book_id = get_current_book_id(connection)
         card_rows = connection.execute(
             f"""
             select
@@ -659,6 +695,7 @@ def _get_due_study_cards_by_queue(
                     select min(book_words.sequence_index)
                     from book_words
                     where book_words.normalized_text = words.normalized_text
+                      and book_words.book_id = ?
                 ) as book_sequence_index
             from cards
             join entries on entries.id = cards.entry_id
@@ -674,7 +711,7 @@ def _get_due_study_cards_by_queue(
                 cards.created_on,
                 words.text
             """,
-            (due_date.isoformat(),),
+            (book_id, due_date.isoformat()),
         ).fetchall()
 
         if not card_rows:
@@ -726,6 +763,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
 
     normalized_words = list(due_card_ids_by_word)
     normalized_placeholders = ", ".join("?" for _ in normalized_words)
+    book_id = get_current_book_id(connection)
     all_sense_rows = connection.execute(
         f"""
         select
@@ -745,6 +783,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
                 select min(book_words.sequence_index)
                 from book_words
                 where book_words.normalized_text = words.normalized_text
+                  and book_words.book_id = ?
             ) as book_sequence_index
         from cards
         join entries on entries.id = cards.entry_id
@@ -759,7 +798,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
             cards.created_on,
             words.text
         """,
-        tuple(normalized_words),
+        (book_id, *normalized_words),
     ).fetchall()
 
     card_ids = [row["card_id"] for row in all_sense_rows]

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { exportFullBook, getBookProgress, lookupOxfordWord, lookupPronunciation, reviewCard, startTodaySession } from './api';
+import { useEffect, useState } from 'react';
+import { exportFullBook, getBookProgress, getCurrentBook, lookupOxfordWord, lookupPronunciation, reviewCard, startTodaySession } from './api';
 import type { ReviewRating, StudyCard } from './api';
 import { buildCheckInRecord, loadCheckIns, saveCheckIn } from './checkins';
 import { ExportView } from './components/ExportView';
@@ -19,6 +19,24 @@ export function App() {
   const [emptyReason, setEmptyReason] = useState<EmptyReason>('no-cards');
   const [checkIns, setCheckIns] = useState(() => loadCheckIns());
   const [lastCompletedCards, setLastCompletedCards] = useState<StudyCard[]>([]);
+  const [bookTitle, setBookTitle] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentBook()
+      .then((book) => {
+        if (!cancelled) {
+          setBookTitle(book.title);
+        }
+      })
+      .catch(() => {
+        // Book title is informational; keep the page usable when the
+        // endpoint is unavailable (e.g. backend still starting up).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleStart(target: number) {
     setIsLoading(true);
@@ -100,6 +118,7 @@ export function App() {
         onPracticeSpelling={() => startSpellingPractice(lastCompletedCards)}
         checkIns={checkIns}
         error={error}
+        bookTitle={bookTitle}
       />
       {screen === 'empty' ? (
         <section className="empty-state" aria-live="polite">

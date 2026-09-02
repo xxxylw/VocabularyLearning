@@ -42,6 +42,16 @@ export type BookProgress = {
   nextSequenceIndex: number | null;
 };
 
+export type BookInfo = {
+  id: string;
+  title: string;
+  description: string | null;
+  source: string | null;
+  createdAt: string;
+  updatedAt: string;
+  totalWords: number;
+};
+
 export type ExportResult =
   | { status: 'ready'; downloadUrl: string; cardCount: number }
   | { status: 'missing'; totalWords: number; preparedWords: number; missingWords: number };
@@ -176,6 +186,10 @@ export function startTodaySession(dailyNewWordTarget = 20): Promise<TodaySession
 
 export function getBookProgress(): Promise<BookProgress> {
   return getJson<BookProgress>('/api/book-words/progress');
+}
+
+export function getCurrentBook(): Promise<BookInfo> {
+  return getJson<BookInfo>('/api/books/current');
 }
 
 export function lookupOxfordWord(word: string): Promise<OxfordLookupResult> {

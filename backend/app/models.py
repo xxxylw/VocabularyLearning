@@ -18,6 +18,16 @@ class BookProgressResponse(BaseModel):
     nextSequenceIndex: int | None
 
 
+class BookSummaryResponse(BaseModel):
+    id: str
+    title: str
+    description: str | None
+    source: str | None
+    createdAt: str
+    updatedAt: str
+    totalWords: int
+
+
 class PrepareJobRequest(BaseModel):
     scope: str
     count: int | None = Field(default=None, gt=0)

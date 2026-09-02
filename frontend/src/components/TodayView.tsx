@@ -11,6 +11,7 @@ type TodayViewProps = {
   canPracticeSpelling?: boolean;
   checkIns?: CheckInRecord[];
   error?: string | null;
+  bookTitle?: string | null;
 };
 
 export function TodayView({
@@ -21,7 +22,8 @@ export function TodayView({
   onPracticeSpelling,
   canPracticeSpelling = false,
   checkIns = [],
-  error
+  error,
+  bookTitle
 }: TodayViewProps) {
   const [targetDraft, setTargetDraft] = useState(String(newWordTarget));
 
@@ -50,6 +52,11 @@ export function TodayView({
     <section className="today-view" aria-labelledby="today-title">
       <div className="today-copy">
         <p className="eyebrow">Today</p>
+        {bookTitle ? (
+          <p className="book-title" data-testid="current-book-title">
+            单词书：{bookTitle}
+          </p>
+        ) : null}
         <h1 id="today-title">Ready for today&apos;s cards</h1>
         <p className="today-note">
           A quiet desk, a short queue, and a focused pass through the words waiting for you.

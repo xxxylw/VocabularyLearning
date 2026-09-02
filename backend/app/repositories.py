@@ -6,6 +6,7 @@ import io
 import re
 from uuid import uuid4
 
+from app.books import ensure_default_book, get_current_book_id
 from app.db import connect
 from app.models import BookProgressResponse, ImportBookWordsResponse
 
@@ -24,6 +25,7 @@ def import_book_words_csv(
 
     now = _utc_now()
     with connect() as connection:
+        book_id = ensure_default_book(connection)["id"]
         source = connection.execute(
             "select id from sources where type = ? and name = ? order by created_at limit 1",
             ("csv", source_name),
@@ -42,13 +44,16 @@ def import_book_words_csv(
 
         if replace_existing:
             connection.execute(
-                "delete from book_words where source_id = ?",
-                (source_id,),
+                "delete from book_words where source_id = ? and book_id = ?",
+                (source_id, book_id),
             )
 
         existing_rows = connection.execute(
-            "select sequence_index, normalized_text from book_words where source_id = ?",
-            (source_id,),
+            """
+            select sequence_index, normalized_text from book_words
+            where source_id = ? and book_id = ?
+            """,
+            (source_id, book_id),
         ).fetchall()
         seen_sequences = {row["sequence_index"] for row in existing_rows}
         seen_normalized = {row["normalized_text"] for row in existing_rows}
@@ -77,6 +82,7 @@ def import_book_words_csv(
                 insert into book_words (
                     id,
                     source_id,
+                    book_id,
                     sequence_index,
                     word_text,
                     normalized_text,
@@ -88,11 +94,12 @@ def import_book_words_csv(
                     created_at,
                     updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid4()),
                     source_id,
+                    book_id,
                     sequence_index,
                     word_text,
                     normalized_text,
@@ -139,6 +146,7 @@ def import_book_words_markdown(
 
 def get_book_progress() -> BookProgressResponse:
     with connect() as connection:
+        book_id = get_current_book_id(connection)
         row = connection.execute(
             """
             select
@@ -150,7 +158,9 @@ def get_book_progress() -> BookProgressResponse:
                     end
                 ) as next_sequence_index
             from book_words
-            """
+            where book_id = ?
+            """,
+            (book_id,),
         ).fetchone()
 
     return BookProgressResponse(

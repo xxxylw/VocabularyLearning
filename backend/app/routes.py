@@ -8,6 +8,7 @@ from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
 from app.models import (
     BookProgressResponse,
+    BookSummaryResponse,
     DueReviewsResponse,
     ExportFullBookRequest,
     ExportFullBookResponse,
@@ -27,6 +28,7 @@ from app.services import (
     ReviewConflictError,
     export_full_book_anki,
     get_anki_export_file_path,
+    get_current_book,
     get_due_reviews,
     prepare_book_words,
     review_card,
@@ -57,6 +59,11 @@ async def import_book_words(
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/books/current")
+def books_current() -> BookSummaryResponse:
+    return get_current_book()
 
 
 @router.get("/book-words/progress")

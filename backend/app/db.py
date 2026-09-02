@@ -2,6 +2,8 @@ from pathlib import Path
 import os
 import sqlite3
 
+from app.books import DEFAULT_BOOK_ID, ensure_default_book
+
 
 def db_path() -> Path:
     configured_path = os.environ.get("VOCAB_DB_PATH")
@@ -23,3 +25,34 @@ def connect() -> sqlite3.Connection:
 def migrate(connection: sqlite3.Connection) -> None:
     schema_path = Path(__file__).with_name("schema.sql")
     connection.executescript(schema_path.read_text(encoding="utf-8"))
+
+    # Vocabulary books migration (P1). Legacy databases already contain
+    # book_words without the book_id column and "CREATE TABLE IF NOT EXISTS"
+    # is a no-op for them, so add the column explicitly. This must happen
+    # before idx_book_words_book_sequence is created below (and that index
+    # therefore lives here instead of schema.sql).
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(book_words)")
+    }
+    if "book_id" not in columns:
+        connection.execute(
+            "ALTER TABLE book_words "
+            "ADD COLUMN book_id text null references vocabulary_books(id)"
+        )
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_book_words_book_sequence
+        ON book_words (book_id, sequence_index)
+        """
+    )
+
+    # Default book (雅思词汇真经) + back-fill: idempotent on every connect.
+    # INSERT OR IGNORE keeps the row stable; the UPDATE only touches rows
+    # that were never assigned to a book.
+    ensure_default_book(connection)
+    connection.execute(
+        "UPDATE book_words SET book_id = ? WHERE book_id IS NULL",
+        (DEFAULT_BOOK_ID,),
+    )
+    connection.commit()

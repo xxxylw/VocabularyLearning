@@ -83,6 +83,13 @@ a {
   text-transform: uppercase;
 }
 
+.book-title {
+  margin: 0 0 12px;
+  color: #4a3b52;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 .desk-panel,
 .export-panel,
 .empty-state,

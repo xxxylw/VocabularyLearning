@@ -7,21 +7,9 @@ CREATE TABLE IF NOT EXISTS sources (
     created_at text not null
 );
 
--- Vocabulary books (P1): every book_words row belongs to exactly one book.
--- The default book (雅思词汇真经) is inserted by app.db.migrate().
-CREATE TABLE IF NOT EXISTS vocabulary_books (
-    id text primary key,
-    title text not null,
-    description text null,
-    source text null,
-    created_at text not null,
-    updated_at text not null
-);
-
 CREATE TABLE IF NOT EXISTS book_words (
     id text primary key,
     source_id text not null references sources(id),
-    book_id text null references vocabulary_books(id),
     sequence_index integer not null,
     word_text text not null,
     normalized_text text not null,
