@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { StudySession } from './StudySession';
@@ -32,6 +32,11 @@ const baseCard: StudyCard = {
           exampleId: 'example-1',
           sentence: 'The atmosphere protects life from harmful solar radiation.',
           isPrimary: true
+        },
+        {
+          exampleId: 'example-1b',
+          sentence: 'These factories are releasing toxic gases into the atmosphere.',
+          isPrimary: false
         }
       ],
       chineseNote: 'Air around the earth; the mood of a place.'
@@ -105,12 +110,14 @@ describe('StudySession', () => {
     expect(screen.queryByText(/air around the earth/i)).not.toBeInTheDocument();
   });
 
-  it('renders the phonetics placeholder instead of calling the pronunciation API', () => {
+  it('renders real UK and US IPA from the pronunciation API', async () => {
     const onLookupPronunciation = vi.fn().mockResolvedValue({
       word: 'atmosphere',
-      ipa: '/ˈætməsfɪr/',
+      ipa: null,
+      ipaUk: '/ˈætməsfɪə(r)/',
+      ipaUs: '/ˈætməsfɪr/',
       audioUrl: null,
-      sourceUrl: 'https://en.wiktionary.org/wiki/atmosphere#English',
+      sourceUrl: 'https://www.oxfordlearnersdictionaries.com/definition/english/atmosphere',
       status: 'ready'
     });
 
@@ -123,9 +130,36 @@ describe('StudySession', () => {
       />
     );
 
-    expect(screen.getByText(/Pronunciation · coming in v2/i)).toBeInTheDocument();
-    expect(screen.queryByText('/ˈætməsfɪr/')).not.toBeInTheDocument();
-    expect(onLookupPronunciation).not.toHaveBeenCalled();
+    expect(await screen.findByText('/ˈætməsfɪə(r)/ UK')).toBeInTheDocument();
+    expect(screen.getByText('/ˈætməsfɪr/ US')).toBeInTheDocument();
+    expect(screen.queryByText(/Pronunciation · coming in v2/i)).not.toBeInTheDocument();
+    expect(onLookupPronunciation).toHaveBeenCalledWith('atmosphere');
+  });
+
+  it('renders no pronunciation slot at all when the lookup has no data', async () => {
+    const onLookupPronunciation = vi.fn().mockResolvedValue({
+      word: 'atmosphere',
+      ipa: null,
+      ipaUk: null,
+      ipaUs: null,
+      audioUrl: null,
+      sourceUrl: 'https://www.oxfordlearnersdictionaries.com/definition/english/atmosphere',
+      status: 'unavailable'
+    });
+
+    render(
+      <StudySession
+        cards={cards}
+        onReview={vi.fn()}
+        onExit={vi.fn()}
+        onLookupPronunciation={onLookupPronunciation}
+      />
+    );
+
+    await waitFor(() => expect(onLookupPronunciation).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText(/Pronunciation of atmosphere/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/coming in v2/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
   });
 
   it('shows today completed-word progress while studying', async () => {
@@ -145,7 +179,7 @@ describe('StudySession', () => {
     expect(screen.getByText('1 / 2 completed')).toBeInTheDocument();
   });
 
-  it('renders POS badges, first-sense emphasis, single example per sense, and three rating buttons', async () => {
+  it('renders POS badges, first-sense emphasis, every real example per sense, and three rating buttons', async () => {
     const user = userEvent.setup();
     render(<StudySession cards={cards} onReview={vi.fn()} onExit={vi.fn()} />);
 
@@ -157,6 +191,7 @@ describe('StudySession', () => {
 
     expect(within(primarySense).getByText('noun')).toBeInTheDocument();
     expect(within(primarySense).getByText(/protects life from harmful solar radiation/i)).toBeInTheDocument();
+    expect(within(primarySense).getByText(/releasing toxic gases into the atmosphere/i)).toBeInTheDocument();
 
     const secondarySense = screen.getByLabelText('Sense 2');
     const secondaryDefinition = within(secondarySense).getByText(/feeling or mood in a place/i);
@@ -223,7 +258,7 @@ describe('StudySession', () => {
     await user.click(screen.getByRole('button', { name: /reveal/i }));
 
     expect(screen.getByRole('status', { name: '' })).toHaveTextContent(/Definition preparing/i);
-    expect(screen.getByText(/Definition preparing/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Definition preparing/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/learner-friendly IELTS study meaning/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/placeholder example while the real entry is being prepared/i)).not.toBeInTheDocument();
   });

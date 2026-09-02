@@ -73,7 +73,7 @@ describe('SpellingSession', () => {
 
     await user.click(screen.getByRole('button', { name: /show answer/i }));
 
-    expect(screen.getByText(/El Nino/)).toBeInTheDocument();
+    expect(screen.getByText(/^Answer: El Nino$/)).toBeInTheDocument();
   });
 
   it('only shows pronunciation after the spelling answer is revealed', async () => {
@@ -99,7 +99,7 @@ describe('SpellingSession', () => {
     await user.click(screen.getByRole('button', { name: /check/i }));
     await user.click(screen.getByRole('button', { name: /show answer/i }));
 
-    expect(await screen.findByText('/ɛl ˈninjoʊ/')).toBeInTheDocument();
+    expect(await screen.findByText('/ɛl ˈninjoʊ/ US')).toBeInTheDocument();
   });
 
   it('returns home from the completion screen', async () => {
