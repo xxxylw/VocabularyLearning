@@ -156,18 +156,3 @@ class PronunciationResponse(BaseModel):
     licenseUrl: str | None = None
     status: Literal["ready", "unavailable"]
 
-
-class ExportFullBookRequest(BaseModel):
-    deckName: str
-    includeChineseNote: bool = True
-
-
-class ExportReadinessError(BaseModel):
-    totalWords: int
-    preparedWords: int
-    missingWords: int
-
-
-class ExportFullBookResponse(BaseModel):
-    downloadUrl: str
-    cardCount: int

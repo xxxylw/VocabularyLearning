@@ -2,7 +2,6 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
 
 from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
@@ -10,8 +9,6 @@ from app.models import (
     BookProgressResponse,
     BookSummaryResponse,
     DueReviewsResponse,
-    ExportFullBookRequest,
-    ExportFullBookResponse,
     ImportBookWordsResponse,
     OxfordLookupResponse,
     PronunciationResponse,
@@ -24,10 +21,7 @@ from app.models import (
 )
 from app.repositories import get_book_progress, import_book_words_csv
 from app.services import (
-    ExportNotReadyError,
     ReviewConflictError,
-    export_full_book_anki,
-    get_anki_export_file_path,
     get_current_book,
     get_due_reviews,
     prepare_book_words,
@@ -128,28 +122,3 @@ def get_pronunciation(word: str) -> PronunciationResponse:
     except OSError as error:
         raise HTTPException(status_code=502, detail="Pronunciation lookup is temporarily unavailable") from error
 
-
-@router.post("/export/anki/full-book")
-def export_anki_full_book(
-    request: ExportFullBookRequest,
-) -> ExportFullBookResponse:
-    try:
-        return export_full_book_anki(request)
-    except ExportNotReadyError as error:
-        return JSONResponse(
-            status_code=409,
-            content=error.readiness.model_dump(),
-        )
-
-
-@router.get("/export/anki/files/{fileName}")
-def download_anki_export(fileName: str) -> FileResponse:
-    try:
-        export_path = get_anki_export_file_path(fileName)
-    except LookupError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    return FileResponse(
-        export_path,
-        media_type="application/octet-stream",
-        filename=fileName,
-    )

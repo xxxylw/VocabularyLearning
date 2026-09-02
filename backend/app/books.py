@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import sqlite3
 
 # P1 vocabulary books: the project ships a single default book and every
-# study flow (today session, prepare jobs, progress stats, Anki export) runs
+# study flow (today session, prepare jobs, progress stats) runs
 # against it until book switching lands in a later phase. The id is a stable
 # constant so migrations can INSERT OR IGNORE and back-fill book_words
 # idempotently on every connect().

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { exportFullBook, getBookProgress, getCurrentBook, lookupOxfordWord, lookupPronunciation, reviewCard, startTodaySession } from './api';
+import { getBookProgress, getCurrentBook, lookupOxfordWord, lookupPronunciation, reviewCard, startTodaySession } from './api';
 import type { ReviewRating, StudyCard } from './api';
 import { buildCheckInRecord, loadCheckIns, saveCheckIn } from './checkins';
-import { ExportView } from './components/ExportView';
 import { SpellingSession } from './components/SpellingSession';
 import { StudySession } from './components/StudySession';
 import { TodayView } from './components/TodayView';
@@ -151,7 +150,6 @@ export function App() {
           )}
         </section>
       ) : null}
-      <ExportView onExport={exportFullBook} />
     </main>
   );
 }

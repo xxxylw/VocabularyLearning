@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exportFullBook, getBookProgress, lookupOxfordWord, reviewCard, startTodaySession } from './api';
+import { getBookProgress, lookupOxfordWord, reviewCard, startTodaySession } from './api';
 
 describe('api', () => {
   afterEach(() => {
@@ -106,25 +106,6 @@ describe('api', () => {
     });
   });
 
-  it('requests the full-book Anki export with the MVP defaults', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: () => Promise.resolve(JSON.stringify({ downloadUrl: '/download.apkg', cardCount: 42 }))
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await exportFullBook();
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/export/anki/full-book', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        deckName: 'Vocabulary Learning Full Book',
-        includeChineseNote: true
-      })
-    });
-  });
-
   it('throws a useful error when an API error response is not JSON', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
@@ -153,27 +134,4 @@ describe('api', () => {
     );
   });
 
-  it('resolves export readiness data from a 409 response', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      statusText: 'Conflict',
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({
-            totalWords: 100,
-            preparedWords: 72,
-            missingWords: 28
-          })
-        )
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(exportFullBook()).resolves.toEqual({
-      status: 'missing',
-      totalWords: 100,
-      preparedWords: 72,
-      missingWords: 28
-    });
-  });
 });

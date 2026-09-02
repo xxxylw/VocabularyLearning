@@ -91,7 +91,6 @@ a {
 }
 
 .desk-panel,
-.export-panel,
 .empty-state,
 .checkin-panel {
   border: 1px solid rgba(110, 91, 68, 0.16);
@@ -169,7 +168,6 @@ a {
   font-weight: 700;
 }
 
-.export-panel,
 .empty-state {
   display: grid;
   gap: 16px;
@@ -177,13 +175,11 @@ a {
   padding: 24px;
 }
 
-.export-panel h2,
 .empty-state h2 {
   margin: 0;
   color: #2f2a24;
 }
 
-.export-panel p,
 .empty-state p {
   margin: 0;
   color: #665d52;
@@ -300,11 +296,6 @@ a {
   color: #82786d;
   font-size: 0.76rem;
   font-weight: 800;
-}
-
-.export-result {
-  border-left: 4px solid #486f83;
-  padding-left: 12px;
 }
 
 .study-shell {

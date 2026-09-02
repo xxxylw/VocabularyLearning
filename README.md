@@ -1,6 +1,6 @@
 # VocabularyLearning
 
-VocabularyLearning is an MVP for turning a vocabulary book word list into study cards. The backend imports `book_words.csv`, prepares deterministic fallback-enriched entries and cards, schedules reviews, and generates a full-book Anki `.apkg`. The frontend provides a local Today cards study flow and export action.
+VocabularyLearning is an MVP for turning a vocabulary book word list into study cards. The backend imports `book_words.csv`, prepares deterministic fallback-enriched entries and cards, and schedules reviews. The frontend provides a local Today cards study flow. (The full-book Anki export was dropped from scope and has been removed.)
 
 ## Prerequisites
 
@@ -64,8 +64,6 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 3. Start Today cards in the frontend, or call `POST /api/study/today/start`.
 4. Reveal a card and mark it `Known`.
 5. Confirm the review schedule advances, for example by checking that the review response moves the card to the next stage and sets a later `nextDueAt`.
-6. Confirm full-book export readiness with `POST /api/export/anki/full-book`; it should report missing words until all imported book words are prepared.
-7. After all imported book words are prepared, use the returned download URL to download the generated `.apkg`.
 
 ## Verification
 
@@ -80,5 +78,5 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 ## Current MVP Limitations
 
 - Enrichment uses the local fallback provider only; Oxford, API, and AI providers are not connected yet.
-- The full-book export endpoint generates a local `.apkg` with `genanki`.
+- The full-book Anki `.apkg` export was removed (P1 scope decision); there is no export endpoint anymore.
 - The PDF OCR pipeline is not implemented yet. Use `book_words.csv` as the source input for local smoke testing.

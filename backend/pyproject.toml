@@ -6,8 +6,7 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.30",
   "python-multipart>=0.0.9",
-  "pydantic>=2.8",
-  "genanki>=0.13"
+  "pydantic>=2.8"
 ]
 
 [project.optional-dependencies]

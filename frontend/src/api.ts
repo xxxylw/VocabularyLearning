@@ -52,10 +52,6 @@ export type BookInfo = {
   totalWords: number;
 };
 
-export type ExportResult =
-  | { status: 'ready'; downloadUrl: string; cardCount: number }
-  | { status: 'missing'; totalWords: number; preparedWords: number; missingWords: number };
-
 export type OxfordLookupResult = {
   word: string;
   sourceUrl: string;
@@ -80,20 +76,14 @@ export type Pronunciation = {
   status: 'ready' | 'unavailable';
 };
 
-type PostJsonOptions = {
-  allowConflictData?: boolean;
-};
-
-async function postJson<T>(url: string, body: unknown, options: PostJsonOptions = {}): Promise<T> {
+async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
 
-  const canReadConflictAsData = options.allowConflictData === true && response.status === 409;
-
-  if (!response.ok && !canReadConflictAsData) {
+  if (!response.ok) {
     const errorBody = await readResponseBody(response);
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
@@ -208,27 +198,4 @@ export function reviewCard(cardId: string, rating: ReviewRating): Promise<unknow
     reviewedAt: reviewedAt.toISOString(),
     reviewedDate: localDateString(reviewedAt)
   });
-}
-
-export async function exportFullBook(): Promise<ExportResult> {
-  const data = await postJson<
-    | { downloadUrl: string; cardCount: number }
-    | { totalWords: number; preparedWords: number; missingWords: number }
-  >('/api/export/anki/full-book', {
-    deckName: 'Vocabulary Learning Full Book',
-    includeChineseNote: true
-  }, {
-    allowConflictData: true
-  });
-
-  if ('downloadUrl' in data) {
-    return { status: 'ready', downloadUrl: data.downloadUrl, cardCount: data.cardCount };
-  }
-
-  return {
-    status: 'missing',
-    totalWords: data.totalWords,
-    preparedWords: data.preparedWords,
-    missingWords: data.missingWords
-  };
 }

@@ -2,9 +2,11 @@
 
 ## Goal
 
-VocabularyLearning is a local-first IELTS vocabulary study app. It runs in the browser at `localhost`, helps the learner study the local book `D:\_materials\Ielts\docs\雅思词汇真经PDF高清版.pdf` in order, enriches words with English definitions and IELTS-level example sentences, schedules review with an Ebbinghaus-style cadence, and exports the prepared full-book card deck to Anki `.apkg`.
+VocabularyLearning is a local-first IELTS vocabulary study app. It runs in the browser at `localhost`, helps the learner study the local book `D:\_materials\Ielts\docs\雅思词汇真经PDF高清版.pdf` in order, enriches words with English definitions and IELTS-level example sentences, and schedules review with an Ebbinghaus-style cadence.
 
 The first version is for personal local study. It does not include accounts, cloud sync, payment, sharing, or a public dictionary service.
+
+> Scope update (2026-09): the full-book Anki `.apkg` export was dropped by product decision (P1 removal, not shipping with v1) and has been removed from the codebase — no export UI, no `/api/export/anki/*` endpoints, no `genanki` dependency. Sections below that still mention Anki export describe the original design and are kept for history.
 
 ## Product Scope
 
@@ -35,7 +37,6 @@ The first version is for personal local study. It does not include accounts, clo
   - day 7
   - day 15
   - day 30
-- Export the prepared full-book card deck to Anki `.apkg`, with one Anki card per selected sense.
 - Store all app data locally.
 
 ### Later
@@ -55,7 +56,6 @@ The first version is for personal local study. It does not include accounts, clo
 - Backend: FastAPI + Python.
 - Database: SQLite.
 - Migrations: Alembic or a small explicit migration runner for the first version.
-- Anki export: Python `genanki`.
 - Definition providers:
   - primary: configurable official dictionary API, such as Oxford Dictionaries API if credentials and license permit it.
   - fallback: user-entered definition or another licensed/open API.
@@ -65,7 +65,7 @@ The first version is for personal local study. It does not include accounts, clo
 
 ### Why This Stack
 
-Python is a better fit for `.apkg` export because `genanki` is mature and simple. SQLite is built into Python and is enough for a single-user local app. React keeps the card review UI responsive without making the backend complex.
+SQLite is built into Python and is enough for a single-user local app. React keeps the card review UI responsive without making the backend complex.
 
 This uses two local processes during development:
 
@@ -83,7 +83,6 @@ For a packaged local version, FastAPI can serve the built frontend so the user o
 - Card: the study object shown to the learner. A word can have multiple cards if it has multiple senses.
 - Review: one attempt to recall or recognize a card.
 - Review Schedule: the future due dates for a card.
-- Deck Export: an Anki `.apkg` file generated from the prepared full-book card deck.
 - Source: where a definition or example came from, such as manual input, dictionary API, AI generation, or imported user-owned document.
 
 ## Data Model
@@ -504,7 +503,9 @@ Response:
 }
 ```
 
-### Export Anki Package
+### Export Anki Package (removed 2026-09, kept for history)
+
+This endpoint no longer exists; the export feature was dropped by product decision before v1.
 
 ```http
 POST /api/export/anki
@@ -571,7 +572,6 @@ Enrichment timing:
    - store one or more study examples in `entry_examples`
    - mark incomplete senses as `needs_review`
 4. Review cards are generated only from locally stored senses.
-5. Anki export uses the same local card data and does not perform network enrichment.
 
 ## PDF Import Boundary
 
@@ -604,7 +604,6 @@ The product should keep the learner's attention on the next study action. Today 
 - Immersive Study Session: Anki-like full-page card flow with no sidebar or export distractions.
 - Prepare: run and monitor `next`, `range`, or `full_book` prepare jobs.
 - Library: searchable table of words, senses, examples, cards, and needs-review items.
-- Export: prepare and download the full-book `.apkg`.
 - Settings: configure daily new word target, dictionary provider, AI provider, database path, and review behavior.
 
 ### Card Layout
@@ -657,10 +656,9 @@ VocabularyLearning/
   frontend/
   data/
     vocabulary.sqlite
-    exports/
 ```
 
-`data/` should be ignored by Git except for a `.gitkeep`, because it contains personal study data and generated Anki packages.
+`data/` should be ignored by Git except for a `.gitkeep`, because it contains personal study data.
 
 ## Configuration
 
@@ -668,7 +666,6 @@ Backend environment variables:
 
 ```text
 VOCAB_DB_PATH=./data/vocabulary.sqlite
-VOCAB_EXPORT_DIR=./data/exports
 OXFORD_APP_ID=
 OXFORD_APP_KEY=
 OPENAI_API_KEY=
@@ -683,7 +680,6 @@ The app should run without Oxford or OpenAI keys. Missing keys only disable auto
 - Duplicate words should be skipped, not treated as failures.
 - Failed dictionary lookup should create a card that needs manual completion.
 - Failed AI example generation should leave the example empty and show a warning.
-- Anki export should fail clearly if there are no matching cards.
 - Database errors should return a structured local API error and be logged in the backend console.
 
 ## Testing Strategy
@@ -694,7 +690,6 @@ Backend tests:
 - duplicate handling
 - Ebbinghaus scheduling transitions
 - card review history creation
-- Anki export creates a non-empty `.apkg`
 - enrichment fallback when providers are missing
 
 Frontend tests:
@@ -703,7 +698,6 @@ Frontend tests:
 - immersive study reveal shows definition, examples, and secondary Chinese note
 - review buttons send the correct rating
 - card edit form preserves existing fields
-- full-book export calls the export endpoint only when the deck is ready
 
 End-to-end smoke test:
 
@@ -713,8 +707,6 @@ End-to-end smoke test:
 4. Start today's card session.
 5. Review one card as `known`.
 6. Prepare the full sample book deck.
-7. Export the full-book deck after its study content is prepared.
-8. Confirm `.apkg` downloads.
 
 ## First Implementation Plan
 
@@ -724,9 +716,8 @@ End-to-end smoke test:
 4. Implement Prepare Job for `next` scope with local/manual fallback content.
 5. Implement Today session creation from new book cards plus due review cards.
 6. Implement review scheduling and feedback.
-7. Implement full-book readiness checks and offline `.apkg` export.
-8. Scaffold `frontend/` with the warm Today entry and immersive study session.
-9. Connect the frontend to local APIs.
-10. Add enrichment provider interfaces with manual fallback.
-11. Add optional AI example generation.
-12. Add documentation for local startup.
+7. Scaffold `frontend/` with the warm Today entry and immersive study session.
+8. Connect the frontend to local APIs.
+9. Add enrichment provider interfaces with manual fallback.
+10. Add optional AI example generation.
+11. Add documentation for local startup.
