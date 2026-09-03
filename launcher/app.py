@@ -77,6 +77,17 @@ def main() -> int:
             logger.warning(
                 "another instance holds the lock but no runtime info found"
             )
+            # PRD boundary rule: never fail silently. The lock is held by an
+            # instance that never reached readiness - typically a lingering
+            # error dialog from an earlier crashed run. Tell the user instead
+            # of exiting quietly.
+            show_error(
+                "VocabularyLearning",
+                "检测到另一个实例正在运行但尚未就绪：\n\n"
+                "· 如果刚刚启动，请等待几秒再看；\n"
+                "· 如果之前弹出过报错窗口，请先关闭它，"
+                "然后重新双击本程序。",
+            )
         return 0
 
     try:

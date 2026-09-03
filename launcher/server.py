@@ -60,6 +60,12 @@ class BackendServer:
             port=self.port,
             log_level="warning",
             access_log=False,
+            # PyInstaller --noconsole builds have sys.stdout/stderr = None;
+            # uvicorn's default log formatter calls sys.stdout.isatty() and
+            # crashes at startup ("Unable to configure formatter 'default'").
+            # log_config=None keeps logging on the root logger (our file
+            # handler picks it up) and avoids the broken default config.
+            log_config=None,
         )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(
