@@ -166,7 +166,14 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     provider = _create_enrichment_provider()
 
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        if request.bookId:
+            # PRD ch.10: batch jobs target a specific book without touching
+            # the current-book pointer (prepare ≠ switch).
+            if not book_exists(connection, request.bookId):
+                raise LookupError(f"Book not found: {request.bookId}")
+            book_id = request.bookId
+        else:
+            book_id = get_current_book_id(connection)
         book_words = connection.execute(
             """
             select id, word_text, normalized_text

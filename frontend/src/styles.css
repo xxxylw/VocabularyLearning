@@ -1260,6 +1260,12 @@ a {
   color: #fbf6ed;
 }
 
+/* PRD ch.10: the second built-in book (考研英语红宝书) uses a red palette so
+   the two shelf entries are distinguishable at a glance. */
+.bookshelf-cover--red {
+  background: linear-gradient(150deg, #a8524a 0%, #7c3530 100%);
+}
+
 .bookshelf-cover-spine {
   position: absolute;
   inset: 0 auto 0 0;

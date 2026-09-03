@@ -50,6 +50,14 @@ def main() -> None:
         help="Mark all book_words as needs_review before preparing.",
     )
     parser.add_argument(
+        "--book-id",
+        default=None,
+        help=(
+            "Target book for the batch job (PRD ch.10). Defaults to the "
+            "current book; the current-book pointer is never touched."
+        ),
+    )
+    parser.add_argument(
         "--sleep",
         type=float,
         default=0.0,
@@ -88,6 +96,7 @@ def main() -> None:
                 count=batch_count,
                 maxSensesPerWord=args.max_senses,
                 overwriteExisting=args.overwrite_existing,
+                bookId=args.book_id,
             )
         )
         total_processed += result.processedWords

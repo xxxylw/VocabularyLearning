@@ -45,8 +45,30 @@ describe('BookShelfView', () => {
     render(<BookShelfView books={[makeBook()]} onBack={vi.fn()} onSwitch={vi.fn()} />);
 
     expect(screen.getByTestId('bookshelf-empty-note')).toHaveTextContent(
-      '更多单词书将通过导入功能加入（规划中）'
+      '更多单词书将通过导入功能陆续加入（规划中）'
     );
+  });
+
+  it('gives the red book a red cover variant while other books keep the default', () => {
+    render(
+      <BookShelfView
+        books={[
+          makeBook(),
+          makeBook({ id: 'kaoyan-hongbaoshu-2027', title: '考研英语红宝书', isCurrent: false })
+        ]}
+        onBack={vi.fn()}
+        onSwitch={vi.fn()}
+      />
+    );
+
+    const items = screen.getAllByTestId('bookshelf-item');
+    const defaultCover = items[0].querySelector('.bookshelf-cover');
+    const redCover = items[1].querySelector('.bookshelf-cover');
+    expect(defaultCover).not.toBeNull();
+    expect(defaultCover).toHaveClass('bookshelf-cover');
+    expect(defaultCover).not.toHaveClass('bookshelf-cover--red');
+    expect(redCover).not.toBeNull();
+    expect(redCover).toHaveClass('bookshelf-cover', 'bookshelf-cover--red');
   });
 
   it('opens a confirm dialog before switching and calls onSwitch only after confirming', async () => {

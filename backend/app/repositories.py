@@ -6,7 +6,13 @@ import io
 import re
 from uuid import uuid4
 
-from app.books import ensure_default_book, get_current_book_id
+from app.books import (
+    DEFAULT_BOOK_ID,
+    book_exists,
+    ensure_default_book,
+    get_current_book_id,
+    upsert_book,
+)
 from app.db import connect
 from app.models import BookProgressResponse, ImportBookWordsResponse
 
@@ -16,16 +22,52 @@ def normalize_word(text: str) -> str:
 
 
 def import_book_words_csv(
-    file_bytes: bytes, source_name: str, replace_existing: bool
+    file_bytes: bytes,
+    source_name: str,
+    replace_existing: bool,
+    *,
+    book_id: str = DEFAULT_BOOK_ID,
+    book_title: str | None = None,
+    book_description: str | None = None,
+    book_source: str | None = None,
 ) -> ImportBookWordsResponse:
+    """Import an ordered word-list CSV into book_words (PRD ch.6/ch.10).
+
+    Required CSV headers: ``sequence_index``, ``word``. Optional header:
+    ``layer`` (分层标注列 — 必考词 / 基础词 / 超纲词 etc., stored verbatim
+    in the new ``layer`` column; any further columns are ignored).
+
+    Rows are attributed to ``book_id`` (default: the default book). For a
+    non-default book the ``vocabulary_books`` row is created on the fly from
+    ``book_title`` / ``book_description`` / ``book_source`` (title required
+    when the book does not exist yet), which keeps the bookshelf rule
+    「数据未就绪不入架」: the book row appears exactly when its words do.
+    """
     csv_text = file_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(csv_text))
     if not reader.fieldnames or {"sequence_index", "word"} - set(reader.fieldnames):
         raise ValueError("CSV must include sequence_index and word headers")
+    has_layer = "layer" in (reader.fieldnames or [])
 
     now = _utc_now()
     with connect() as connection:
-        book_id = ensure_default_book(connection)["id"]
+        if book_id == DEFAULT_BOOK_ID:
+            ensure_default_book(connection)
+        elif book_exists(connection, book_id):
+            pass
+        elif not book_title:
+            raise ValueError(
+                f"Book {book_id!r} does not exist and no book_title was provided"
+            )
+        else:
+            upsert_book(
+                connection,
+                book_id,
+                title=book_title,
+                description=book_description,
+                source=book_source,
+                now=now,
+            )
         source = connection.execute(
             "select id from sources where type = ? and name = ? order by created_at limit 1",
             ("csv", source_name),
@@ -91,10 +133,11 @@ def import_book_words_csv(
                     definition_source,
                     chinese_note,
                     import_status,
+                    layer,
                     created_at,
                     updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid4()),
@@ -108,6 +151,7 @@ def import_book_words_csv(
                     None,
                     None,
                     "pending",
+                    (row.get("layer") or "").strip() or None if has_layer else None,
                     now,
                     now,
                 ),

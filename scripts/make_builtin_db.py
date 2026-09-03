@@ -19,7 +19,8 @@ Usage:
         --source backend/data/vocabulary.sqlite \
         --output build/pkg/VocabularyLearning/builtin/vocabulary.sqlite \
         [--min-words 3383] [--min-entries 8000] \
-        [--min-examples 9000] [--min-ready-pron 3000]
+        [--min-examples 9000] [--min-ready-pron 3000] \
+        [--expected-books 2]
 """
 
 from __future__ import annotations
@@ -47,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--min-words", type=int, default=3383)
+    # PRD 第十章 验收标准 5: v1 发布包内置两本书（雅思 + 考研红宝书）。
+    parser.add_argument("--expected-books", type=int, default=2)
     parser.add_argument("--min-entries", type=int, default=8000)
     # Verified full-content baseline on 2026-09-03 (Oxford pipeline output):
     # 3,383 words / 8,904 entries / 8,904 examples / 8,904 cards.
@@ -108,12 +111,21 @@ def counts(connection: sqlite3.Connection) -> dict[str, int]:
         ),
         "books": "SELECT COUNT(*) FROM vocabulary_books",
     }
-    result = {}
+    per_book_query = (
+        "SELECT COALESCE(book_id, '<null>') AS book_id, COUNT(*) "
+        "FROM book_words GROUP BY book_id ORDER BY book_id"
+    )
+    result: dict[str, int] = {}
     for name, query in queries.items():
         try:
             result[name] = connection.execute(query).fetchone()[0]
         except sqlite3.OperationalError:
             result[name] = -1
+    try:
+        per_book = connection.execute(per_book_query).fetchall()
+        result["words_per_book"] = dict(per_book)
+    except sqlite3.OperationalError:
+        result["words_per_book"] = {}
     return result
 
 
@@ -127,12 +139,19 @@ def verify(counted: dict[str, int], args: argparse.Namespace) -> list[str]:
         elif minimum is not None and value < minimum:
             problems.append(f"{key}: expected >= {minimum}, got {value}")
 
-    check("book_words", None, expected=args.min_words)
+    # Dual-book builtin (PRD ch10 acceptance #5): book_words is a total
+    # floor across all books, not an exact count.
+    check("book_words", args.min_words)
     check("entries", args.min_entries)
     check("examples", args.min_examples)
     check("ready_pronunciations", args.min_ready_pron)
     check("book_words_with_book_id", None, expected=counted.get("book_words", -1))
-    check("books", 1)
+    check("books", None, expected=args.expected_books)
+    for book_id, word_count in counted.get("words_per_book", {}).items():
+        if word_count <= 0:
+            problems.append(
+                f"words_per_book[{book_id}]: expected > 0, got {word_count}"
+            )
     return problems
 
 
@@ -178,12 +197,17 @@ def main() -> int:
 
         problems = verify(counted, args)
         for name in sorted(counted):
+            if name == "words_per_book":
+                continue
             print(f"  {name}: {counted[name]}")
+        for book_id, word_count in sorted(counted.get("words_per_book", {}).items()):
+            print(f"  words_per_book[{book_id}]: {word_count}")
 
-        if counted.get("ready_pronunciations", 0) < 3383:
+        total_words = counted.get("words", 0)
+        if counted.get("ready_pronunciations", 0) < total_words:
             print(
                 "WARNING: builtin pronunciation_cache covers "
-                f"{counted.get('ready_pronunciations', 0)}/3383 words; dual IPA "
+                f"{counted.get('ready_pronunciations', 0)}/{total_words} words; dual IPA "
                 "relies on the online Wiktionary enhancement with offline "
                 "fallback (open gap vs PRD ch7 acceptance #2).",
                 file=sys.stderr,

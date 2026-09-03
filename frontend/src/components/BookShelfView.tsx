@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import type { BookListItem } from '../api';
 
+// PRD ch.10: the second built-in book gets a red programmatic cover so the
+// two shelf entries are visually distinct (纯 CSS，无图片，零版权风险).
+// Keep in sync with backend/app/books.py RED_BOOK_ID.
+export const RED_BOOK_ID = 'kaoyan-hongbaoshu-2027';
+
 type BookShelfViewProps = {
   books: BookListItem[];
   onBack: () => void;
@@ -75,7 +80,14 @@ export function BookShelfView({
               disabled={isSwitching || book.totalWords === 0}
               onClick={() => handleBookClick(book)}
             >
-              <span className="bookshelf-cover" aria-hidden="true">
+              <span
+                className={
+                  book.id === RED_BOOK_ID
+                    ? 'bookshelf-cover bookshelf-cover--red'
+                    : 'bookshelf-cover'
+                }
+                aria-hidden="true"
+              >
                 <span className="bookshelf-cover-spine" />
                 <span className="bookshelf-cover-title" title={book.title}>
                   {book.title}
@@ -100,7 +112,7 @@ export function BookShelfView({
 
       {books.length < 2 ? (
         <p className="bookshelf-empty-note" data-testid="bookshelf-empty-note">
-          更多单词书将通过导入功能加入（规划中）
+          更多单词书将通过导入功能陆续加入（规划中）
         </p>
       ) : null}
 

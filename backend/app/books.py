@@ -11,6 +11,12 @@ import sqlite3
 DEFAULT_BOOK_ID = "default-book"
 DEFAULT_BOOK_TITLE = "雅思词汇真经"
 
+# PRD ch.10 (内置第二本词书): the second built-in book. The id is a stable
+# contract shared with the import pipeline, the builtin packaging checks and
+# the frontend cover palette (红色系程序化封面).
+RED_BOOK_ID = "kaoyan-hongbaoshu-2027"
+RED_BOOK_TITLE = "考研英语红宝书"
+
 CURRENT_BOOK_SETTING_KEY = "current_book_id"
 
 
@@ -58,6 +64,53 @@ def book_exists(connection: sqlite3.Connection, book_id: str) -> bool:
         (book_id,),
     ).fetchone()
     return row is not None
+
+
+def upsert_book(
+    connection: sqlite3.Connection,
+    book_id: str,
+    *,
+    title: str,
+    description: str | None = None,
+    source: str | None = None,
+    now: str | None = None,
+) -> sqlite3.Row:
+    """Insert or refresh a vocabulary_books row (idempotent).
+
+    Used by the word-list import pipeline for built-in books beyond the
+    default one (PRD ch.10: the 考研英语红宝书 row + its import stay one
+    transaction). created_at is kept stable across re-runs; title /
+    description / source are refreshed so re-imports can update the word
+    counts embedded in the description.
+    """
+    timestamp = now or utc_now()
+    existing = connection.execute(
+        "select * from vocabulary_books where id = ?",
+        (book_id,),
+    ).fetchone()
+    if existing is None:
+        connection.execute(
+            """
+            insert into vocabulary_books (
+                id, title, description, source, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (book_id, title, description, source, timestamp, timestamp),
+        )
+    else:
+        connection.execute(
+            """
+            update vocabulary_books
+            set title = ?, description = ?, source = ?, updated_at = ?
+            where id = ?
+            """,
+            (title, description, source, timestamp, book_id),
+        )
+    return connection.execute(
+        "select * from vocabulary_books where id = ?",
+        (book_id,),
+    ).fetchone()
 
 
 def resolve_current_book(

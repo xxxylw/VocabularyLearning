@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.books import DEFAULT_BOOK_ID
 from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
 from app.version import APP_VERSION
@@ -47,12 +48,18 @@ async def import_book_words(
     file: Annotated[UploadFile, File()],
     sourceName: Annotated[str, Form()] = "雅思词汇真经",
     replaceExisting: Annotated[bool, Form()] = False,
+    bookId: Annotated[str, Form()] = "",
+    bookTitle: Annotated[str, Form()] = "",
+    bookDescription: Annotated[str, Form()] = "",
 ) -> ImportBookWordsResponse:
     try:
         return import_book_words_csv(
             await file.read(),
             source_name=sourceName,
             replace_existing=replaceExisting,
+            book_id=bookId or DEFAULT_BOOK_ID,
+            book_title=bookTitle or None,
+            book_description=bookDescription or None,
         )
     except UnicodeDecodeError as error:
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from error
@@ -87,6 +94,8 @@ def book_words_progress() -> BookProgressResponse:
 def create_prepare_job(request: PrepareJobRequest) -> PrepareJobResponse:
     try:
         return prepare_book_words(request)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

@@ -41,6 +41,12 @@ def migrate(connection: sqlite3.Connection) -> None:
             "ADD COLUMN book_id text null references vocabulary_books(id)"
         )
 
+    # Word-list layer annotation (PRD ch.10 考研英语红宝书 import). Same
+    # legacy-DB pattern as book_id above: "CREATE TABLE IF NOT EXISTS" is a
+    # no-op for databases that already have book_words without the column.
+    if "layer" not in columns:
+        connection.execute("ALTER TABLE book_words ADD COLUMN layer text null")
+
     connection.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_book_words_book_sequence

@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS book_words (
     ),
     chinese_note text null,
     import_status text not null check (import_status in ('pending', 'ready', 'needs_review')),
+    -- Word-list layer annotation (PRD ch.10): 必考词 / 基础词 / 简单基础词 /
+    -- 超纲词 for the 考研英语红宝书 import. Kept in the data layer only —
+    -- no UI depends on it yet (分层选学 is a follow-up candidate).
+    layer text null,
     created_at text not null,
     updated_at text not null
 );

@@ -52,6 +52,10 @@ class PrepareJobRequest(BaseModel):
     count: int | None = Field(default=None, gt=0)
     maxSensesPerWord: int = 5
     overwriteExisting: bool = False
+    # PRD ch.10: batch enrichment jobs may target a specific book (e.g.
+    # preparing the whole 考研英语红宝书 import) without rewriting the
+    # current-book pointer. Defaults to the current book (PRD ch.9).
+    bookId: str | None = None
 
 
 class PrepareJobResponse(BaseModel):
