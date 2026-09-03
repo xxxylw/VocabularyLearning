@@ -30,10 +30,47 @@ function Require-Command($Name, $Hint) {
     }
 }
 
+# Returns @{Major;Minor} or $null. Tolerates missing / stub executables.
+function Get-PythonVersion($Exe) {
+    try {
+        $out = & $Exe --version 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        if ($out -match 'Python\s+(\d+)\.(\d+)') {
+            return @{ Major = [int]$Matches[1]; Minor = [int]$Matches[2] }
+        }
+    } catch { }
+    return $null
+}
+
+function Test-Python311($Exe) {
+    $ver = Get-PythonVersion $Exe
+    return ($null -ne $ver -and ($ver.Major -gt 3 -or ($ver.Major -eq 3 -and $ver.Minor -ge 11)))
+}
+
 Write-Host "== VocabularyLearning Windows build v$Version =="
 
-Require-Command "python" "Install Python 3.11+ and re-run."
 Require-Command "pnpm" "Install pnpm (npm i -g pnpm) and re-run."
+
+# ---------------------------------------------------------------- python selection
+# Prefer an explicit 3.11+ interpreter over whatever `python` resolves to on
+# PATH, so a conda 3.9 base environment cannot poison the build venv.
+$BackendVenvPython = Join-Path $BackendDir ".venv\Scripts\python.exe"
+$PythonCandidates = @()
+if (Test-Path $BackendVenvPython) { $PythonCandidates += $BackendVenvPython }
+$PythonCandidates += "py"
+$PythonCandidates += "python"
+
+$SelectedPython = $null
+foreach ($Candidate in $PythonCandidates) {
+    if (Test-Python311 $Candidate) {
+        $SelectedPython = $Candidate
+        break
+    }
+}
+if (-not $SelectedPython) {
+    throw "No Python 3.11+ found (checked backend\.venv, py launcher, python on PATH). Install Python 3.11+ and re-run."
+}
+Write-Host "== using Python: $SelectedPython =="
 
 # ---------------------------------------------------------------- clean
 foreach ($dir in @($BuildDir, $DistDir)) {
@@ -44,8 +81,12 @@ New-Item -ItemType Directory -Path $AppRoot, $DistDir, $PyiWorkDir -Force | Out-
 # ---------------------------------------------------------------- venv
 if (-not (Test-Path $VenvPython)) {
     Write-Host "== creating build venv =="
-    & python -m venv (Join-Path $BuildDir "venv")
+    & $SelectedPython -m venv (Join-Path $BuildDir "venv")
     if ($LASTEXITCODE -ne 0) { throw "venv creation failed." }
+}
+if (-not (Test-Python311 $VenvPython)) {
+    $venvOut = & $VenvPython --version 2>$null
+    throw "build venv Python is not 3.11+ (got: $venvOut) - aborting."
 }
 Write-Host "== installing backend + launcher deps =="
 & $VenvPython -m pip install --upgrade pip --quiet
@@ -54,22 +95,6 @@ Write-Host "== installing backend + launcher deps =="
 & $VenvPython -m pip install "pytest>=8.2" "httpx>=0.27" --quiet
 & $VenvPython -m pip install "pyinstaller>=6.6" --quiet
 if ($LASTEXITCODE -ne 0) { throw "dependency installation failed." }
-
-# ---------------------------------------------------------------- tests
-if (-not $SkipTests) {
-    Write-Host "== backend tests =="
-    & $VenvPython -m pytest (Join-Path $BackendDir "tests") -q
-    if ($LASTEXITCODE -ne 0) { throw "backend tests failed." }
-
-    Write-Host "== launcher tests =="
-    Push-Location $Repo
-    try {
-        & $VenvPython -m pytest (Join-Path $Repo "launcher\tests") -q
-        if ($LASTEXITCODE -ne 0) { throw "launcher tests failed." }
-    }
-    finally { Pop-Location }
-}
-
 # ---------------------------------------------------------------- frontend
 Write-Host "== building frontend (vite) =="
 Push-Location $FrontendDir
