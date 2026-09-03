@@ -51,6 +51,7 @@ Write-Host "== installing backend + launcher deps =="
 & $VenvPython -m pip install --upgrade pip --quiet
 & $VenvPython -m pip install -e $BackendDir --quiet
 & $VenvPython -m pip install -r (Join-Path $Repo "launcher\requirements.txt") --quiet
+& $VenvPython -m pip install "pytest>=8.2" "httpx>=0.27" --quiet
 & $VenvPython -m pip install "pyinstaller>=6.6" --quiet
 if ($LASTEXITCODE -ne 0) { throw "dependency installation failed." }
 
