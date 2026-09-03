@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
+from app.version import APP_VERSION
 from app.models import (
     BookProgressResponse,
     BookSummaryResponse,
@@ -34,7 +35,7 @@ router = APIRouter()
 
 @router.get("/health")
 def health() -> dict[str, object]:
-    return {"ok": True, "version": "0.1.0"}
+    return {"ok": True, "version": APP_VERSION}
 
 
 @router.post("/book-words/import")

@@ -2,7 +2,14 @@
 
 VocabularyLearning is an MVP for turning a vocabulary book word list into study cards. The backend imports `book_words.csv`, prepares deterministic fallback-enriched entries and cards, and schedules reviews. The frontend provides a local Today cards study flow. (The full-book Anki export was dropped from scope and has been removed.)
 
-## Prerequisites
+## Windows 本地单机版（v1.0.0 分发形态）
+
+面向普通 Windows 用户：无需安装 Python / Node / pnpm，解压 zip 后双击 `VocabularyLearning.exe`，浏览器自动打开学习界面；系统托盘常驻（Open Study / Exit）；学习进度保存在 `%APPDATA%\VocabularyLearning\`，按 Windows 账户隔离。
+
+- 用户侧说明见包内 `README.txt`；发布物 = GitHub Release（zip + SHA256 checksums + release notes）。
+- 维护者构建与发布流程见 `docs/windows_packaging.md`（构建入口 `scripts/build_windows.ps1`）。
+
+## Developer Prerequisites
 
 - Python >= 3.11
 - pnpm

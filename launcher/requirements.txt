@@ -1,0 +1,4 @@
+# Runtime dependencies of the Windows launcher.
+# (The FastAPI/uvicorn backend itself is installed from backend/pyproject.toml.)
+pystray>=0.19.5
+pillow>=10.0
