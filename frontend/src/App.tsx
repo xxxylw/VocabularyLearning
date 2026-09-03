@@ -1,12 +1,22 @@
 import { useEffect, useState } from 'react';
-import { getBookProgress, getCurrentBook, lookupOxfordWord, lookupPronunciation, reviewCard, startTodaySession } from './api';
-import type { ReviewRating, StudyCard } from './api';
+import {
+  getBookProgress,
+  getCurrentBook,
+  listBooks,
+  lookupOxfordWord,
+  lookupPronunciation,
+  reviewCard,
+  startTodaySession,
+  switchBook
+} from './api';
+import type { BookListItem, ReviewRating, StudyCard } from './api';
 import { buildCheckInRecord, loadCheckIns, saveCheckIn } from './checkins';
+import { BookShelfView } from './components/BookShelfView';
 import { SpellingSession } from './components/SpellingSession';
 import { StudySession } from './components/StudySession';
 import { TodayView } from './components/TodayView';
 
-type Screen = 'today' | 'study' | 'spelling' | 'empty';
+type Screen = 'today' | 'study' | 'spelling' | 'empty' | 'bookshelf';
 type EmptyReason = 'no-cards' | 'no-book-words';
 
 // PRD ch.8: day-level progress anchors from the Today session — kept
@@ -28,23 +38,60 @@ export function App() {
   const [checkIns, setCheckIns] = useState(() => loadCheckIns());
   const [lastCompletedCards, setLastCompletedCards] = useState<StudyCard[]>([]);
   const [bookTitle, setBookTitle] = useState<string | null>(null);
+  // PRD ch.9: cover card data + bookshelf state.
+  const [bookTotalWords, setBookTotalWords] = useState<number | null>(null);
+  const [bookLearnedWords, setBookLearnedWords] = useState<number | null>(null);
+  const [bookFallbackNotice, setBookFallbackNotice] = useState<string | null>(null);
+  const [bookshelfBooks, setBookshelfBooks] = useState<BookListItem[]>([]);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [bookshelfError, setBookshelfError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    getCurrentBook()
-      .then((book) => {
-        if (!cancelled) {
-          setBookTitle(book.title);
-        }
-      })
-      .catch(() => {
-        // Book title is informational; keep the page usable when the
-        // endpoint is unavailable (e.g. backend still starting up).
-      });
-    return () => {
-      cancelled = true;
-    };
+    refreshCurrentBook().catch(() => {
+      // Book title is informational; keep the page usable when the
+      // endpoint is unavailable (e.g. backend still starting up).
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function refreshCurrentBook() {
+    const book = await getCurrentBook();
+    setBookTitle(book.title);
+    setBookTotalWords(book.totalWords);
+    setBookLearnedWords(book.learnedWords ?? null);
+    setBookFallbackNotice(book.fallbackNotice ?? null);
+  }
+
+  async function openBookShelf() {
+    setBookshelfError(null);
+    try {
+      const list = await listBooks();
+      setBookshelfBooks(list.books);
+      setScreen('bookshelf');
+    } catch {
+      setBookshelfError('Bookshelf could not be loaded. Please try again.');
+    }
+  }
+
+  async function handleSwitchBook(bookId: string) {
+    setIsSwitching(true);
+    setBookshelfError(null);
+    try {
+      await switchBook(bookId);
+      // PRD ch.9: after switching, Today follows the new book — refresh
+      // the cover card data and return to Today with a clean slate (the
+      // in-progress session ended; graded reviews stay persisted).
+      await refreshCurrentBook();
+      setCards([]);
+      setDayProgress(null);
+      setLastCompletedCards([]);
+      setScreen('today');
+    } catch {
+      setBookshelfError('Switching the book failed. Please try again.');
+    } finally {
+      setIsSwitching(false);
+    }
+  }
 
   async function handleStart(target: number) {
     setIsLoading(true);
@@ -126,6 +173,21 @@ export function App() {
     );
   }
 
+  if (screen === 'bookshelf') {
+    return (
+      <main className="app-shell">
+        <BookShelfView
+          books={bookshelfBooks}
+          onBack={() => setScreen('today')}
+          onSwitch={handleSwitchBook}
+          isSwitching={isSwitching}
+          error={bookshelfError}
+          notice={bookFallbackNotice}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <TodayView
@@ -138,6 +200,9 @@ export function App() {
         checkIns={checkIns}
         error={error}
         bookTitle={bookTitle}
+        bookTotalWords={bookTotalWords}
+        bookLearnedWords={bookLearnedWords}
+        onOpenBookShelf={() => void openBookShelf()}
       />
       {screen === 'empty' ? (
         <section className="empty-state" aria-live="polite">

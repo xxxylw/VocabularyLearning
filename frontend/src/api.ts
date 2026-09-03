@@ -56,6 +56,21 @@ export type BookInfo = {
   createdAt: string;
   updatedAt: string;
   totalWords: number;
+  // PRD ch.9: per-book progress aggregates surfaced on the Today cover
+  // card and bookshelf list (learned = ≥1 review, mastered = every card
+  // of the word is mastered). Optional because older mock payloads omit
+  // them; the UI treats a missing value as "not loaded yet".
+  learnedWords?: number;
+  masteredWords?: number;
+  fallbackNotice?: string | null;
+};
+
+export type BookListItem = BookInfo & {
+  isCurrent: boolean;
+};
+
+export type BookList = {
+  books: BookListItem[];
 };
 
 export type OxfordLookupResult = {
@@ -83,8 +98,16 @@ export type Pronunciation = {
 };
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
+  return sendJson<T>('POST', url, body);
+}
+
+async function putJson<T>(url: string, body: unknown): Promise<T> {
+  return sendJson<T>('PUT', url, body);
+}
+
+async function sendJson<T>(method: 'POST' | 'PUT', url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
@@ -94,7 +117,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
 
-    throw new Error(`POST ${url} failed with ${response.status}${statusText}${detail}`);
+    throw new Error(`${method} ${url} failed with ${response.status}${statusText}${detail}`);
   }
 
   const bodyText = await response.text();
@@ -106,7 +129,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   try {
     return JSON.parse(bodyText) as T;
   } catch {
-    throw new Error(`POST ${url} returned an invalid JSON response`);
+    throw new Error(`${method} ${url} returned an invalid JSON response`);
   }
 }
 
@@ -186,6 +209,18 @@ export function getBookProgress(): Promise<BookProgress> {
 
 export function getCurrentBook(): Promise<BookInfo> {
   return getJson<BookInfo>('/api/books/current');
+}
+
+// PRD ch.9: bookshelf data — every book with its aggregates and the
+// is_current marker on the one the study flows run against.
+export function listBooks(): Promise<BookList> {
+  return getJson<BookList>('/api/books');
+}
+
+// PRD ch.9: switch = pointer-only update (切换零改写); switching to the
+// already-current book is an idempotent no-op on the backend.
+export function switchBook(bookId: string): Promise<BookInfo> {
+  return putJson<BookInfo>('/api/books/current', { bookId });
 }
 
 export function lookupOxfordWord(word: string): Promise<OxfordLookupResult> {

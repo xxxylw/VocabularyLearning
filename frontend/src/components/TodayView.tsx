@@ -12,6 +12,11 @@ type TodayViewProps = {
   checkIns?: CheckInRecord[];
   error?: string | null;
   bookTitle?: string | null;
+  // PRD ch.9: cover card data (总词数 > 学习进度读数). Optional while the
+  // current book request is in flight or the backend predates ch.9.
+  bookTotalWords?: number | null;
+  bookLearnedWords?: number | null;
+  onOpenBookShelf?: () => void;
 };
 
 export function TodayView({
@@ -23,7 +28,10 @@ export function TodayView({
   canPracticeSpelling = false,
   checkIns = [],
   error,
-  bookTitle
+  bookTitle,
+  bookTotalWords,
+  bookLearnedWords,
+  onOpenBookShelf
 }: TodayViewProps) {
   const [targetDraft, setTargetDraft] = useState(String(newWordTarget));
 
@@ -61,6 +69,34 @@ export function TodayView({
         <p className="today-note">
           A quiet desk, a short queue, and a focused pass through the words waiting for you.
         </p>
+        {bookTitle && onOpenBookShelf ? (
+          // PRD ch.9: programmatic cover card (pure CSS spine style) —
+          // 书名 > 总词数 > 学习进度读数. The whole card is the entry to
+          // the bookshelf; the long title stays available via the title
+          // attribute when it truncates.
+          <button
+            type="button"
+            className="book-cover-card"
+            data-testid="book-cover-card"
+            onClick={onOpenBookShelf}
+            aria-label={`查看单词书书架，当前书《${bookTitle}》`}
+          >
+            <span className="book-cover-spine" aria-hidden="true" />
+            <span className="book-cover-body">
+              <span className="book-cover-title" title={bookTitle}>
+                {bookTitle}
+              </span>
+              <span className="book-cover-meta">
+                {typeof bookTotalWords === 'number' ? `${bookTotalWords} 词` : null}
+              </span>
+              <span className="book-cover-progress">
+                {typeof bookLearnedWords === 'number' && typeof bookTotalWords === 'number'
+                  ? `已学 ${bookLearnedWords} / ${bookTotalWords}`
+                  : null}
+              </span>
+            </span>
+          </button>
+        ) : null}
       </div>
 
       <div className="desk-panel" aria-label="Study desk summary">

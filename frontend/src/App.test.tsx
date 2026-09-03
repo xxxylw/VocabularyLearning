@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
@@ -145,9 +145,88 @@ describe('App', () => {
     expect(progress).toHaveAttribute('aria-valuenow', '10');
     expect(progress).toHaveAttribute('aria-valuemax', '40');
   });
+  it('switches the current book from the bookshelf and returns to Today (PRD ch.9)', async () => {
+    const user = userEvent.setup();
+    const switchedBook = currentBookResponse({ id: 'book-b', title: '托福核心词汇', totalWords: 4100, learnedWords: 5 });
+    const fetchMock = vi
+      .fn()
+      // initial current book (default) — cover card aggregates
+      .mockResolvedValueOnce(currentBookResponse({ learnedWords: 120, masteredWords: 30 }))
+      // GET /api/books when the cover card opens the bookshelf
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              books: [
+                {
+                  id: 'book-default',
+                  title: '雅思词汇真经',
+                  totalWords: 3383,
+                  learnedWords: 120,
+                  masteredWords: 30,
+                  isCurrent: true
+                },
+                {
+                  id: 'book-b',
+                  title: '托福核心词汇',
+                  totalWords: 4100,
+                  learnedWords: 5,
+                  masteredWords: 0,
+                  isCurrent: false
+                }
+              ]
+            })
+          )
+      })
+      // PUT /api/books/current — the switch itself
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify(switchedBook))
+      })
+      // GET /api/books/current — Today refresh after the switch
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify(switchedBook))
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    // Cover card shows the current book's aggregates from the initial
+    // GET /api/books/current response.
+    expect(await screen.findByText('已学 120 / 3383')).toBeInTheDocument();
+    await user.click(screen.getByTestId('book-cover-card'));
+
+    // Bookshelf: list + current badge + confirm dialog before switching.
+    expect(await screen.findByRole('heading', { name: '选择单词书' })).toBeInTheDocument();
+    expect(screen.getByText('当前')).toBeInTheDocument();
+    await user.click(screen.getAllByTestId('bookshelf-item')[1]);
+    const dialog = await screen.findByTestId('bookshelf-confirm');
+    expect(dialog).toHaveTextContent('切换后将学习《托福核心词汇》，当前书的学习进度会保留。');
+
+    await user.click(screen.getByRole('button', { name: /确认切换/ }));
+
+    // The switch PUT fires with the targeted bookId.
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        (call) => typeof call[1] === 'object' && call[1]?.method === 'PUT'
+      );
+      expect(putCall?.[0]).toBe('/api/books/current');
+      expect(JSON.parse(String(putCall?.[1]?.body))).toEqual({ bookId: 'book-b' });
+    });
+    // Back at Today: the bookshelf is gone, the desk panel and check-in
+    // grid are present. The cover card update is verified separately by
+    // TodayView.test.tsx, which keeps this integration test focused on
+    // the click → PUT → return-to-Today flow.
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: '选择单词书' })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /start today cards/i })).toBeInTheDocument();
+  });
 });
 
-function currentBookResponse() {
+function currentBookResponse(overrides: Record<string, unknown> = {}) {
   return {
     ok: true,
     text: () => Promise.resolve(JSON.stringify({
@@ -157,7 +236,8 @@ function currentBookResponse() {
       source: 'book_words.csv',
       createdAt: '2026-07-01T00:00:00Z',
       updatedAt: '2026-07-01T00:00:00Z',
-      totalWords: 3383
+      totalWords: 3383,
+      ...overrides
     }))
   };
 }

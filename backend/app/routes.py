@@ -7,6 +7,7 @@ from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
 from app.version import APP_VERSION
 from app.models import (
+    BookListResponse,
     BookProgressResponse,
     BookSummaryResponse,
     DueReviewsResponse,
@@ -17,6 +18,7 @@ from app.models import (
     PrepareJobResponse,
     ReviewCardRequest,
     ReviewCardResponse,
+    SwitchBookRequest,
     TodaySessionResponse,
     TodayStartRequest,
 )
@@ -25,9 +27,11 @@ from app.services import (
     ReviewConflictError,
     get_current_book,
     get_due_reviews,
+    list_books,
     prepare_book_words,
     review_card,
     start_today_session,
+    switch_current_book,
 )
 
 router = APIRouter()
@@ -59,6 +63,19 @@ async def import_book_words(
 @router.get("/books/current")
 def books_current() -> BookSummaryResponse:
     return get_current_book()
+
+
+@router.get("/books")
+def books_list() -> BookListResponse:
+    return list_books()
+
+
+@router.put("/books/current")
+def books_switch_current(request: SwitchBookRequest) -> BookSummaryResponse:
+    try:
+        return switch_current_book(request.bookId)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/book-words/progress")

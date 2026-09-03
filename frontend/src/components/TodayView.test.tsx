@@ -73,4 +73,64 @@ describe('TodayView', () => {
     expect(screen.getByLabelText(/2026-07-04: 24 cards completed/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/1 day streak/i)).toBeInTheDocument();
   });
+
+  it('renders the current book cover card with title, words and progress (PRD ch.9)', () => {
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        bookTitle="雅思词汇真经"
+        bookTotalWords={3383}
+        bookLearnedWords={120}
+        onOpenBookShelf={vi.fn()}
+      />
+    );
+
+    const cover = screen.getByTestId('book-cover-card');
+    expect(cover).toHaveTextContent('雅思词汇真经');
+    expect(cover).toHaveTextContent('3383 词');
+    expect(cover).toHaveTextContent('已学 120 / 3383');
+    // Full title stays available via the title attribute when truncated.
+    expect(cover.querySelector('.book-cover-title')).toHaveAttribute('title', '雅思词汇真经');
+  });
+
+  it('keeps the cover card accessible when aggregates are not loaded yet', () => {
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        bookTitle="雅思词汇真经"
+        onOpenBookShelf={vi.fn()}
+      />
+    );
+
+    const cover = screen.getByTestId('book-cover-card');
+    expect(cover).toHaveTextContent('雅思词汇真经');
+    expect(cover.textContent).not.toContain('已学');
+  });
+
+  it('opens the bookshelf when the cover card is clicked', async () => {
+    const user = userEvent.setup();
+    const onOpenBookShelf = vi.fn();
+
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        bookTitle="雅思词汇真经"
+        bookTotalWords={3383}
+        bookLearnedWords={120}
+        onOpenBookShelf={onOpenBookShelf}
+      />
+    );
+
+    await user.click(screen.getByTestId('book-cover-card'));
+    expect(onOpenBookShelf).toHaveBeenCalled();
+  });
 });

@@ -6,10 +6,17 @@ import json
 import os
 from uuid import uuid4
 
-from app.books import get_current_book_id
+from app.books import (
+    book_exists,
+    get_current_book_id,
+    resolve_current_book,
+    set_current_book_pointer,
+)
 from app.db import connect
 from app.enrichment import FallbackEnrichmentProvider, OxfordEnrichmentProvider
 from app.models import (
+    BookListItemResponse,
+    BookListResponse,
     BookSummaryResponse,
     DueReviewsResponse,
     PrepareJobRequest,
@@ -30,19 +37,63 @@ class ReviewConflictError(ValueError):
     pass
 
 
-def get_current_book() -> BookSummaryResponse:
-    with connect() as connection:
-        book_id = get_current_book_id(connection)
-        book_row = connection.execute(
-            "select id, title, description, source, created_at, updated_at"
-            " from vocabulary_books where id = ?",
-            (book_id,),
-        ).fetchone()
-        word_count_row = connection.execute(
-            "select count(*) as total from book_words where book_id = ?",
-            (book_id,),
-        ).fetchone()
+def _book_progress_aggregates(connection, book_id: str) -> tuple[int, int, int]:
+    """Per-book progress aggregates (PRD ch.9): total words, learned words
+    (the word has at least one review), mastered words (every card of the
+    word is mastered and it has at least one card)."""
+    total_row = connection.execute(
+        "select count(*) as total from book_words where book_id = ?",
+        (book_id,),
+    ).fetchone()
+    learned_row = connection.execute(
+        """
+        select count(distinct book_words.normalized_text) as total
+        from book_words
+        where book_words.book_id = ?
+          and exists (
+            select 1
+            from reviews
+            join cards on cards.id = reviews.card_id
+            join entries on entries.id = cards.entry_id
+            join words on words.id = entries.word_id
+            where words.normalized_text = book_words.normalized_text
+          )
+        """,
+        (book_id,),
+    ).fetchone()
+    mastered_row = connection.execute(
+        """
+        select count(*) as total
+        from (
+            select distinct book_words.normalized_text
+            from book_words
+            where book_words.book_id = ?
+              and exists (
+                select 1
+                from entries
+                join words on words.id = entries.word_id
+                join cards on cards.entry_id = entries.id
+                where words.normalized_text = book_words.normalized_text
+              )
+              and not exists (
+                select 1
+                from entries
+                join words on words.id = entries.word_id
+                join cards on cards.entry_id = entries.id
+                where words.normalized_text = book_words.normalized_text
+                  and cards.status <> 'mastered'
+              )
+        )
+        """,
+        (book_id,),
+    ).fetchone()
+    return total_row["total"], learned_row["total"], mastered_row["total"]
 
+
+def _book_summary_response(
+    connection, book_row, fallback_notice: str | None = None
+) -> BookSummaryResponse:
+    total, learned, mastered = _book_progress_aggregates(connection, book_row["id"])
     return BookSummaryResponse(
         id=book_row["id"],
         title=book_row["title"],
@@ -50,8 +101,58 @@ def get_current_book() -> BookSummaryResponse:
         source=book_row["source"],
         createdAt=book_row["created_at"],
         updatedAt=book_row["updated_at"],
-        totalWords=word_count_row["total"],
+        totalWords=total,
+        learnedWords=learned,
+        masteredWords=mastered,
+        fallbackNotice=fallback_notice,
     )
+
+
+def get_current_book() -> BookSummaryResponse:
+    with connect() as connection:
+        book_row, fallback = resolve_current_book(connection)
+        notice = (
+            f"当前书不存在，已回退默认书「{book_row['title']}」"
+            if fallback
+            else None
+        )
+        return _book_summary_response(connection, book_row, notice)
+
+
+def list_books() -> BookListResponse:
+    with connect() as connection:
+        current_book_row, _fallback = resolve_current_book(connection)
+        current_book_id = str(current_book_row["id"])
+        book_rows = connection.execute(
+            "select * from vocabulary_books order by created_at, id"
+        ).fetchall()
+        books = [
+            BookListItemResponse(
+                **_book_summary_response(connection, row).model_dump(),
+                isCurrent=str(row["id"]) == current_book_id,
+            )
+            for row in book_rows
+        ]
+    return BookListResponse(books=books)
+
+
+def switch_current_book(book_id: str) -> BookSummaryResponse:
+    """Switch the current book (PRD ch.9): only the current-book pointer is
+    updated — no review / scheduling / progress / snapshot data is touched.
+    Switching to the already-current book is an idempotent no-op."""
+    with connect() as connection:
+        if not book_exists(connection, book_id):
+            raise LookupError(f"Book not found: {book_id}")
+        pointer = connection.execute(
+            "select value from settings where key = 'current_book_id'"
+        ).fetchone()
+        if pointer is None or pointer["value"] != book_id:
+            set_current_book_pointer(connection, book_id)
+        book_row = connection.execute(
+            "select * from vocabulary_books where id = ?",
+            (book_id,),
+        ).fetchone()
+        return _book_summary_response(connection, book_row)
 
 
 def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
@@ -752,6 +853,15 @@ def _get_due_study_cards_by_queue(
             join words on words.id = entries.word_id
             where cards.due_at <= ?
               and cards.status in ('new', 'learning', 'mastered')
+              and exists (
+                  -- PRD ch.9: after switching books the study pool only
+                  -- contains cards of words that belong to the current
+                  -- book, so the other book's cards never leak in.
+                  select 1
+                  from book_words
+                  where book_words.normalized_text = words.normalized_text
+                    and book_words.book_id = ?
+              )
               and {queue_condition}
             order by
                 case when book_sequence_index is null then 1 else 0 end,
@@ -761,7 +871,7 @@ def _get_due_study_cards_by_queue(
                 cards.created_on,
                 words.text
             """,
-            (book_id, due_date.isoformat()),
+            (book_id, due_date.isoformat(), book_id),
         ).fetchall()
 
         if not card_rows:
@@ -773,6 +883,7 @@ def _get_due_study_cards_by_queue(
 
 def _count_new_words_studied_on(study_date: date) -> int:
     with connect() as connection:
+        book_id = get_current_book_id(connection)
         row = connection.execute(
             """
             select count(*) as total
@@ -783,6 +894,15 @@ def _count_new_words_studied_on(study_date: date) -> int:
                 join entries on entries.id = cards.entry_id
                 join words on words.id = entries.word_id
                 where substr(reviews.reviewed_at, 1, 10) = ?
+                  and exists (
+                      -- PRD ch.9: the daily new-word quota is tracked per
+                      -- book — a word of another book never consumes the
+                      -- current book's quota.
+                      select 1
+                      from book_words
+                      where book_words.normalized_text = words.normalized_text
+                        and book_words.book_id = ?
+                  )
                   and not exists (
                     select 1
                     from reviews previous_reviews
@@ -794,7 +914,7 @@ def _count_new_words_studied_on(study_date: date) -> int:
                 group by words.normalized_text
             )
             """,
-            (study_date.isoformat(), study_date.isoformat()),
+            (study_date.isoformat(), book_id, study_date.isoformat()),
         ).fetchone()
 
     return row["total"]

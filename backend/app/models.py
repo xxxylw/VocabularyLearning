@@ -26,6 +26,25 @@ class BookSummaryResponse(BaseModel):
     createdAt: str
     updatedAt: str
     totalWords: int
+    # PRD ch.9: per-book progress aggregates (learned / mastered counts)
+    # used by the Today cover card and the bookshelf list.
+    learnedWords: int = 0
+    masteredWords: int = 0
+    # Set when the current-book pointer referenced a missing book and the
+    # backend fell back to the default book (PRD ch.9 异常兜底).
+    fallbackNotice: str | None = None
+
+
+class BookListItemResponse(BookSummaryResponse):
+    isCurrent: bool = False
+
+
+class BookListResponse(BaseModel):
+    books: list[BookListItemResponse]
+
+
+class SwitchBookRequest(BaseModel):
+    bookId: str
 
 
 class PrepareJobRequest(BaseModel):
