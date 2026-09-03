@@ -519,7 +519,6 @@ a {
   font-size: clamp(3rem, 9vw, 7rem);
   line-height: 1;
   letter-spacing: 0;
-  overflow-wrap: anywhere;
 }
 
 .pronunciation-panel {
@@ -537,13 +536,33 @@ a {
   font-size: 1.15rem;
 }
 
+/* P1 (recvuarDc80JCa) · ghost speaker icon — design doc 方案 A:
+ * the play control is a quiet 28×28 outlined circle carrying a 13px inline
+ * SVG speaker (see PronunciationPanel.tsx; icon uses currentColor).
+ * Static state stays almost invisible next to the word; hover recovers
+ * discoverability with a soft tint, a deeper outline and a blue icon. */
 .pronunciation-play {
-  min-height: 34px;
-  border-radius: 999px;
-  background: #486f83;
-  color: #fffdf7;
-  padding: 6px 13px;
-  font-weight: 800;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid rgba(72, 111, 131, 0.30);
+  border-radius: 50%;
+  background: transparent;
+  color: #6b7d86;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.pronunciation-play:hover {
+  border-color: rgba(72, 111, 131, 0.55);
+  background: rgba(72, 111, 131, 0.08);
+  color: #486f83;
+}
+
+.pronunciation-play:focus-visible {
+  outline: 2px solid #486f83;
+  outline-offset: 2px;
 }
 
 .pronunciation-status {
@@ -1009,7 +1028,14 @@ a {
   line-height: 1;
   letter-spacing: 0;
   font-weight: 800;
-  overflow-wrap: anywhere;
+  /* PRD ch.12 (P1): the word face always renders on ONE line — never wraps,
+     never truncates. WordHeadline.tsx measures the real rendered widths and
+     shrinks the font size inline when the default size would overflow.
+     overflow: hidden only guards the first frame (or no-JS) so an unfit
+     word cannot spill outside the card or scroll the page horizontally. */
+  white-space: nowrap;
+  overflow-wrap: normal;
+  overflow: hidden;
 }
 
 .pronunciation-ipa-item {

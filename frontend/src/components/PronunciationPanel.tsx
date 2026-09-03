@@ -85,7 +85,23 @@ export function PronunciationPanel({
             aria-label={`Play ${word} pronunciation`}
             onClick={() => void audioRef.current?.play()}
           >
-            Play
+            {/*
+             * P1 (recvuarDc80JCa) · ghost speaker icon: the word stays the
+             * card's only visual anchor. Icon color follows `currentColor`,
+             * so the CSS rules in styles.css drive static / hover colors.
+             */}
+            <svg
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              aria-hidden="true"
+              focusable="false"
+              fill="currentColor"
+            >
+              <path d="M13.5 4.19a.75.75 0 0 0-1.22-.59L6.99 8.02a.5.5 0 0 1-.32.11H3.5a.5.5 0 0 0-.5.5v6.74a.5.5 0 0 0 .5.5h3.17a.5.5 0 0 1 .32.11l5.29 4.42a.75.75 0 0 0 1.22-.59V4.19Z" />
+              <path d="M16.65 7.72a.75.75 0 0 1 1.06.03 6.98 6.98 0 0 1 0 8.5.75.75 0 1 1-1.15-.96 5.48 5.48 0 0 0 0-6.58.75.75 0 0 1 .09-1.06Z" />
+              <path d="M19.4 5.03a.75.75 0 0 1 1.06.06 10.97 10.97 0 0 1 0 13.82.75.75 0 1 1-1.14-.97 9.47 9.47 0 0 0 0-11.88.75.75 0 0 1 .08-1.03Z" />
+            </svg>
           </button>
         </>
       ) : null}

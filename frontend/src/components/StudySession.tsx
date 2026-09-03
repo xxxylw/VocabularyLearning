@@ -4,6 +4,7 @@ import type { OxfordLookupResult } from '../api';
 import type { ReviewRating } from '../api';
 import type { Pronunciation } from '../api';
 import { PronunciationPanel } from './PronunciationPanel';
+import { WordHeadline } from './WordHeadline';
 
 type StudySessionProps = {
   cards: StudyCard[];
@@ -311,7 +312,10 @@ export function StudySession({
       <section className="study-card" aria-labelledby="study-word">
         <div className="queue-pill">{card.queueType}</div>
         <div className="card-front">
-          <h1 id="study-word" className="word-headline">{card.word}</h1>
+          {/* PRD ch.12 (P1): the word face always renders on one line;
+              WordHeadline shrinks the font size only when the default
+              size overflows the card width. */}
+          <WordHeadline word={card.word} />
           {/* PRD decision 1: render real UK/US IPA when data exists; when the
               panel has no real IPA it renders nothing (no placeholder copy). */}
           {onLookupPronunciation ? (

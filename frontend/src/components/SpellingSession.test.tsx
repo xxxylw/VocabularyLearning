@@ -136,4 +136,25 @@ describe('SpellingSession', () => {
     expect(screen.getByText('12 / 40')).toBeInTheDocument();
     expect(screen.getByText('11 / 40 completed')).toBeInTheDocument();
   });
+
+
+  it('does not apply the single-line font fit to the spelling prompt (PRD ch.12)', () => {
+    // Even with the same overflow measurements that would shrink a study
+    // card headline, the spelling prompt keeps its default responsive size.
+    // A real CSSStyleDeclaration keeps methods (getPropertyValue, ...) that
+    // user-event and other libraries call on computed styles.
+    const computedStyle = document.createElement('div').style;
+    computedStyle.fontSize = '48px';
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(computedStyle);
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(900);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(300);
+
+    render(<SpellingSession cards={spellingCards} onExit={vi.fn()} />);
+
+    const prompt = screen.getByRole('heading', { level: 1, name: /el nino/i });
+    expect(prompt.className).not.toContain('word-headline');
+    expect(prompt.style.fontSize).toBe('');
+
+    vi.restoreAllMocks();
+  });
 });

@@ -511,4 +511,65 @@ describe('StudySession', () => {
       '0'
     );
   });
+
+
+  it('shrinks the front headline font size for an over-wide word (PRD ch.12)', () => {
+    // jsdom has no layout, so stub the measurement inputs WordHeadline reads:
+    // default font 48px, natural single-line width 900px, card content 300px.
+    // A real CSSStyleDeclaration keeps methods (getPropertyValue, ...) that
+    // user-event and other libraries call on computed styles.
+    const computedStyle = document.createElement('div').style;
+    computedStyle.fontSize = '48px';
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(computedStyle);
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(900);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(300);
+
+    const longWordCard: StudyCard = { ...baseCard, word: 'industrialization', senses: [{ ...baseCard.senses[0], cardId: 'card-long' }] };
+    render(<StudySession cards={[longWordCard]} onReview={vi.fn()} onExit={vi.fn()} />);
+
+    // 48px * 300 / 900 = 16px — one line, no wrap, no truncation.
+    expect(screen.getByRole('heading', { level: 1, name: 'industrialization' }).style.fontSize).toBe('16px');
+
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the default headline font size for short words (PRD ch.12)', () => {
+    // A real CSSStyleDeclaration keeps methods (getPropertyValue, ...) that
+    // user-event and other libraries call on computed styles.
+    const computedStyle = document.createElement('div').style;
+    computedStyle.fontSize = '48px';
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(computedStyle);
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(200);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(600);
+
+    render(<StudySession cards={cards} onReview={vi.fn()} onExit={vi.fn()} />);
+
+    expect(screen.getByRole('heading', { level: 1, name: 'atmosphere' }).style.fontSize).toBe('');
+
+    vi.restoreAllMocks();
+  });
+
+  it('leaves the card back and spelling view untouched by the single-line fit (PRD ch.12)', async () => {
+    // Same overflow stubs: even when the word overflows, only the card-front
+    // headline is scaled — definitions on the back keep their own styling.
+    // A real CSSStyleDeclaration keeps methods (getPropertyValue, ...) that
+    // user-event and other libraries call on computed styles.
+    const computedStyle = document.createElement('div').style;
+    computedStyle.fontSize = '48px';
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(computedStyle);
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(900);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(300);
+
+    const user = userEvent.setup();
+    render(<StudySession cards={cards} onReview={vi.fn()} onExit={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /reveal/i }));
+
+    const senseCard = screen.getByLabelText('Sense 1');
+    expect(senseCard.style.fontSize).toBe('');
+    expect(within(senseCard).getByText(/mixture of gases that surrounds the earth/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /got it/i })).toBeInTheDocument();
+
+    vi.restoreAllMocks();
+  });
 });
