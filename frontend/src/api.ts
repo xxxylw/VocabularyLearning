@@ -28,6 +28,9 @@ export type StudyCard = {
   }>;
   queueType: 'new' | 'review';
   degraded: boolean;
+  // PRD ch.8: 1-based position in the day's queue snapshot; used so the
+  // progress bar resumes at the right place after re-entering Today.
+  queuePosition?: number | null;
 };
 
 export type ReviewRating = 'known' | 'uncertain' | 'unknown';
@@ -35,6 +38,9 @@ export type ReviewRating = 'known' | 'uncertain' | 'unknown';
 export type TodaySession = {
   totalCards: number;
   cards: StudyCard[];
+  // PRD ch.8: entries of the day's queue snapshot already reviewed on the
+  // study date — the numerator offset so the progress bar never restarts.
+  reviewedCards: number;
 };
 
 export type BookProgress = {

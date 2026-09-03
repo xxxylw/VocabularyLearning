@@ -114,4 +114,26 @@ describe('SpellingSession', () => {
 
     expect(onExit).toHaveBeenCalledTimes(1);
   });
+
+  it('resumes day-queue progress from the shared snapshot offset (PRD ch.8)', async () => {
+    const user = userEvent.setup();
+    render(
+      <SpellingSession
+        cards={spellingCards}
+        startIndex={10}
+        totalCount={40}
+        onExit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('11 / 40')).toBeInTheDocument();
+    expect(screen.getByText('10 / 40 completed')).toBeInTheDocument();
+
+    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nino');
+    await user.click(screen.getByRole('button', { name: /check/i }));
+    await user.click(screen.getByRole('button', { name: /next/i }));
+
+    expect(screen.getByText('12 / 40')).toBeInTheDocument();
+    expect(screen.getByText('11 / 40 completed')).toBeInTheDocument();
+  });
 });

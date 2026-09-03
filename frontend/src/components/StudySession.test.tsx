@@ -466,4 +466,49 @@ describe('StudySession', () => {
 
     expect(onReview).not.toHaveBeenCalled();
   });
+
+  it('resumes day-queue progress instead of restarting from 1 (PRD ch.8)', async () => {
+    const user = userEvent.setup();
+    const onReview = vi.fn().mockResolvedValue(undefined);
+    const resumedCards: StudyCard[] = [
+      { ...twoCards[0], queuePosition: 11 },
+      { ...twoCards[1], queuePosition: 12 }
+    ];
+    render(
+      <StudySession
+        cards={resumedCards}
+        totalCards={40}
+        reviewedCards={10}
+        onReview={onReview}
+        onExit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('11 / 40')).toBeInTheDocument();
+    expect(screen.getByText('10 / 40 completed')).toBeInTheDocument();
+    const progress = screen.getByRole('progressbar', { name: /Today completed words/i });
+    expect(progress).toHaveAttribute('aria-valuenow', '10');
+    expect(progress).toHaveAttribute('aria-valuemax', '40');
+
+    await user.click(screen.getByRole('button', { name: /reveal/i }));
+    await user.click(screen.getByRole('button', { name: /got it/i }));
+
+    expect(screen.getByText('12 / 40')).toBeInTheDocument();
+    expect(screen.getByText('11 / 40 completed')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '11'
+    );
+  });
+
+  it('falls back to session-local progress when no day anchors are provided', () => {
+    render(<StudySession cards={twoCards} onReview={vi.fn()} onExit={vi.fn()} />);
+
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    expect(screen.getByText('0 / 2 completed')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '0'
+    );
+  });
 });

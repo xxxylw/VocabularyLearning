@@ -140,6 +140,35 @@ CREATE TABLE IF NOT EXISTS prepare_jobs (
     updated_at text not null
 );
 
+-- Today study queue snapshot (P1 断点续传, PRD ch.8). One ordered queue
+-- per book per study date; rows reference the word-group's primary card.
+-- Pure-additive storage: deleting a snapshot never rewrites cards /
+-- reviews / scheduling state. card_id intentionally carries no FK so
+-- prepare-overwrite (which deletes cards) keeps working; the read path
+-- simply drops rows whose card no longer exists.
+CREATE TABLE IF NOT EXISTS today_queue (
+    id text primary key,
+    book_id text not null,
+    study_date text not null,
+    position integer not null,
+    card_id text not null,
+    queue_type text not null check (queue_type in ('new', 'review')),
+    created_at text not null,
+    unique (book_id, study_date, position)
+);
+
+-- Snapshot header: marks "the queue for this book+date was generated",
+-- even when that day's queue turned out empty.
+CREATE TABLE IF NOT EXISTS today_queue_snapshots (
+    book_id text not null,
+    study_date text not null,
+    created_at text not null,
+    primary key (book_id, study_date)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_today_queue_card
+ON today_queue (book_id, study_date, card_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_book_words_source_sequence
 ON book_words (source_id, sequence_index);
 

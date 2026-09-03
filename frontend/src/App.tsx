@@ -9,9 +9,18 @@ import { TodayView } from './components/TodayView';
 type Screen = 'today' | 'study' | 'spelling' | 'empty';
 type EmptyReason = 'no-cards' | 'no-book-words';
 
+// PRD ch.8: day-level progress anchors from the Today session — kept
+// across screens so both card mode and spelling mode resume the day
+// queue's progress instead of restarting from 1.
+type DayProgress = {
+  totalCards: number;
+  reviewedCards: number;
+};
+
 export function App() {
   const [screen, setScreen] = useState<Screen>('today');
   const [cards, setCards] = useState<StudyCard[]>([]);
+  const [dayProgress, setDayProgress] = useState<DayProgress | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newWordTarget, setNewWordTarget] = useState(20);
@@ -44,6 +53,10 @@ export function App() {
     try {
       const session = await startTodaySession(target);
       setCards(session.cards);
+      setDayProgress({
+        totalCards: session.totalCards,
+        reviewedCards: session.reviewedCards ?? 0
+      });
       if (session.cards.length > 0) {
         setScreen('study');
         return;
@@ -78,6 +91,9 @@ export function App() {
 
   function startReviewDueWords(reviewCards: StudyCard[]) {
     setCards(reviewCards);
+    // Ad-hoc re-review subset: progress falls back to session-local
+    // counting (PRD ch.8 only anchors Today-started sessions).
+    setDayProgress(null);
     setScreen('study');
   }
 
@@ -85,6 +101,8 @@ export function App() {
     return (
       <StudySession
         cards={cards}
+        totalCards={dayProgress?.totalCards}
+        reviewedCards={dayProgress?.reviewedCards}
         onReview={reviewWordCard}
         onExit={() => setScreen('today')}
         onLookupWord={lookupOxfordWord}
@@ -100,6 +118,8 @@ export function App() {
     return (
       <SpellingSession
         cards={cards}
+        startIndex={dayProgress?.reviewedCards ?? 0}
+        totalCount={dayProgress?.totalCards ?? cards.length}
         onExit={() => setScreen('today')}
         onLookupPronunciation={lookupPronunciation}
       />

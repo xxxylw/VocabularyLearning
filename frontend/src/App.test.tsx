@@ -119,6 +119,32 @@ describe('App', () => {
 
     expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
   });
+
+  it('resumes today progress from the day queue after re-entering (PRD ch.8)', async () => {
+    const user = userEvent.setup();
+    const resumedCard = { ...studyCard(), queuePosition: 11 };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({ totalCards: 40, reviewedCards: 10, cards: [resumedCard] })
+          )
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: /start today cards/i }));
+
+    expect(await screen.findByText('11 / 40')).toBeInTheDocument();
+    expect(screen.getByText('10 / 40 completed')).toBeInTheDocument();
+    const progress = screen.getByRole('progressbar', { name: /Today completed words/i });
+    expect(progress).toHaveAttribute('aria-valuenow', '10');
+    expect(progress).toHaveAttribute('aria-valuemax', '40');
+  });
 });
 
 function currentBookResponse() {

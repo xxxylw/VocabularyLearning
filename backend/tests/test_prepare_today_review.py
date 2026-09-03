@@ -475,8 +475,17 @@ def test_today_session_does_not_prepare_more_new_words_after_daily_target_is_met
         json={"date": today.isoformat(), "dailyNewWordTarget": 2},
     ).json()
 
-    assert second_session["totalCards"] == 0
+    # PRD ch.8: snapshot persists within the day; reviewed cards are filtered
+    # out but totalCards stays at the day-queue size (progress 2/2, done).
+    assert second_session["totalCards"] == 2
     assert second_session["cards"] == []
+    assert second_session["reviewedCards"] == 2
+    # No additional new words (appeal/stable) were prepared after the target
+    # was met.
+    assert all(
+        card["word"] not in {"appeal", "stable"}
+        for card in second_session["cards"]
+    )
 
 
 def test_today_session_orders_new_cards_by_book_sequence(

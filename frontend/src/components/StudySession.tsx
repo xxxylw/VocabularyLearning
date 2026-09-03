@@ -14,6 +14,12 @@ type StudySessionProps = {
   onComplete?: (cards: StudyCard[]) => void;
   onPracticeSpelling?: (cards: StudyCard[]) => void;
   onReviewDueWords?: (cards: StudyCard[]) => void;
+  // PRD ch.8: day-level progress anchors. totalCards is the day queue's
+  // size (denominator); reviewedCards counts queue entries already
+  // reviewed before this session started (numerator offset). Both fall
+  // back to session-local values when absent (e.g. ad-hoc re-review).
+  totalCards?: number;
+  reviewedCards?: number;
 };
 
 const ratingLabels: Array<{ rating: ReviewRating; label: string; shortcut: string }> = [
@@ -47,7 +53,9 @@ export function StudySession({
   onLookupPronunciation,
   onComplete,
   onPracticeSpelling,
-  onReviewDueWords
+  onReviewDueWords,
+  totalCards,
+  reviewedCards = 0
 }: StudySessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
@@ -60,7 +68,14 @@ export function StudySession({
 
   const card = cards[currentIndex];
   const completedCount = Math.min(currentIndex, cards.length);
-  const completionPercent = cards.length === 0 ? 0 : (completedCount / cards.length) * 100;
+  // PRD ch.8: the progress bar is anchored to the day queue, not the
+  // in-session list, so it never resets after re-entering Today.
+  const denominator = totalCards ?? cards.length;
+  const dayCompletedCount = reviewedCards + completedCount;
+  const completionPercent =
+    denominator === 0 ? 0 : (dayCompletedCount / denominator) * 100;
+  const currentPosition =
+    card?.queuePosition ?? reviewedCards + currentIndex + 1;
   const isComplete = cards.length > 0 && currentIndex >= cards.length;
   const newCardsCompleted = cards.filter((item) => item.queueType === 'new').length;
   const reviewCardsCompleted = cards.filter((item) => item.queueType === 'review').length;
@@ -277,19 +292,19 @@ export function StudySession({
         </button>
         <div className="study-progress">
           <div className="progress-text" aria-label="Progress">
-            {currentIndex + 1} / {cards.length}
+            {currentPosition} / {denominator}
           </div>
           <div
             className="progress-bar"
             role="progressbar"
             aria-label="Today completed words"
             aria-valuemin={0}
-            aria-valuemax={cards.length}
-            aria-valuenow={completedCount}
+            aria-valuemax={denominator}
+            aria-valuenow={dayCompletedCount}
           >
             <div className="progress-bar-fill" style={{ width: `${completionPercent}%` }} />
           </div>
-          <div className="completed-text">{completedCount} / {cards.length} completed</div>
+          <div className="completed-text">{dayCompletedCount} / {denominator} completed</div>
         </div>
       </header>
 

@@ -247,9 +247,45 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
 
 def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
     study_date = request.date or date.today()
-    review_cards = _get_due_review_cards(study_date)
+
+    with connect() as connection:
+        book_id = get_current_book_id(connection)
+        snapshot_exists = _today_queue_snapshot_exists(connection, book_id, study_date)
+
+    if not snapshot_exists:
+        # 每日首次进入 Today：生成当天固定队列快照（复习卡在前 + 新卡在后）。
+        _create_today_queue_snapshot(study_date, request.dailyNewWordTarget)
+    else:
+        # 快照已存在：当日不重算，只把额度内新 prepare 就绪的新卡追加到队尾。
+        _merge_new_cards_into_today_queue(study_date, request.dailyNewWordTarget)
+
+    return _read_today_queue_session(study_date)
+
+
+def _today_queue_snapshot_exists(
+    connection, book_id: str, study_date: date
+) -> bool:
+    row = connection.execute(
+        "select 1 from today_queue_snapshots"
+        " where book_id = ? and study_date = ? limit 1",
+        (book_id, study_date.isoformat()),
+    ).fetchone()
+    return row is not None
+
+
+def _create_today_queue_snapshot(
+    study_date: date, daily_new_word_target: int
+) -> None:
+    review_cards = sorted(
+        # PRD ch.8 rule 2: review cards by due_at ascending (overdue
+        # first); the stable sort keeps the book-sequence order as the
+        # tie-breaker for cards sharing a due date.
+        _get_due_review_cards(study_date),
+        key=lambda card: card.dueAt,
+    )
+
     new_word_target_remaining = max(
-        request.dailyNewWordTarget - _count_new_words_studied_on(study_date),
+        daily_new_word_target - _count_new_words_studied_on(study_date),
         0,
     )
     new_cards = (
@@ -268,8 +304,225 @@ def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
         )
         new_cards = _get_due_new_cards(study_date, new_word_target_remaining)
 
-    cards = review_cards + new_cards
-    return TodaySessionResponse(totalCards=len(cards), cards=cards)
+    # A word whose senses span both the review and the new pool is queued
+    # once, as a review card (its primary card id matches on both sides).
+    review_card_ids = {card.cardId for card in review_cards}
+    new_cards = [card for card in new_cards if card.cardId not in review_card_ids]
+
+    _append_today_queue_rows(
+        study_date, review_cards=review_cards, new_cards=new_cards, create_snapshot=True
+    )
+
+
+def _merge_new_cards_into_today_queue(
+    study_date: date, daily_new_word_target: int
+) -> None:
+    with connect() as connection:
+        book_id = get_current_book_id(connection)
+        queued_new_card_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                "select card_id from today_queue"
+                " where book_id = ? and study_date = ? and queue_type = 'new'",
+                (book_id, study_date.isoformat()),
+            ).fetchall()
+        }
+        reviewed_queued_new = connection.execute(
+            """
+            select count(*) as total
+            from today_queue
+            where book_id = ? and study_date = ? and queue_type = 'new'
+              and exists (
+                select 1 from reviews
+                where reviews.card_id = today_queue.card_id
+                  and substr(reviews.reviewed_at, 1, 10) = ?
+              )
+            """,
+            (book_id, study_date.isoformat(), study_date.isoformat()),
+        ).fetchone()["total"]
+
+    # Quota consumed today = distinct new words studied (reviews) UNION
+    # queued new entries; a queued new entry already reviewed today is in
+    # both sets, hence the subtraction below (PRD ch.8 rule 7).
+    studied_new = _count_new_words_studied_on(study_date)
+    remaining = max(
+        daily_new_word_target
+        - studied_new
+        - (len(queued_new_card_ids) - reviewed_queued_new),
+        0,
+    )
+    if remaining <= 0:
+        return
+
+    candidates = _get_due_new_cards(
+        study_date, remaining + len(queued_new_card_ids)
+    )
+    fresh_cards = [
+        card for card in candidates if card.cardId not in queued_new_card_ids
+    ]
+    if len(fresh_cards) < remaining:
+        # The quota grew mid-day but the pool has no ready new cards left:
+        # prepare the missing words, mirroring the snapshot-creation path.
+        prepare_book_words(
+            PrepareJobRequest(
+                scope="next",
+                count=remaining - len(fresh_cards),
+                maxSensesPerWord=5,
+                overwriteExisting=False,
+            )
+        )
+        candidates = _get_due_new_cards(
+            study_date, remaining + len(queued_new_card_ids)
+        )
+        fresh_cards = [
+            card for card in candidates if card.cardId not in queued_new_card_ids
+        ]
+    fresh_cards = fresh_cards[:remaining]
+    if not fresh_cards:
+        return
+
+    _append_today_queue_rows(
+        study_date, review_cards=[], new_cards=fresh_cards, create_snapshot=False
+    )
+
+
+def _append_today_queue_rows(
+    study_date: date,
+    review_cards: list[StudyCardResponse],
+    new_cards: list[StudyCardResponse],
+    create_snapshot: bool,
+) -> None:
+    entries = [(card, "review") for card in review_cards]
+    entries += [(card, "new") for card in new_cards]
+    now = _utc_now()
+
+    with connect() as connection:
+        book_id = get_current_book_id(connection)
+        if create_snapshot:
+            connection.execute(
+                "insert or ignore into today_queue_snapshots"
+                " (book_id, study_date, created_at) values (?, ?, ?)",
+                (book_id, study_date.isoformat(), now),
+            )
+        row = connection.execute(
+            "select coalesce(max(position), 0) as next_position"
+            " from today_queue where book_id = ? and study_date = ?",
+            (book_id, study_date.isoformat()),
+        ).fetchone()
+        position = row["next_position"] + 1
+        for card, queue_type in entries:
+            connection.execute(
+                """
+                insert into today_queue (
+                    id, book_id, study_date, position, card_id, queue_type, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    book_id,
+                    study_date.isoformat(),
+                    position,
+                    card.cardId,
+                    queue_type,
+                    now,
+                ),
+            )
+            position += 1
+
+
+def _read_today_queue_session(study_date: date) -> TodaySessionResponse:
+    with connect() as connection:
+        book_id = get_current_book_id(connection)
+        queue_rows = connection.execute(
+            "select card_id, position, queue_type from today_queue"
+            " where book_id = ? and study_date = ? order by position",
+            (book_id, study_date.isoformat()),
+        ).fetchall()
+        if not queue_rows:
+            return TodaySessionResponse(totalCards=0, cards=[], reviewedCards=0)
+
+        queue_card_ids = [row["card_id"] for row in queue_rows]
+        placeholders = ", ".join("?" for _ in queue_card_ids)
+        existing_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                f"select id as card_id from cards where id in ({placeholders})",
+                tuple(queue_card_ids),
+            ).fetchall()
+        }
+        reviewed_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                f"""
+                select distinct card_id
+                from reviews
+                where card_id in ({placeholders})
+                  and substr(reviewed_at, 1, 10) = ?
+                """,
+                (*queue_card_ids, study_date.isoformat()),
+            ).fetchall()
+        }
+
+        total_cards = sum(1 for card_id in queue_card_ids if card_id in existing_ids)
+        reviewed_cards = sum(
+            1
+            for card_id in queue_card_ids
+            if card_id in existing_ids and card_id in reviewed_ids
+        )
+        pending_rows = [
+            row
+            for row in queue_rows
+            if row["card_id"] in existing_ids and row["card_id"] not in reviewed_ids
+        ]
+
+        cards: list[StudyCardResponse] = []
+        if pending_rows:
+            pending_card_ids = [row["card_id"] for row in pending_rows]
+            pending_placeholders = ", ".join("?" for _ in pending_card_ids)
+            pending_words = [
+                row["normalized_text"]
+                for row in connection.execute(
+                    f"""
+                    select distinct words.normalized_text
+                    from cards
+                    join entries on entries.id = cards.entry_id
+                    join words on words.id = entries.word_id
+                    where cards.id in ({pending_placeholders})
+                    """,
+                    tuple(pending_card_ids),
+                ).fetchall()
+            ]
+            word_placeholders = ", ".join("?" for _ in pending_words)
+            due_rows = connection.execute(
+                f"""
+                select
+                    cards.id as card_id,
+                    cards.last_reviewed_at,
+                    words.normalized_text
+                from cards
+                join entries on entries.id = cards.entry_id
+                join words on words.id = entries.word_id
+                where cards.due_at <= ?
+                  and cards.status in ('new', 'learning', 'mastered')
+                  and words.normalized_text in ({word_placeholders})
+                """,
+                (study_date.isoformat(), *pending_words),
+            ).fetchall()
+            study_cards = _study_cards_from_rows(connection, due_rows)
+            cards_by_id = {card.cardId: card for card in study_cards}
+            for row in pending_rows:
+                card = cards_by_id.get(row["card_id"])
+                if card is None:
+                    continue
+                card.queueType = row["queue_type"]
+                card.queuePosition = row["position"]
+                cards.append(card)
+
+        return TodaySessionResponse(
+            totalCards=total_cards,
+            cards=cards,
+            reviewedCards=reviewed_cards,
+        )
 
 
 def get_due_reviews(due_date: date) -> DueReviewsResponse:

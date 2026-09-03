@@ -103,11 +103,18 @@ class StudyCardResponse(BaseModel):
     dueAt: Date
     queueType: Literal["new", "review"]
     degraded: bool = False
+    # 1-based position in the day's queue snapshot (PRD ch.8); only set
+    # when the card comes from today's queue read.
+    queuePosition: int | None = None
 
 
 class TodaySessionResponse(BaseModel):
     totalCards: int
     cards: list[StudyCardResponse]
+    # Number of entries in the day's queue snapshot already reviewed on
+    # the study date (PRD ch.8 rule 6: numerator offset for the progress
+    # bar so it never restarts from 1 after re-entering Today).
+    reviewedCards: int = 0
 
 
 class ReviewCardRequest(BaseModel):

@@ -7,6 +7,12 @@ type SpellingSessionProps = {
   cards: StudyCard[];
   onExit: () => void;
   onLookupPronunciation?: (word: string) => Promise<Pronunciation>;
+  // PRD ch.8: day-level progress anchors — same queue snapshot as card
+  // mode. startIndex offsets by cards already reviewed on the study date;
+  // totalCount is the day queue's size. Both fall back to session-local
+  // values when absent.
+  startIndex?: number;
+  totalCount?: number;
 };
 
 type ResultState = 'idle' | 'correct' | 'incorrect';
@@ -29,7 +35,13 @@ function promptFor(card: StudyCard): string {
     ?? '';
 }
 
-export function SpellingSession({ cards, onExit, onLookupPronunciation }: SpellingSessionProps) {
+export function SpellingSession({
+  cards,
+  onExit,
+  onLookupPronunciation,
+  startIndex = 0,
+  totalCount
+}: SpellingSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answer, setAnswer] = useState('');
   const [result, setResult] = useState<ResultState>('idle');
@@ -37,6 +49,8 @@ export function SpellingSession({ cards, onExit, onLookupPronunciation }: Spelli
 
   const card = cards[currentIndex];
   const completedCount = Math.min(currentIndex, cards.length);
+  const denominator = totalCount ?? cards.length;
+  const dayCompletedCount = startIndex + completedCount;
   const isComplete = cards.length === 0 || currentIndex >= cards.length;
 
   if (isComplete || !card) {
@@ -77,7 +91,7 @@ export function SpellingSession({ cards, onExit, onLookupPronunciation }: Spelli
           Exit
         </button>
         <div className="progress-text">
-          {currentIndex + 1} / {cards.length}
+          {startIndex + currentIndex + 1} / {denominator}
         </div>
       </header>
 
@@ -129,7 +143,7 @@ export function SpellingSession({ cards, onExit, onLookupPronunciation }: Spelli
           {showAnswer && onLookupPronunciation ? (
             <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} />
           ) : null}
-          <p className="completed-text">{completedCount} / {cards.length} completed</p>
+          <p className="completed-text">{dayCompletedCount} / {denominator} completed</p>
         </div>
       </section>
     </main>
