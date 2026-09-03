@@ -81,6 +81,28 @@ try {
 }
 finally { Pop-Location }
 
+# ---------------------------------------------------------------- pyinstaller
+# NOTE: PyInstaller must run FIRST - it wipes its output dir ($AppRoot).
+# Static assets and the builtin library are copied AFTER it below,
+# otherwise they get deleted when PyInstaller replaces the folder.
+Write-Host "== building launcher executable (pyinstaller) =="
+& $VenvPython -m PyInstaller `
+    --noconfirm --clean --noconsole `
+    --name "VocabularyLearning" `
+    --distpath $PackageDir `
+    --workpath $PyiWorkDir `
+    --specpath $BuildDir `
+    --paths $BackendDir `
+    --paths $Repo `
+    --collect-submodules app `
+    --collect-submodules uvicorn `
+    (Join-Path $Repo "launcher\__main__.py")
+if ($LASTEXITCODE -ne 0) { throw "pyinstaller build failed." }
+if (-not (Test-Path (Join-Path $AppRoot "VocabularyLearning.exe"))) {
+    throw "launcher exe not produced at $AppRoot"
+}
+
+# ---------------------------------------------------------------- static assets
 $StaticDir = Join-Path $AppRoot "static"
 New-Item -ItemType Directory -Path $StaticDir -Force | Out-Null
 Copy-Item -Path (Join-Path $FrontendDir "dist\*") -Destination $StaticDir -Recurse -Force
@@ -97,23 +119,8 @@ Write-Host "== sanitizing builtin library =="
 if ($LASTEXITCODE -ne 0) {
     throw "builtin library verification failed - the source DB lacks full enrichment data."
 }
-
-# ---------------------------------------------------------------- pyinstaller
-Write-Host "== building launcher executable (pyinstaller) =="
-& $VenvPython -m PyInstaller `
-    --noconfirm --clean --noconsole `
-    --name "VocabularyLearning" `
-    --distpath $PackageDir `
-    --workpath $PyiWorkDir `
-    --specpath $BuildDir `
-    --paths $BackendDir `
-    --paths $Repo `
-    --collect-submodules app `
-    --collect-submodules uvicorn `
-    (Join-Path $Repo "launcher\__main__.py")
-if ($LASTEXITCODE -ne 0) { throw "pyinstaller build failed." }
-if (-not (Test-Path (Join-Path $AppRoot "VocabularyLearning.exe"))) {
-    throw "launcher exe not produced at $AppRoot"
+if (-not (Test-Path (Join-Path $AppRoot "builtin\vocabulary.sqlite"))) {
+    throw "builtin library missing from package - aborting"
 }
 
 # ---------------------------------------------------------------- package extras
