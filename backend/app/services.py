@@ -23,7 +23,7 @@ from app.models import (
     TodayStartRequest,
 )
 from app.repositories import normalize_word
-from app.scheduling import transition
+from app.scheduling import DEFAULT_EF, schedule_review
 
 
 class ReviewConflictError(ValueError):
@@ -174,11 +174,23 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                         stage,
                         due_at,
                         created_on,
-                        last_reviewed_at
+                        last_reviewed_at,
+                        ef,
+                        interval_days
                     )
-                    values (?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (str(uuid4()), entry_id, "learning", 0, today, today, None),
+                    (
+                        str(uuid4()),
+                        entry_id,
+                        "learning",
+                        0,
+                        today,
+                        today,
+                        None,
+                        DEFAULT_EF,
+                        0,
+                    ),
                 )
                 ready_cards += 1
 
@@ -271,7 +283,8 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
 
     with connect() as connection:
         card = connection.execute(
-            "select id, stage, due_at from cards where id = ?",
+            "select id, stage, status, due_at, ef, interval_days"
+            " from cards where id = ?",
             (card_id,),
         ).fetchone()
         if card is None:
@@ -281,12 +294,18 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
         if _review_exists_on_date(connection, card_id, reviewed_on):
             raise ReviewConflictError("Card was already reviewed on this date")
 
+        # SM-2 (P0-4): scheduling is driven by ef + interval_days. The
+        # legacy stage is frozen at its migrated value (rollback anchor)
+        # and is recorded unchanged on every new review row.
         previous_stage = card["stage"]
-        next_stage, next_due_at, status = transition(
-            previous_stage,
+        outcome = schedule_review(
+            card["ef"],
+            card["interval_days"],
             request.rating,
             reviewed_on,
+            mastered=card["status"] == "mastered",
         )
+        next_stage = previous_stage
 
         connection.execute(
             """
@@ -308,7 +327,7 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
                 reviewed_at,
                 previous_stage,
                 next_stage,
-                next_due_at.isoformat(),
+                outcome.due_at.isoformat(),
             ),
         )
         connection.execute(
@@ -317,14 +336,18 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
             set status = ?,
                 stage = ?,
                 due_at = ?,
-                last_reviewed_at = ?
+                last_reviewed_at = ?,
+                ef = ?,
+                interval_days = ?
             where id = ?
             """,
             (
-                status,
+                outcome.status,
                 next_stage,
-                next_due_at.isoformat(),
+                outcome.due_at.isoformat(),
                 reviewed_at,
+                outcome.ef,
+                outcome.interval_days,
                 card_id,
             ),
         )
@@ -334,8 +357,8 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
         rating=request.rating,
         previousStage=previous_stage,
         nextStage=next_stage,
-        nextDueAt=next_due_at,
-        status=status,
+        nextDueAt=outcome.due_at,
+        status=outcome.status,
     )
 
 

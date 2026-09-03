@@ -3,6 +3,7 @@ import os
 import sqlite3
 
 from app.books import DEFAULT_BOOK_ID, ensure_default_book
+from app.scheduling_migration import migrate_cards_sm2
 
 
 def db_path() -> Path:
@@ -55,4 +56,10 @@ def migrate(connection: sqlite3.Connection) -> None:
         "UPDATE book_words SET book_id = ? WHERE book_id IS NULL",
         (DEFAULT_BOOK_ID,),
     )
+
+    # SM-2 scheduling migration (P0-4): adds ef / interval_days to cards
+    # and back-fills each legacy card's interval from its stage. No-op
+    # after the first successful run (settings flag), idempotent and
+    # chunked so an interrupted run resumes from its cursor.
+    migrate_cards_sm2(connection)
     connection.commit()

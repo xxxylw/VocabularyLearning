@@ -96,7 +96,12 @@ CREATE TABLE IF NOT EXISTS cards (
     stage integer not null,
     due_at text not null,
     created_on text not null,
-    last_reviewed_at text null
+    last_reviewed_at text null,
+    -- SM-2 (P0-4): ease factor and current interval. The legacy stage
+    -- column is kept as a historical field for rollback only and no
+    -- longer participates in scheduling.
+    ef real not null default 2.5,
+    interval_days integer not null default 0
 );
 
 CREATE TABLE IF NOT EXISTS reviews (

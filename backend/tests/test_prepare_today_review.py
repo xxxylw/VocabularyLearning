@@ -392,8 +392,18 @@ def test_today_session_combines_ready_cards_and_records_known_review(
     ).json()
 
     assert review["previousStage"] == 0
-    assert review["nextStage"] == 1
+    # SM-2 (P0-4): the legacy stage is frozen; new cards start with
+    # I=0 / EF=2.5, so a first known sets I=1 (due tomorrow).
+    assert review["nextStage"] == 0
     assert review["nextDueAt"] == tomorrow.isoformat()
+
+    with connect() as connection:
+        row = connection.execute(
+            "select ef, interval_days from cards where id = ?",
+            (card["cardId"],),
+        ).fetchone()
+    assert row["interval_days"] == 1
+    assert row["ef"] == pytest.approx(2.6)
 
 
 def test_today_session_prepares_next_book_words_when_no_new_cards_exist(
@@ -767,9 +777,12 @@ def test_duplicate_same_day_review_returns_conflict_without_mutation(
 
     assert first_review.status_code == 200
     assert first_review.json()["previousStage"] == 0
-    assert first_review.json()["nextStage"] == 1
+    assert first_review.json()["nextStage"] == 0
     assert second_review.status_code == 409
-    assert _card_stage(card_id) == 1
+    # SM-2 (P0-4): the legacy stage is frozen at 0; the first known
+    # review moved the scheduling state (interval 1, EF 2.6) instead.
+    assert _card_stage(card_id) == 0
+    assert _card_interval(card_id) == 1
     assert _count_reviews(card_id) == 1
 
 
@@ -1169,3 +1182,13 @@ def _count_prepared_graph_rows() -> int:
             """
         ).fetchone()
     return row["total"]
+
+
+
+def _card_interval(card_id: str) -> int:
+    with connect() as connection:
+        row = connection.execute(
+            "select interval_days from cards where id = ?",
+            (card_id,),
+        ).fetchone()
+    return row["interval_days"]
