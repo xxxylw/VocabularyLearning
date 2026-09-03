@@ -110,6 +110,11 @@ finally { Pop-Location }
 # NOTE: PyInstaller must run FIRST - it wipes its output dir ($AppRoot).
 # Static assets and the builtin library are copied AFTER it below,
 # otherwise they get deleted when PyInstaller replaces the folder.
+# schema.sql must be bundled via --add-data: db.py resolves it next to
+# its own module (__file__), which lands in _internal\app\ in the frozen
+# build - PyInstaller only bundles .py files by default.
+$SchemaSql = Join-Path $BackendDir "app\schema.sql"
+if (-not (Test-Path $SchemaSql)) { throw "schema.sql not found at $SchemaSql" }
 Write-Host "== building launcher executable (pyinstaller) =="
 & $VenvPython -m PyInstaller `
     --noconfirm --clean --noconsole `
@@ -119,12 +124,16 @@ Write-Host "== building launcher executable (pyinstaller) =="
     --specpath $BuildDir `
     --paths $BackendDir `
     --paths $Repo `
+    --add-data "$SchemaSql;app" `
     --collect-submodules app `
     --collect-submodules uvicorn `
     (Join-Path $Repo "launcher\__main__.py")
 if ($LASTEXITCODE -ne 0) { throw "pyinstaller build failed." }
 if (-not (Test-Path (Join-Path $AppRoot "VocabularyLearning.exe"))) {
     throw "launcher exe not produced at $AppRoot"
+}
+if (-not (Test-Path (Join-Path $AppRoot "_internal\app\schema.sql"))) {
+    throw "schema.sql missing from _internal\app - --add-data failed"
 }
 
 # ---------------------------------------------------------------- static assets

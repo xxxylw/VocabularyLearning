@@ -46,9 +46,23 @@ def run_tray(url: str, on_open_study, on_exit) -> None:
         _block_forever()
         return
 
+    def _open_study(icon, item):
+        on_open_study()
+
+    def _exit(icon, item):
+        # The pystray event loop only returns from icon.run() after
+        # icon.stop() is called - without it, clicking "Exit" runs the
+        # (no-op) on_exit callback and the app silently keeps running.
+        # This was the "tray Exit does not quit the app" bug: real users
+        # clicked Exit and the process (and server thread) stayed alive.
+        try:
+            on_exit()
+        finally:
+            icon.stop()
+
     menu = pystray.Menu(
-        pystray.MenuItem("Open Study", lambda *_: on_open_study(), default=True),
-        pystray.MenuItem("Exit", lambda *_: on_exit()),
+        pystray.MenuItem("Open Study", _open_study, default=True),
+        pystray.MenuItem("Exit", _exit),
     )
     icon = pystray.Icon(
         "VocabularyLearning", make_icon_image(), "VocabularyLearning", menu
