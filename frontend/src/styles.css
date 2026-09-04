@@ -517,7 +517,16 @@ a {
   margin: 0;
   color: #27231e;
   font-size: clamp(3rem, 9vw, 7rem);
-  line-height: 1;
+  /* P0 fix · recvudlLx3voeu: the headline was `line-height: 1`, which is
+     narrower than the typographic ascent+descent of common system fonts
+     (Segoe UI ≈1.33, system-ui on many platforms ≥1.2). With
+     `overflow: hidden` guarding the no-JS horizontal spill, that gap was
+     eaten by the clip and descenders (g, y, p, j, q) were visibly cut
+     flat on words like "hydrogen" / "grammar". Lifting line-height to
+     1.2 plus `padding-block: 0.1em` (applied on the .word-headline
+     rule, more specific) keeps the ink inside the padding box for
+     A+D up to ~1.4, which covers every font in the app's stack. */
+  line-height: 1.2;
   letter-spacing: 0;
 }
 
@@ -1025,14 +1034,25 @@ a {
   margin: 0;
   color: #27231e;
   font-size: clamp(3rem, 9vw, 7rem);
-  line-height: 1;
+  /* P0 fix · recvudlLx3voeu: the headline was `line-height: 1` with
+     `overflow: hidden`, which clipped descender ink (g, y, p, j, q) on
+     every font whose typographic A+D exceeds 1em (Segoe UI ≈1.33,
+     system-ui on many platforms ≥1.2). Lifting line-height to 1.2
+     plus a symmetric `padding-block: 0.1em` keeps the ink inside the
+     padding box for A+D up to ~1.4, which covers every font in the
+     app's stack. The padding scales with the fitted font size, so the
+     descender room shrinks with the word on narrow viewports. */
+  line-height: 1.2;
+  padding-block: 0.1em;
   letter-spacing: 0;
   font-weight: 800;
   /* PRD ch.12 (P1): the word face always renders on ONE line — never wraps,
      never truncates. WordHeadline.tsx measures the real rendered widths and
      shrinks the font size inline when the default size would overflow.
      overflow: hidden only guards the first frame (or no-JS) so an unfit
-     word cannot spill outside the card or scroll the page horizontally. */
+     word cannot spill outside the card or scroll the page horizontally.
+     Vertical padding does not affect clientWidth / scrollWidth, so the
+     single-line measurement logic stays correct. */
   white-space: nowrap;
   overflow-wrap: normal;
   overflow: hidden;
