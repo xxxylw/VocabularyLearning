@@ -1,0 +1,364 @@
+/* v2 cloud auth pages (C-01/C-02/C-05) + global account area.
+   Every value below comes from the UI spec's section-1 baseline, which
+   was itself measured from styles.css — no new palette entries. */
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 0;
+}
+
+.auth-card {
+  width: min(440px, calc(100% - 24px));
+  padding: 32px 28px;
+  border: 1px solid rgba(110, 91, 68, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.86);
+  box-shadow: 0 24px 70px rgba(88, 63, 31, 0.14);
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.auth-title {
+  margin: 0 0 8px;
+  color: #2c2822;
+  font-size: 1.75rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.auth-subtitle {
+  margin: 0 0 24px;
+  color: #6a6257;
+  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.auth-email-echo {
+  color: #2f2a24;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.auth-envelope {
+  margin-bottom: 16px;
+}
+
+.auth-form {
+  width: 100%;
+  display: grid;
+  gap: 16px;
+  text-align: left;
+}
+
+.auth-field {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-field label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #4b463f;
+}
+
+.auth-input {
+  width: 100%;
+  min-height: 48px;
+  font-size: 1rem;
+  color: #2f2a24;
+  background: #fffdf7;
+  border: 1px solid rgba(110, 91, 68, 0.22);
+  border-radius: 8px;
+  padding: 10px 14px;
+  outline: none;
+}
+
+.auth-input:focus {
+  border-color: #6f8b79;
+  box-shadow: 0 0 0 3px rgba(111, 139, 121, 0.18);
+}
+
+.auth-input:disabled {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.auth-input.has-error {
+  border-color: #9a4d45;
+}
+
+.auth-field-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #8a8175;
+}
+
+.auth-field-aux {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.auth-cta {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 8px;
+  padding: 14px 18px;
+  background: #6f8b79;
+  color: #fffdf7;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(81, 112, 94, 0.24);
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.auth-ghost-cta {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(64, 58, 49, 0.18);
+  border-radius: 8px;
+  padding: 10px 16px;
+  background: rgba(255, 252, 246, 0.72);
+  color: #4b463f;
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+.auth-ghost-cta:disabled,
+.auth-cta:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.auth-text-link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  color: #486f83;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.auth-text-link:disabled {
+  cursor: progress;
+  opacity: 0.4;
+}
+
+.auth-inline-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #486f83;
+  font-weight: 700;
+  font-size: inherit;
+  cursor: pointer;
+  min-height: 0;
+}
+
+.auth-inline-link:disabled {
+  cursor: progress;
+  opacity: 0.4;
+}
+
+.auth-inline-error {
+  margin: 0;
+  color: #9a4d45;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.auth-form-error {
+  width: 100%;
+  margin: 0;
+}
+
+.auth-notice-banner {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(111, 139, 121, 0.14);
+  color: #6f8b79;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.auth-switch {
+  margin: 16px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #6a6257;
+  font-size: 0.9rem;
+}
+
+.auth-countdown {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: #8a8175;
+}
+
+.auth-countdown-ready {
+  color: #486f83;
+  font-weight: 700;
+}
+
+.auth-note {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: #8a8175;
+}
+
+.auth-verified-badge {
+  margin: 0 0 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(111, 139, 121, 0.14);
+  color: #6f8b79;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.auth-toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: #2f2a24;
+  color: #fbf6ed;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(88, 63, 31, 0.25);
+}
+
+.auth-spinner {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  border: 2px solid rgba(255, 253, 247, 0.4);
+  border-top-color: #fffdf7;
+  border-radius: 50%;
+  animation: auth-spin 0.8s linear infinite;
+  vertical-align: -3px;
+}
+
+/* The loader subtitles reuse the spinner but sit on the light card. */
+.auth-subtitle .auth-spinner,
+.auth-countdown .auth-spinner {
+  border-color: rgba(111, 139, 121, 0.35);
+  border-top-color: #6f8b79;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Global account area (C-04): pinned top-right over the study shell. */
+.account-menu {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+}
+
+.account-menu-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(64, 58, 49, 0.18);
+  background: rgba(72, 111, 131, 0.1);
+  color: #486f83;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background-clip: padding-box;
+}
+
+.account-menu-panel {
+  position: absolute;
+  right: 0;
+  top: 52px;
+  min-width: 220px;
+  padding: 14px 16px;
+  border: 1px solid rgba(110, 91, 68, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.96);
+  box-shadow: 0 24px 70px rgba(88, 63, 31, 0.14);
+  display: grid;
+  gap: 10px;
+  justify-items: stretch;
+  text-align: left;
+}
+
+.account-menu-email {
+  margin: 0;
+  color: #2f2a24;
+  font-size: 0.95rem;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.account-menu-plan {
+  margin: 0;
+  color: #6f8b79;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.account-menu-logout {
+  min-height: 44px;
+  border: 1px solid rgba(64, 58, 49, 0.18);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: rgba(255, 252, 246, 0.72);
+  color: #4b463f;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .auth-page {
+    align-items: flex-start;
+    padding-top: 10vh;
+  }
+
+  .auth-card {
+    padding: 24px 20px;
+  }
+
+  .auth-title {
+    font-size: 1.5rem;
+  }
+
+  .account-menu-panel {
+    right: 0;
+    width: calc(100vw - 32px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-spinner {
+    animation: none;
+  }
+}
