@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { StudyCard } from '../api';
 import type { Pronunciation } from '../api';
 import { PronunciationPanel } from './PronunciationPanel';
+import { buildSpellingHint } from './spellingHint';
 
 type SpellingSessionProps = {
   cards: StudyCard[];
@@ -23,16 +24,6 @@ function normalizeAnswer(value: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
-}
-
-function promptFor(card: StudyCard): string {
-  const firstSense = card.senses[0];
-
-  return card.chineseNote
-    ?? firstSense?.chineseNote
-    ?? card.definition
-    ?? firstSense?.definition
-    ?? '';
 }
 
 export function SpellingSession({
@@ -68,7 +59,7 @@ export function SpellingSession({
     );
   }
 
-  const prompt = promptFor(card);
+  const prompt = buildSpellingHint(card);
   const expectedAnswer = normalizeAnswer(card.word);
   const isCorrect = result === 'correct';
 

@@ -45,12 +45,30 @@ const spellingCards: StudyCard[] = [
   }
 ];
 
+const hydrogenCard: StudyCard = {
+  cardId: 'card-h',
+  cardIds: ['card-h'],
+  word: 'hydrogen',
+  partOfSpeech: 'noun',
+  senseLabel: 'chemical element',
+  definition: 'a chemical element. Hydrogen is a gas that is the lightest of all the elements.',
+  definitionSource: 'oxford_api',
+  examples: [],
+  chineseNote: null,
+  senses: [],
+  queueType: 'new',
+  degraded: false
+};
+
 describe('SpellingSession', () => {
-  it('checks spelling against the prompted word with normalized spacing and case', async () => {
+  it('never leaks the answer through the prompt and checks spelling with normalized spacing and case', async () => {
     const user = userEvent.setup();
     render(<SpellingSession cards={spellingCards} onExit={vi.fn()} />);
 
-    expect(screen.getByText('El Nino phenomenon')).toBeInTheDocument();
+    // F-01: the chinese note ("El Nino phenomenon") contains the answer, so
+    // the prompt must fall through to the safe definition sentence instead.
+    expect(screen.queryByText('El Nino phenomenon')).not.toBeInTheDocument();
+    expect(screen.getByText('a weather pattern that warms the eastern Pacific Ocean')).toBeInTheDocument();
 
     await user.type(screen.getByRole('textbox', { name: /type the english word/i }), '  el   nino ');
     await user.click(screen.getByRole('button', { name: /check/i }));
@@ -59,7 +77,31 @@ describe('SpellingSession', () => {
 
     await user.click(screen.getByRole('button', { name: /next/i }));
 
-    expect(screen.getByText(/a gas produced when carbon burns/i)).toBeInTheDocument();
+    // F-01: every sentence of the "carbon dioxide" definition leaks a
+    // component of the answer, so the prompt falls back to a structured
+    // hint instead of revealing "carbon".
+    expect(screen.getByText('2 words · 13 letters · starts with "c" · ends with "e"')).toBeInTheDocument();
+    expect(screen.queryByText(/a gas produced when carbon burns/i)).not.toBeInTheDocument();
+  });
+
+  it('drops the leaking sentence and shows only the safe fragment (hydrogen)', async () => {
+    render(<SpellingSession cards={[hydrogenCard]} onExit={vi.fn()} />);
+
+    expect(screen.getByRole('heading', { level: 1, name: /a chemical element/i })).toBeInTheDocument();
+    // The whole document must not contain the answer before it is revealed.
+    expect(screen.queryByText(/hydrogen/i)).not.toBeInTheDocument();
+  });
+
+  it('matches the answer case-insensitively when building the prompt', () => {
+    render(
+      <SpellingSession
+        cards={[{ ...hydrogenCard, definition: 'HYDROGEN is the lightest gas. A chemical element.' }]}
+        onExit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('heading', { level: 1, name: /a chemical element/i })).toBeInTheDocument();
+    expect(screen.queryByText(/hydrogen/i)).not.toBeInTheDocument();
   });
 
   it('shows retry feedback and can reveal the answer for a wrong spelling', async () => {
@@ -151,7 +193,7 @@ describe('SpellingSession', () => {
 
     render(<SpellingSession cards={spellingCards} onExit={vi.fn()} />);
 
-    const prompt = screen.getByRole('heading', { level: 1, name: /el nino/i });
+    const prompt = screen.getByRole('heading', { level: 1, name: /a weather pattern that warms/i });
     expect(prompt.className).not.toContain('word-headline');
     expect(prompt.style.fontSize).toBe('');
 

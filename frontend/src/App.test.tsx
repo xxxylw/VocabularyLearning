@@ -54,7 +54,10 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /practice spelling/i }));
 
     expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
-    expect(screen.getByText('El Nino phenomenon')).toBeInTheDocument();
+    // F-01: the chinese note contains the answer, so the prompt must use
+    // the safe definition sentence instead.
+    expect(screen.queryByText('El Nino phenomenon')).not.toBeInTheDocument();
+    expect(screen.getByText('a weather pattern that warms the eastern Pacific Ocean')).toBeInTheDocument();
   });
 
   it('offers spelling practice when today has no more cards after a completed session', async () => {
