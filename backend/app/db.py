@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import sqlite3
 
+from app.auth import ensure_super_account
 from app.books import DEFAULT_BOOK_ID, ensure_default_book
 from app.scheduling_migration import migrate_cards_sm2
 
@@ -42,8 +43,8 @@ def migrate(connection: sqlite3.Connection) -> None:
         )
 
     # Word-list layer annotation (PRD ch.10 考研英语红宝书 import). Same
-    # legacy-DB pattern as book_id above: "CREATE TABLE IF NOT EXISTS" is a
-    # no-op for databases that already have book_words without the column.
+    # legacy-DB pattern as book_id above: "CREATE TABLE IF NOT EXISTS" is
+    # a no-op for databases that already have book_words without the column.
     if "layer" not in columns:
         connection.execute("ALTER TABLE book_words ADD COLUMN layer text null")
 
@@ -62,6 +63,11 @@ def migrate(connection: sqlite3.Connection) -> None:
         "UPDATE book_words SET book_id = ? WHERE book_id IS NULL",
         (DEFAULT_BOOK_ID,),
     )
+
+    # v2 cloud (C-04): idempotently provision the super account (email +
+    # password from VOCAB_SUPER_EMAIL / VOCAB_SUPER_PASSWORD). INSERT OR
+    # IGNORE keeps an already-rotated password untouched.
+    ensure_super_account(connection)
 
     # SM-2 scheduling migration (P0-4): adds ef / interval_days to cards
     # and back-fills each legacy card's interval from its stage. No-op

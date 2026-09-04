@@ -170,6 +170,41 @@ CREATE TABLE IF NOT EXISTS today_queue_snapshots (
     primary key (book_id, study_date)
 );
 
+-- v2 cloud edition (batch 1): accounts, sessions and email tokens.
+-- Per-user study data isolation is batch 2 and deliberately not
+-- reflected here — existing study tables stay untouched.
+CREATE TABLE IF NOT EXISTS users (
+    id text primary key,
+    email text not null unique,
+    password_hash text not null,
+    email_verified integer not null default 0,
+    is_super integer not null default 0,
+    created_at text not null,
+    updated_at text not null
+);
+
+-- Opaque session tokens (C-02): only SHA-256 hashes are stored; the
+-- raw token lives in the client's Authorization header.
+CREATE TABLE IF NOT EXISTS sessions (
+    id text primary key,
+    user_id text not null references users(id),
+    token_hash text not null unique,
+    created_at text not null,
+    expires_at text not null
+);
+
+-- Verify/reset tokens (C-05): 1h expiry, single use (used_at), stored
+-- hashed like sessions.
+CREATE TABLE IF NOT EXISTS email_tokens (
+    id text primary key,
+    user_id text not null references users(id),
+    token_hash text not null unique,
+    purpose text not null check (purpose in ('verify_email', 'reset_password')),
+    expires_at text not null,
+    used_at text null,
+    created_at text not null
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_today_queue_card
 ON today_queue (book_id, study_date, card_id);
 

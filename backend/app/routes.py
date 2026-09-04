@@ -1,8 +1,9 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from app.auth import require_user
 from app.books import DEFAULT_BOOK_ID
 from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
@@ -35,12 +36,12 @@ from app.services import (
     switch_current_book,
 )
 
-router = APIRouter()
-
-
-@router.get("/health")
-def health() -> dict[str, object]:
-    return {"ok": True, "version": APP_VERSION}
+# v2 cloud edition: every study endpoint requires a valid session
+# (see C-02 in the batch-1 brief). /api/health is served by main.py so
+# the launcher can keep polling it without credentials. Set
+# VOCAB_REQUIRE_AUTH=0 to disable the guard (tests / v1.1 desktop
+# compat only).
+router = APIRouter(dependencies=[Depends(require_user)])
 
 
 @router.post("/book-words/import")
@@ -149,3 +150,7 @@ def get_pronunciation(word: str) -> PronunciationResponse:
     except OSError as error:
         raise HTTPException(status_code=502, detail="Pronunciation lookup is temporarily unavailable") from error
 
+
+# Public health endpoint (no auth) — see module docstring.
+def health() -> dict[str, object]:
+    return {"ok": True, "version": APP_VERSION}

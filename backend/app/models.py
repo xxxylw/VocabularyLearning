@@ -6,6 +6,65 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+# ---------------------------------------------------------------------------
+# v2 cloud edition (batch 1) — account & auth models
+# ---------------------------------------------------------------------------
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterResponse(BaseModel):
+    email: str
+    message: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    emailVerified: bool
+    isSuper: bool
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user: UserResponse
+
+
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str
+    newPassword: str
+
+
+class EmailOnlyRequest(BaseModel):
+    email: str
+
+
+class EmailStatusResponse(BaseModel):
+    verified: bool
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    newPassword: str
+
+
+class TokenEmailResponse(BaseModel):
+    email: str
+
+
+# ---------------------------------------------------------------------------
+# v1 study models
+# ---------------------------------------------------------------------------
+
+
 class ImportBookWordsResponse(BaseModel):
     sourceId: str
     imported: int
@@ -185,4 +244,3 @@ class PronunciationResponse(BaseModel):
     license: str | None = None
     licenseUrl: str | None = None
     status: Literal["ready", "unavailable"]
-
