@@ -19,12 +19,17 @@ decision: UI-only display).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
 
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+BREVO_SENDERS_URL = "https://api.brevo.com/v3/senders"
 REQUEST_TIMEOUT_SECONDS = 15
+SENDER_SELF_CHECK_TIMEOUT_SECONDS = 10
+
+logger = logging.getLogger(__name__)
 
 
 class EmailError(Exception):
@@ -72,12 +77,98 @@ def _send(to: str, subject: str, html: str) -> None:
     )
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:  # noqa: S310
-            response.read()
+            status = response.getcode()
+            body = response.read(65536).decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         body = error.read(500).decode("utf-8", "replace") if error.fp else ""
+        logger.error(
+            "Brevo send rejected: status=%s to=%s body=%s", error.code, to, body
+        )
         raise EmailError(f"Brevo API error {error.code}: {body}") from error
     except (urllib.error.URLError, OSError) as error:
+        logger.error("Brevo send unreachable: to=%s error=%s", to, error)
         raise EmailError(f"Brevo API unreachable: {error}") from error
+    # A 2xx from Brevo only means the request was *accepted*: delivery is
+    # decided asynchronously (e.g. an unvalidated sender is rejected after
+    # the fact with a 201 on our side and a "sender not valid" event on
+    # theirs). Log status + messageId so ops can correlate with the Brevo
+    # event log when a user reports a missing email.
+    message_id = None
+    try:
+        message_id = json.loads(body).get("messageId")
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning(
+            "Brevo send accepted but response body was not JSON: status=%s to=%s body=%r",
+            status,
+            to,
+            body[:200],
+        )
+    logger.info(
+        "Brevo send accepted: status=%s messageId=%s to=%s", status, message_id, to
+    )
+
+
+def verify_sender_configuration() -> None:
+    """Startup self-check: warn when the configured sender is not validated.
+
+    Brevo accepts sends with an unvalidated sender (HTTP 201) and then
+    silently rejects them asynchronously, so registration emails vanish
+    without any application-side signal. This check calls
+    ``GET /v3/senders`` and logs a WARNING when ``BREVO_SENDER_EMAIL`` is
+    not among the validated senders — the app must still boot and every
+    failure mode here (no key, timeout, HTTP error, bad payload) only
+    logs, never raises.
+    """
+    api_key = os.environ.get("BREVO_API_KEY", "")
+    sender = os.environ.get("BREVO_SENDER_EMAIL", "")
+    if not api_key or not sender:
+        logger.info(
+            "Brevo sender self-check skipped: BREVO_API_KEY / "
+            "BREVO_SENDER_EMAIL not configured"
+        )
+        return
+    request = urllib.request.Request(
+        BREVO_SENDERS_URL,
+        headers={"api-key": api_key, "accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310
+            request, timeout=SENDER_SELF_CHECK_TIMEOUT_SECONDS
+        ) as response:
+            body = response.read(65536).decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError) as error:
+        logger.warning(
+            "Brevo sender self-check could not reach the API "
+            "(email delivery cannot be verified): %s",
+            error,
+        )
+        return
+    try:
+        payload = json.loads(body)
+        senders = payload.get("senders") or []
+        validated = {
+            str(entry.get("email", "")).lower()
+            for entry in senders
+            if isinstance(entry, dict)
+        }
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning(
+            "Brevo sender self-check got an unexpected payload "
+            "(email delivery cannot be verified)"
+        )
+        return
+    if sender.lower() in validated:
+        logger.info(
+            "Brevo sender self-check OK: %s is a validated sender", sender
+        )
+    else:
+        logger.warning(
+            "BREVO_SENDER_EMAIL %s is NOT a validated Brevo sender: Brevo "
+            "will still answer 201 to send requests but will silently drop "
+            "the emails. Validate the sender at https://app.brevo.com/senders",
+            sender,
+        )
 
 
 def _wrap(title: str, body_html: str) -> str:

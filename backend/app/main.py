@@ -1,12 +1,30 @@
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app import emailing
 from app.routes import health, router
 from app.routes_auth import router as auth_router
 from app.version import APP_VERSION
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Startup self-check (P0 follow-up): Brevo answers 201 even when the
+    # sender is not validated and then silently drops the email, so the
+    # app itself must surface the misconfiguration at boot. The check
+    # only logs — it must never block or crash application startup.
+    try:
+        emailing.verify_sender_configuration()
+    except Exception:  # noqa: BLE001 — self-check must never block boot
+        logger.warning("Brevo sender self-check raised unexpectedly", exc_info=True)
+    yield
 
 
 def static_dir() -> Path | None:
@@ -25,7 +43,7 @@ def static_dir() -> Path | None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="VocabularyLearning", version=APP_VERSION)
+    app = FastAPI(title="VocabularyLearning", version=APP_VERSION, lifespan=_lifespan)
     # /api/health is anonymous (used by the launcher and uptime checks);
     # every other study endpoint on ``router`` is guarded by
     # app.auth.require_user.

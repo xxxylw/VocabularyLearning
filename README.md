@@ -82,6 +82,12 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000`, so the f
 - In-app browser inspection confirmed the Today entry page renders without visible overlap.
 - Clicking `Start today cards` with an empty local database showed the empty state: `No cards are waiting today.`
 
+## Cloud Email Channel (Brevo)
+
+Registration verification and password reset emails go through the Brevo API. Set `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` in the backend environment; when either is missing the auth endpoints degrade to a clear 503 instead of crashing.
+
+> **Important:** the Brevo sender must be validated at <https://app.brevo.com/senders> — otherwise Brevo still answers `201` to send requests but **silently drops the emails** (delivery is rejected asynchronously). The app logs a WARNING at startup when the configured sender is not in the validated list.
+
 ## Current MVP Limitations
 
 - Enrichment uses the local fallback provider only; Oxford, API, and AI providers are not connected yet.
