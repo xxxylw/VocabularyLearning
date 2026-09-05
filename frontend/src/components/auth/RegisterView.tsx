@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ApiError, register } from '../../api';
 import { navigate } from '../../router';
-import { AuthCard, Spinner, Toast, isValidEmailFormat, isValidPassword, useCooldown, useFlash } from './shared';
+import { AuthCard, PasswordField, Spinner, isValidEmailFormat, isValidPassword, useCooldown, PASSWORD_POLICY_HINT } from './shared';
 
 type RegisterViewProps = {
   initialEmail?: string;
@@ -26,7 +26,6 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [showRetry, setShowRetry] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [toastMessage, showToast] = useFlash();
   const cooldown = useCooldown();
 
   const emailValid = isValidEmailFormat(email);
@@ -44,8 +43,10 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
 
     try {
       await register(email.trim(), password);
-      showToast('账号已创建，去邮箱激活');
-      navigate(`/check-email?email=${encodeURIComponent(email.trim())}`);
+      // C-02: no auto-login. The success feedback lands on the
+      // /check-email page itself (banner via from=register) instead of
+      // a toast that a navigation could eat — see CheckEmailView.
+      navigate(`/check-email?email=${encodeURIComponent(email.trim())}&from=register`);
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 409) {
@@ -88,7 +89,7 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
   function validatePasswordField() {
     setFieldErrors((prev) => ({
       ...prev,
-      password: password !== '' && !isValidPassword(password) ? '密码至少 8 位' : undefined
+      password: password !== '' && !isValidPassword(password) ? PASSWORD_POLICY_HINT : undefined
     }));
   }
 
@@ -141,18 +142,17 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
 
         <div className="auth-field">
           <label htmlFor="register-password">密码</label>
-          <input
+          <PasswordField
             id="register-password"
-            className={fieldErrors.password !== undefined ? 'auth-input has-error' : 'auth-input'}
-            type="password"
             autoComplete="new-password"
-            placeholder="设置密码（至少 8 位）"
+            placeholder="设置密码（至少 8 位，含字母和数字）"
             value={password}
+            hasError={fieldErrors.password !== undefined}
             disabled={isSubmitting}
             onChange={(event) => setPassword(event.target.value)}
             onBlur={validatePasswordField}
           />
-          <p className="auth-field-hint">至少 8 位</p>
+          <p className="auth-field-hint">{PASSWORD_POLICY_HINT}</p>
           {fieldErrors.password !== undefined ? (
             <p className="auth-inline-error">{fieldErrors.password}</p>
           ) : null}
@@ -160,13 +160,12 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
 
         <div className="auth-field">
           <label htmlFor="register-confirm">确认密码</label>
-          <input
+          <PasswordField
             id="register-confirm"
-            className={fieldErrors.confirm !== undefined ? 'auth-input has-error' : 'auth-input'}
-            type="password"
             autoComplete="new-password"
             placeholder="再次输入密码"
             value={confirmPassword}
+            hasError={fieldErrors.confirm !== undefined}
             disabled={isSubmitting}
             onChange={(event) => setConfirmPassword(event.target.value)}
             onBlur={validateConfirmField}
@@ -218,7 +217,6 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
           登录
         </button>
       </p>
-      <Toast message={toastMessage} />
     </AuthCard>
   );
 }

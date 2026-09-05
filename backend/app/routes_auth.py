@@ -58,11 +58,9 @@ def _registration_email(email: str) -> str:
 @router.post("/auth/register", status_code=201, response_model=RegisterResponse)
 def register(request: RegisterRequest) -> RegisterResponse:
     email = _registration_email(request.email)
-    if len(request.password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    policy_error = auth.password_policy_error(request.password)
+    if policy_error is not None:
+        raise HTTPException(status_code=400, detail=policy_error)
     _check_rate(email)
     if auth.find_user_by_email(email) is not None:
         raise HTTPException(
@@ -158,11 +156,9 @@ def change_password(
         request.currentPassword, str(user["password_hash"])
     ):
         raise HTTPException(status_code=400, detail="当前密码不正确")
-    if len(request.newPassword) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    policy_error = auth.password_policy_error(request.newPassword)
+    if policy_error is not None:
+        raise HTTPException(status_code=400, detail=policy_error)
     auth.update_user_password(str(user["id"]), request.newPassword)
     auth.revoke_all_sessions(str(user["id"]))
     return {"ok": True}
@@ -248,11 +244,9 @@ def reset_token_info(token: str) -> TokenEmailResponse:
 
 @router.post("/auth/reset-password")
 def reset_password(request: ResetPasswordRequest) -> dict[str, bool]:
-    if len(request.newPassword) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters",
-        )
+    policy_error = auth.password_policy_error(request.newPassword)
+    if policy_error is not None:
+        raise HTTPException(status_code=400, detail=policy_error)
     try:
         user = auth.consume_email_token(request.token, "reset_password")
     except auth.EmailTokenError:

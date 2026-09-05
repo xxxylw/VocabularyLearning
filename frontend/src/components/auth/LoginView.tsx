@@ -2,13 +2,16 @@ import { useState } from 'react';
 import { ApiError, login, resendVerification } from '../../api';
 import type { AuthUser } from '../../api';
 import { navigate } from '../../router';
-import { Spinner, Toast, isValidEmailFormat, useCooldown, useFlash } from './shared';
+import { Spinner, Toast, isValidEmailFormat, useCooldown, useFlash, PasswordField } from './shared';
 import { AuthCard } from './shared';
 
 type LoginViewProps = {
   initialEmail?: string;
   notice?: string | null;
   next?: string | null;
+  // from=verify / from=reset: the user arrives with a known-good email
+  // (already prefilled), so focus the password field to save a tap.
+  autoFocusPassword?: boolean;
   onLoginSuccess: (token: string, user: AuthUser) => void;
 };
 
@@ -19,7 +22,13 @@ type FieldErrors = {
 
 // C-01: email + password login. 403 email_not_verified gets the inline
 // 去查收/重发 branch that shares copy with C-05a.
-export function LoginView({ initialEmail, notice, next, onLoginSuccess }: LoginViewProps) {
+export function LoginView({
+  initialEmail,
+  notice,
+  next,
+  autoFocusPassword,
+  onLoginSuccess
+}: LoginViewProps) {
   const [email, setEmail] = useState(initialEmail ?? '');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -137,14 +146,13 @@ export function LoginView({ initialEmail, notice, next, onLoginSuccess }: LoginV
 
         <div className="auth-field">
           <label htmlFor="login-password">密码</label>
-          <input
+          <PasswordField
             id="login-password"
-            className="auth-input"
-            type="password"
             autoComplete="current-password"
             placeholder="输入密码"
             value={password}
             disabled={isSubmitting}
+            autoFocus={autoFocusPassword}
             onChange={(event) => setPassword(event.target.value)}
           />
           <div className="auth-field-aux">

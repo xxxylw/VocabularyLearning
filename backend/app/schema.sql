@@ -93,8 +93,14 @@ CREATE TABLE IF NOT EXISTS entry_examples (
     updated_at text not null
 );
 
+-- v2 cloud batch 2 (C-05/C-06): every card belongs to exactly one user.
+-- Enrichment (entries / examples) stays in the shared layer, so two
+-- users studying the same word each own their own card row — the
+-- unique index is (user_id, entry_id) and is created in app.db.migrate()
+-- (legacy databases get the column via ALTER TABLE there first).
 CREATE TABLE IF NOT EXISTS cards (
     id text primary key,
+    user_id text not null references users(id),
     entry_id text not null references entries(id),
     status text not null check (status in ('new', 'learning', 'mastered', 'suspended')),
     stage integer not null,
@@ -110,6 +116,7 @@ CREATE TABLE IF NOT EXISTS cards (
 
 CREATE TABLE IF NOT EXISTS reviews (
     id text primary key,
+    user_id text not null references users(id),
     card_id text not null references cards(id),
     rating text not null check (rating in ('known', 'uncertain', 'unknown')),
     reviewed_at text not null,
@@ -152,22 +159,24 @@ CREATE TABLE IF NOT EXISTS prepare_jobs (
 -- simply drops rows whose card no longer exists.
 CREATE TABLE IF NOT EXISTS today_queue (
     id text primary key,
+    user_id text not null references users(id),
     book_id text not null,
     study_date text not null,
     position integer not null,
     card_id text not null,
     queue_type text not null check (queue_type in ('new', 'review')),
     created_at text not null,
-    unique (book_id, study_date, position)
+    unique (user_id, book_id, study_date, position)
 );
 
 -- Snapshot header: marks "the queue for this book+date was generated",
--- even when that day's queue turned out empty.
+-- even when that day's queue turned out empty. Per user in v2 batch 2.
 CREATE TABLE IF NOT EXISTS today_queue_snapshots (
+    user_id text not null references users(id),
     book_id text not null,
     study_date text not null,
     created_at text not null,
-    primary key (book_id, study_date)
+    primary key (user_id, book_id, study_date)
 );
 
 -- v2 cloud edition (batch 1): accounts, sessions and email tokens.
@@ -205,8 +214,34 @@ CREATE TABLE IF NOT EXISTS email_tokens (
     created_at text not null
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_today_queue_card
-ON today_queue (book_id, study_date, card_id);
+-- Per-user settings (C-05): current_book_id moved out of the global
+-- settings table into here so two users never overwrite each other's
+-- pointer. System-level flags (SM-2 backfill cursor/done) stay in
+-- settings.
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id text not null references users(id),
+    key text not null,
+    value text not null,
+    primary key (user_id, key)
+);
+
+-- Subscriptions (C-09 data model, batch 2 schema / batch 3 endpoints):
+-- independent table, price is configuration-driven, ``source`` marks
+-- mock orders so real payment channels can be told apart later.
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id text primary key,
+    user_id text not null references users(id),
+    plan text not null,
+    status text not null check (status in ('active', 'expired', 'canceled', 'trialing')),
+    price_cents integer not null,
+    currency text not null default 'CNY',
+    source text not null default 'mock',
+    started_at text not null,
+    expires_at text not null,
+    auto_renew integer not null default 0,
+    created_at text not null,
+    updated_at text not null
+);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_book_words_source_sequence
 ON book_words (source_id, sequence_index);
@@ -219,5 +254,6 @@ ON book_words (source_id, normalized_text);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_word_sense_order
 ON entries (word_id, sense_order);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_entry
-ON cards (entry_id);
+-- idx_cards_entry and idx_today_queue_card live in app.db.migrate():
+-- they index user_id, which legacy databases only gain after the
+-- ALTER/rebuild steps there.

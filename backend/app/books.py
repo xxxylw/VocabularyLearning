@@ -5,9 +5,10 @@ import sqlite3
 
 # P1 vocabulary books: every book_words row belongs to exactly one book and
 # the study flows (today session, prepare jobs, progress stats) run against
-# the *current* book (PRD ch.9). The current book is a pointer stored in the
-# settings table — switching only rewrites this pointer and never touches
-# reviews / cards / snapshots (切换零改写).
+# the *current* book (PRD ch.9). The current book is a per-user pointer
+# stored in the user_settings table (v2 cloud batch 2, C-05/C-06) —
+# switching only rewrites the caller's own pointer and never touches
+# reviews / cards / snapshots or any other user's pointer (切换零改写).
 DEFAULT_BOOK_ID = "default-book"
 DEFAULT_BOOK_TITLE = "雅思词汇真经"
 
@@ -43,18 +44,23 @@ def ensure_default_book(
     ).fetchone()
 
 
-def read_current_book_pointer(connection: sqlite3.Connection) -> str | None:
+def read_current_book_pointer(
+    connection: sqlite3.Connection, user_id: str
+) -> str | None:
     row = connection.execute(
-        "select value from settings where key = ?",
-        (CURRENT_BOOK_SETTING_KEY,),
+        "select value from user_settings where user_id = ? and key = ?",
+        (user_id, CURRENT_BOOK_SETTING_KEY),
     ).fetchone()
     return row["value"] if row is not None else None
 
 
-def set_current_book_pointer(connection: sqlite3.Connection, book_id: str) -> None:
+def set_current_book_pointer(
+    connection: sqlite3.Connection, user_id: str, book_id: str
+) -> None:
     connection.execute(
-        "insert or replace into settings (key, value) values (?, ?)",
-        (CURRENT_BOOK_SETTING_KEY, book_id),
+        "insert or replace into user_settings (user_id, key, value)"
+        " values (?, ?, ?)",
+        (user_id, CURRENT_BOOK_SETTING_KEY, book_id),
     )
 
 
@@ -114,15 +120,16 @@ def upsert_book(
 
 
 def resolve_current_book(
-    connection: sqlite3.Connection,
+    connection: sqlite3.Connection, user_id: str
 ) -> tuple[sqlite3.Row, bool]:
-    """Return (current book row, fallback_happened).
+    """Return (current book row, fallback_happened) for one user.
 
-    The pointer lives in ``settings``; when unset the default book is used.
-    When the pointer references a missing book (PRD ch.9 异常兜底) it is
-    reset to the default book so the app never white-screens or loses data.
+    The pointer lives in ``user_settings``; when unset the default book is
+    used. When the pointer references a missing book (PRD ch.9 异常兜底)
+    it is reset to the default book so the app never white-screens or
+    loses data.
     """
-    pointer = read_current_book_pointer(connection)
+    pointer = read_current_book_pointer(connection, user_id)
     if pointer is not None:
         row = connection.execute(
             "select * from vocabulary_books where id = ?",
@@ -130,9 +137,9 @@ def resolve_current_book(
         ).fetchone()
         if row is not None:
             return row, False
-        set_current_book_pointer(connection, DEFAULT_BOOK_ID)
+        set_current_book_pointer(connection, user_id, DEFAULT_BOOK_ID)
     return ensure_default_book(connection), pointer is not None
 
 
-def get_current_book_id(connection: sqlite3.Connection) -> str:
-    return str(resolve_current_book(connection)[0]["id"])
+def get_current_book_id(connection: sqlite3.Connection, user_id: str) -> str:
+    return str(resolve_current_book(connection, user_id)[0]["id"])

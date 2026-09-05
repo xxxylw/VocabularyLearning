@@ -12,6 +12,10 @@ import {
 
 type CheckEmailViewProps = {
   email: string | null;
+  // from=register: registration just succeeded, so the /check-email
+  // landing carries the success banner (replaces the old toast, which
+  // a hash navigation could eat before it was ever seen).
+  notice?: string | null;
 };
 
 const POLL_INTERVAL_MS = 5000;
@@ -22,7 +26,7 @@ const VERIFIED_REDIRECT_DELAY_MS = 5000;
 // same copy is reused by the login page's 403 email_not_verified branch.
 // Polls GET /api/auth/email-status every 5s so a user activating the
 // link in another tab sees this page flip to 已激活 automatically.
-export function CheckEmailView({ email }: CheckEmailViewProps) {
+export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
   const [isResending, setIsResending] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
   const [isVerified, setIsVerified] = useState(false);
@@ -106,7 +110,11 @@ export function CheckEmailView({ email }: CheckEmailViewProps) {
               <button
                 className="auth-inline-link"
                 type="button"
-                onClick={() => navigate('/register')}
+                onClick={() =>
+                  email !== null && email !== ''
+                    ? navigate(`/register?email=${encodeURIComponent(email)}`)
+                    : navigate('/register')
+                }
               >
                 修改邮箱
               </button>
@@ -117,6 +125,11 @@ export function CheckEmailView({ email }: CheckEmailViewProps) {
       }
       icon={<EnvelopeIcon />}
     >
+      {notice !== undefined && notice !== null && notice !== '' ? (
+        <p className="auth-notice-banner" role="status">
+          {notice}
+        </p>
+      ) : null}
       {isVerified ? (
         <p className="auth-verified-badge" role="status">
           已激活

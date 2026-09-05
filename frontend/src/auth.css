@@ -106,6 +106,48 @@
   justify-content: flex-end;
 }
 
+/* C-01 trailing show/hide toggle: 28×28 icon on a 44×44 hot area. */
+.auth-password-wrap {
+  position: relative;
+  display: block;
+}
+
+.auth-password-input {
+  /* keep the typed value clear of the 44px toggle hot area */
+  padding-right: 56px;
+}
+
+.auth-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  background-clip: content-box;
+  color: #486f83;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.auth-password-toggle svg {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+
+.auth-password-toggle:disabled {
+  cursor: progress;
+  opacity: 0.4;
+}
+
 .auth-cta {
   width: 100%;
   min-height: 48px;

@@ -37,6 +37,21 @@ describe('CheckEmailView (C-05a)', () => {
     expect(screen.getByRole('button', { name: '打开邮箱' })).toBeEnabled();
   });
 
+  it('shows the from=register success banner on the landing page', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<CheckEmailView email="new@example.com" notice="账号已创建，去邮箱激活" />);
+
+    expect(screen.getByText('账号已创建，去邮箱激活')).toBeInTheDocument();
+  });
+
+  it('returns to /register with the email prefilled from 修改邮箱', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<CheckEmailView email="new@example.com" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '修改邮箱' }));
+    expect(window.location.hash).toBe('#/register?email=new%40example.com');
+  });
+
   it('sends a resend after the cooldown elapses and restarts it', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);
@@ -132,8 +147,8 @@ describe('ResetPasswordView (C-05c)', () => {
     render(<ResetPasswordView token="tok-1" />);
     expect(await screen.findByText('user@example.com')).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText('新密码'), 'brand-new-pass');
-    await user.type(screen.getByLabelText('确认新密码'), 'brand-new-pass');
+    await user.type(screen.getByLabelText('新密码'), 'brand-new-pass1');
+    await user.type(screen.getByLabelText('确认新密码'), 'brand-new-pass1');
     await user.click(screen.getByRole('button', { name: '重置密码' }));
 
     await waitFor(() =>
@@ -142,7 +157,7 @@ describe('ResetPasswordView (C-05c)', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'tok-1', newPassword: 'brand-new-pass' })
+      body: JSON.stringify({ token: 'tok-1', newPassword: 'brand-new-pass1' })
     });
   });
 

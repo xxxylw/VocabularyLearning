@@ -1,7 +1,8 @@
 """v2 cloud edition auth (C-01..C-04 + email loop) end-to-end tests.
 
-These flip ``VOCAB_REQUIRE_AUTH`` back to "1" so the request guard
-runs (the conftest default of "0" is for the v1.1 study suites).
+The whole module opts out of the conftest super-session shim with
+the ``real_auth`` marker: these tests drive the real Bearer-token flow
+end to end (batch 2 removed the VOCAB_REQUIRE_AUTH=0 fallback).
 Brevo is monkey-patched everywhere: the auth endpoints must work end
 to end without ever touching the real email channel.
 """
@@ -14,11 +15,13 @@ from fastapi.testclient import TestClient
 from app import emailing
 from app.main import create_app
 
+# Drive the real session flow: no TestClient header injection.
+pytestmark = pytest.mark.real_auth
+
 
 @pytest.fixture
 def cloud_env(tmp_path, monkeypatch):
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "cloud.sqlite"))
-    monkeypatch.setenv("VOCAB_REQUIRE_AUTH", "1")
     # Ensure email "sends" never escape into urllib — the mock below
     # records the call; the test asserts on it.
     monkeypatch.setenv("BREVO_API_KEY", "test-key")

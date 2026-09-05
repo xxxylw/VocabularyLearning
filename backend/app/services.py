@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.books import (
     book_exists,
     get_current_book_id,
+    read_current_book_pointer,
     resolve_current_book,
     set_current_book_pointer,
 )
@@ -37,10 +38,13 @@ class ReviewConflictError(ValueError):
     pass
 
 
-def _book_progress_aggregates(connection, book_id: str) -> tuple[int, int, int]:
-    """Per-book progress aggregates (PRD ch.9): total words, learned words
-    (the word has at least one review), mastered words (every card of the
-    word is mastered and it has at least one card)."""
+def _book_progress_aggregates(
+    connection, book_id: str, user_id: str
+) -> tuple[int, int, int]:
+    """Per-book progress aggregates (PRD ch.9) for one user: total words,
+    learned words (the word has at least one review by this user),
+    mastered words (every card of the word is mastered and it has at
+    least one card)."""
     total_row = connection.execute(
         "select count(*) as total from book_words where book_id = ?",
         (book_id,),
@@ -57,9 +61,10 @@ def _book_progress_aggregates(connection, book_id: str) -> tuple[int, int, int]:
             join entries on entries.id = cards.entry_id
             join words on words.id = entries.word_id
             where words.normalized_text = book_words.normalized_text
+              and cards.user_id = ?
           )
         """,
-        (book_id,),
+        (book_id, user_id),
     ).fetchone()
     mastered_row = connection.execute(
         """
@@ -74,6 +79,7 @@ def _book_progress_aggregates(connection, book_id: str) -> tuple[int, int, int]:
                 join words on words.id = entries.word_id
                 join cards on cards.entry_id = entries.id
                 where words.normalized_text = book_words.normalized_text
+                  and cards.user_id = ?
               )
               and not exists (
                 select 1
@@ -81,19 +87,22 @@ def _book_progress_aggregates(connection, book_id: str) -> tuple[int, int, int]:
                 join words on words.id = entries.word_id
                 join cards on cards.entry_id = entries.id
                 where words.normalized_text = book_words.normalized_text
+                  and cards.user_id = ?
                   and cards.status <> 'mastered'
               )
         )
         """,
-        (book_id,),
+        (book_id, user_id, user_id),
     ).fetchone()
     return total_row["total"], learned_row["total"], mastered_row["total"]
 
 
 def _book_summary_response(
-    connection, book_row, fallback_notice: str | None = None
+    connection, book_row, user_id: str, fallback_notice: str | None = None
 ) -> BookSummaryResponse:
-    total, learned, mastered = _book_progress_aggregates(connection, book_row["id"])
+    total, learned, mastered = _book_progress_aggregates(
+        connection, book_row["id"], user_id
+    )
     return BookSummaryResponse(
         id=book_row["id"],
         title=book_row["title"],
@@ -108,27 +117,27 @@ def _book_summary_response(
     )
 
 
-def get_current_book() -> BookSummaryResponse:
+def get_current_book(user_id: str) -> BookSummaryResponse:
     with connect() as connection:
-        book_row, fallback = resolve_current_book(connection)
+        book_row, fallback = resolve_current_book(connection, user_id)
         notice = (
             f"当前书不存在，已回退默认书「{book_row['title']}」"
             if fallback
             else None
         )
-        return _book_summary_response(connection, book_row, notice)
+        return _book_summary_response(connection, book_row, user_id, notice)
 
 
-def list_books() -> BookListResponse:
+def list_books(user_id: str) -> BookListResponse:
     with connect() as connection:
-        current_book_row, _fallback = resolve_current_book(connection)
+        current_book_row, _fallback = resolve_current_book(connection, user_id)
         current_book_id = str(current_book_row["id"])
         book_rows = connection.execute(
             "select * from vocabulary_books order by created_at, id"
         ).fetchall()
         books = [
             BookListItemResponse(
-                **_book_summary_response(connection, row).model_dump(),
+                **_book_summary_response(connection, row, user_id).model_dump(),
                 isCurrent=str(row["id"]) == current_book_id,
             )
             for row in book_rows
@@ -136,28 +145,45 @@ def list_books() -> BookListResponse:
     return BookListResponse(books=books)
 
 
-def switch_current_book(book_id: str) -> BookSummaryResponse:
-    """Switch the current book (PRD ch.9): only the current-book pointer is
-    updated — no review / scheduling / progress / snapshot data is touched.
+def switch_current_book(user_id: str, book_id: str) -> BookSummaryResponse:
+    """Switch the current book (PRD ch.9): only the caller's own
+    current-book pointer is updated — no review / scheduling / progress /
+    snapshot data is touched, and no other user's pointer moves.
     Switching to the already-current book is an idempotent no-op."""
     with connect() as connection:
         if not book_exists(connection, book_id):
             raise LookupError(f"Book not found: {book_id}")
-        pointer = connection.execute(
-            "select value from settings where key = 'current_book_id'"
-        ).fetchone()
-        if pointer is None or pointer["value"] != book_id:
-            set_current_book_pointer(connection, book_id)
+        pointer = read_current_book_pointer(connection, user_id)
+        if pointer != book_id:
+            set_current_book_pointer(connection, user_id, book_id)
         book_row = connection.execute(
             "select * from vocabulary_books where id = ?",
             (book_id,),
         ).fetchone()
-        return _book_summary_response(connection, book_row)
+        return _book_summary_response(connection, book_row, user_id)
 
 
-def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
+def prepare_book_words(
+    user_id: str, request: PrepareJobRequest, *, is_super: bool = False
+) -> PrepareJobResponse:
+    """Prepare the next words of a book for one user (C-06).
+
+    Enrichment is global and shared: entries / examples are created once
+    per word and reused by every user, so a second user studying the
+    same book never triggers another Oxford call. Cards are per-user:
+    every user gets their own card row per entry (unique on
+    (user_id, entry_id)).
+
+    ``overwriteExisting`` re-enriches the *shared* word material and
+    therefore deletes every user's cards for those words — it is a
+    maintenance operation restricted to the super account (C-07 data
+    boundary: a regular user must not be able to destroy another user's
+    study data).
+    """
     if request.scope != "next":
         raise ValueError("Only scope='next' is supported")
+    if request.overwriteExisting and not is_super:
+        raise PermissionError("overwriteExisting requires the super account")
 
     count = request.count if request.count is not None else 20
     max_senses = max(request.maxSensesPerWord, 1)
@@ -173,17 +199,36 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                 raise LookupError(f"Book not found: {request.bookId}")
             book_id = request.bookId
         else:
-            book_id = get_current_book_id(connection)
+            book_id = get_current_book_id(connection, user_id)
         book_words = connection.execute(
             """
             select id, word_text, normalized_text
             from book_words
-            where import_status in ('pending', 'needs_review')
-              and book_id = ?
+            where book_id = ?
+              and (
+                -- Baseline semantics (kept): pending / needs_review words
+                -- are re-selectable so a flagged word can be re-processed
+                -- (and marked back to ready) even by a user who already
+                -- owns a card of it.
+                import_status in ('pending', 'needs_review')
+                or not exists (
+                    -- Per-user selection (C-06): a word also counts as
+                    -- "not yet prepared" for THIS user when they own no
+                    -- card of it. import_status is a shared enrichment
+                    -- flag: once one user prepared a word, everyone else
+                    -- still gets their own cards from the shared entries.
+                    select 1
+                    from entries
+                    join words on words.id = entries.word_id
+                    join cards on cards.entry_id = entries.id
+                    where words.normalized_text = book_words.normalized_text
+                      and cards.user_id = ?
+                )
+              )
             order by sequence_index
             limit ?
             """,
-            (book_id, count),
+            (book_id, user_id, count),
         ).fetchall()
 
         job_id = str(uuid4())
@@ -203,7 +248,7 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
             if request.overwriteExisting:
                 _delete_word_study_material(connection, word_id)
 
-            if _word_card_count(connection, word_id) > 0:
+            if _word_card_count(connection, word_id, user_id) > 0:
                 connection.execute(
                     """
                     update book_words
@@ -215,68 +260,86 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                 processed_words += 1
                 continue
 
-            senses = provider.prepare(word_text, max_senses)
-            for sense_order, sense in enumerate(senses, start=1):
-                entry_id = str(uuid4())
-                connection.execute(
-                    """
-                    insert into entries (
-                        id,
-                        word_id,
-                        sense_order,
-                        part_of_speech,
-                        sense_label,
-                        definition,
-                        definition_source,
-                        chinese_note,
-                        created_at,
-                        updated_at
-                    )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        entry_id,
-                        word_id,
-                        sense_order,
-                        sense.part_of_speech,
-                        sense.sense_label,
-                        sense.definition,
-                        sense.definition_source,
-                        sense.chinese_note,
-                        now,
-                        now,
-                    ),
-                )
-                if sense.example:
+            # Shared enrichment layer: only call the provider when the
+            # word has no entries yet. A second user of the same word
+            # reuses the existing entries and just gets their own cards.
+            entry_rows = connection.execute(
+                "select id from entries where word_id = ? order by sense_order",
+                (word_id,),
+            ).fetchall()
+
+            if not entry_rows:
+                senses = provider.prepare(word_text, max_senses)
+                for sense_order, sense in enumerate(senses, start=1):
+                    entry_id = str(uuid4())
                     connection.execute(
                         """
-                        insert into entry_examples (
+                        insert into entries (
                             id,
-                            entry_id,
-                            example_order,
-                            sentence,
-                            source,
-                            is_primary,
+                            word_id,
+                            sense_order,
+                            part_of_speech,
+                            sense_label,
+                            definition,
+                            definition_source,
+                            chinese_note,
                             created_at,
                             updated_at
                         )
-                        values (?, ?, ?, ?, ?, ?, ?, ?)
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            str(uuid4()),
                             entry_id,
-                            1,
-                            sense.example,
-                            sense.example_source or "fallback",
-                            1,
+                            word_id,
+                            sense_order,
+                            sense.part_of_speech,
+                            sense.sense_label,
+                            sense.definition,
+                            sense.definition_source,
+                            sense.chinese_note,
                             now,
                             now,
                         ),
                     )
+                    if sense.example:
+                        connection.execute(
+                            """
+                            insert into entry_examples (
+                                id,
+                                entry_id,
+                                example_order,
+                                sentence,
+                                source,
+                                is_primary,
+                                created_at,
+                                updated_at
+                            )
+                            values (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                str(uuid4()),
+                                entry_id,
+                                1,
+                                sense.example,
+                                sense.example_source or "fallback",
+                                1,
+                                now,
+                                now,
+                            ),
+                        )
+                entry_rows = connection.execute(
+                    "select id from entries where word_id = ? order by sense_order",
+                    (word_id,),
+                ).fetchall()
+
+            # Per-user cards: this user has none for the word yet
+            # (checked above), so create one card per entry.
+            for entry_row in entry_rows:
                 connection.execute(
                     """
                     insert into cards (
                         id,
+                        user_id,
                         entry_id,
                         status,
                         stage,
@@ -286,11 +349,12 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
                         ef,
                         interval_days
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(uuid4()),
-                        entry_id,
+                        user_id,
+                        entry_row["id"],
                         "learning",
                         0,
                         today,
@@ -353,64 +417,67 @@ def prepare_book_words(request: PrepareJobRequest) -> PrepareJobResponse:
     )
 
 
-def start_today_session(request: TodayStartRequest) -> TodaySessionResponse:
+def start_today_session(user_id: str, request: TodayStartRequest) -> TodaySessionResponse:
     study_date = request.date or date.today()
 
     with connect() as connection:
-        book_id = get_current_book_id(connection)
-        snapshot_exists = _today_queue_snapshot_exists(connection, book_id, study_date)
+        book_id = get_current_book_id(connection, user_id)
+        snapshot_exists = _today_queue_snapshot_exists(
+            connection, user_id, book_id, study_date
+        )
 
     if not snapshot_exists:
         # 每日首次进入 Today：生成当天固定队列快照（复习卡在前 + 新卡在后）。
-        _create_today_queue_snapshot(study_date, request.dailyNewWordTarget)
+        _create_today_queue_snapshot(user_id, study_date, request.dailyNewWordTarget)
     else:
         # 快照已存在：当日不重算，只把额度内新 prepare 就绪的新卡追加到队尾。
-        _merge_new_cards_into_today_queue(study_date, request.dailyNewWordTarget)
+        _merge_new_cards_into_today_queue(user_id, study_date, request.dailyNewWordTarget)
 
-    return _read_today_queue_session(study_date)
+    return _read_today_queue_session(user_id, study_date)
 
 
 def _today_queue_snapshot_exists(
-    connection, book_id: str, study_date: date
+    connection, user_id: str, book_id: str, study_date: date
 ) -> bool:
     row = connection.execute(
         "select 1 from today_queue_snapshots"
-        " where book_id = ? and study_date = ? limit 1",
-        (book_id, study_date.isoformat()),
+        " where user_id = ? and book_id = ? and study_date = ? limit 1",
+        (user_id, book_id, study_date.isoformat()),
     ).fetchone()
     return row is not None
 
 
 def _create_today_queue_snapshot(
-    study_date: date, daily_new_word_target: int
+    user_id: str, study_date: date, daily_new_word_target: int
 ) -> None:
     review_cards = sorted(
         # PRD ch.8 rule 2: review cards by due_at ascending (overdue
         # first); the stable sort keeps the book-sequence order as the
         # tie-breaker for cards sharing a due date.
-        _get_due_review_cards(study_date),
+        _get_due_review_cards(study_date, user_id),
         key=lambda card: card.dueAt,
     )
 
     new_word_target_remaining = max(
-        daily_new_word_target - _count_new_words_studied_on(study_date),
+        daily_new_word_target - _count_new_words_studied_on(user_id, study_date),
         0,
     )
     new_cards = (
-        _get_due_new_cards(study_date, new_word_target_remaining)
+        _get_due_new_cards(study_date, new_word_target_remaining, user_id)
         if new_word_target_remaining > 0
         else []
     )
     if len(new_cards) < new_word_target_remaining:
         prepare_book_words(
+            user_id,
             PrepareJobRequest(
                 scope="next",
                 count=new_word_target_remaining - len(new_cards),
                 maxSensesPerWord=5,
                 overwriteExisting=False,
-            )
+            ),
         )
-        new_cards = _get_due_new_cards(study_date, new_word_target_remaining)
+        new_cards = _get_due_new_cards(study_date, new_word_target_remaining, user_id)
 
     # A word whose senses span both the review and the new pool is queued
     # once, as a review card (its primary card id matches on both sides).
@@ -418,41 +485,47 @@ def _create_today_queue_snapshot(
     new_cards = [card for card in new_cards if card.cardId not in review_card_ids]
 
     _append_today_queue_rows(
-        study_date, review_cards=review_cards, new_cards=new_cards, create_snapshot=True
+        user_id,
+        study_date,
+        review_cards=review_cards,
+        new_cards=new_cards,
+        create_snapshot=True,
     )
 
 
 def _merge_new_cards_into_today_queue(
-    study_date: date, daily_new_word_target: int
+    user_id: str, study_date: date, daily_new_word_target: int
 ) -> None:
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        book_id = get_current_book_id(connection, user_id)
         queued_new_card_ids = {
             row["card_id"]
             for row in connection.execute(
                 "select card_id from today_queue"
-                " where book_id = ? and study_date = ? and queue_type = 'new'",
-                (book_id, study_date.isoformat()),
+                " where user_id = ? and book_id = ? and study_date = ?"
+                " and queue_type = 'new'",
+                (user_id, book_id, study_date.isoformat()),
             ).fetchall()
         }
         reviewed_queued_new = connection.execute(
             """
             select count(*) as total
             from today_queue
-            where book_id = ? and study_date = ? and queue_type = 'new'
+            where user_id = ? and book_id = ? and study_date = ?
+              and queue_type = 'new'
               and exists (
                 select 1 from reviews
                 where reviews.card_id = today_queue.card_id
                   and substr(reviews.reviewed_at, 1, 10) = ?
               )
             """,
-            (book_id, study_date.isoformat(), study_date.isoformat()),
+            (user_id, book_id, study_date.isoformat(), study_date.isoformat()),
         ).fetchone()["total"]
 
     # Quota consumed today = distinct new words studied (reviews) UNION
     # queued new entries; a queued new entry already reviewed today is in
     # both sets, hence the subtraction below (PRD ch.8 rule 7).
-    studied_new = _count_new_words_studied_on(study_date)
+    studied_new = _count_new_words_studied_on(user_id, study_date)
     remaining = max(
         daily_new_word_target
         - studied_new
@@ -463,7 +536,7 @@ def _merge_new_cards_into_today_queue(
         return
 
     candidates = _get_due_new_cards(
-        study_date, remaining + len(queued_new_card_ids)
+        study_date, remaining + len(queued_new_card_ids), user_id
     )
     fresh_cards = [
         card for card in candidates if card.cardId not in queued_new_card_ids
@@ -472,15 +545,16 @@ def _merge_new_cards_into_today_queue(
         # The quota grew mid-day but the pool has no ready new cards left:
         # prepare the missing words, mirroring the snapshot-creation path.
         prepare_book_words(
+            user_id,
             PrepareJobRequest(
                 scope="next",
                 count=remaining - len(fresh_cards),
                 maxSensesPerWord=5,
                 overwriteExisting=False,
-            )
+            ),
         )
         candidates = _get_due_new_cards(
-            study_date, remaining + len(queued_new_card_ids)
+            study_date, remaining + len(queued_new_card_ids), user_id
         )
         fresh_cards = [
             card for card in candidates if card.cardId not in queued_new_card_ids
@@ -490,11 +564,16 @@ def _merge_new_cards_into_today_queue(
         return
 
     _append_today_queue_rows(
-        study_date, review_cards=[], new_cards=fresh_cards, create_snapshot=False
+        user_id,
+        study_date,
+        review_cards=[],
+        new_cards=fresh_cards,
+        create_snapshot=False,
     )
 
 
 def _append_today_queue_rows(
+    user_id: str,
     study_date: date,
     review_cards: list[StudyCardResponse],
     new_cards: list[StudyCardResponse],
@@ -505,28 +584,31 @@ def _append_today_queue_rows(
     now = _utc_now()
 
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        book_id = get_current_book_id(connection, user_id)
         if create_snapshot:
             connection.execute(
                 "insert or ignore into today_queue_snapshots"
-                " (book_id, study_date, created_at) values (?, ?, ?)",
-                (book_id, study_date.isoformat(), now),
+                " (user_id, book_id, study_date, created_at) values (?, ?, ?, ?)",
+                (user_id, book_id, study_date.isoformat(), now),
             )
         row = connection.execute(
             "select coalesce(max(position), 0) as next_position"
-            " from today_queue where book_id = ? and study_date = ?",
-            (book_id, study_date.isoformat()),
+            " from today_queue"
+            " where user_id = ? and book_id = ? and study_date = ?",
+            (user_id, book_id, study_date.isoformat()),
         ).fetchone()
         position = row["next_position"] + 1
         for card, queue_type in entries:
             connection.execute(
                 """
                 insert into today_queue (
-                    id, book_id, study_date, position, card_id, queue_type, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
+                    id, user_id, book_id, study_date, position, card_id,
+                    queue_type, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid4()),
+                    user_id,
                     book_id,
                     study_date.isoformat(),
                     position,
@@ -538,13 +620,13 @@ def _append_today_queue_rows(
             position += 1
 
 
-def _read_today_queue_session(study_date: date) -> TodaySessionResponse:
+def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionResponse:
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        book_id = get_current_book_id(connection, user_id)
         queue_rows = connection.execute(
             "select card_id, position, queue_type from today_queue"
-            " where book_id = ? and study_date = ? order by position",
-            (book_id, study_date.isoformat()),
+            " where user_id = ? and book_id = ? and study_date = ? order by position",
+            (user_id, book_id, study_date.isoformat()),
         ).fetchall()
         if not queue_rows:
             return TodaySessionResponse(totalCards=0, cards=[], reviewedCards=0)
@@ -611,12 +693,13 @@ def _read_today_queue_session(study_date: date) -> TodaySessionResponse:
                 join entries on entries.id = cards.entry_id
                 join words on words.id = entries.word_id
                 where cards.due_at <= ?
+                  and cards.user_id = ?
                   and cards.status in ('new', 'learning', 'mastered')
                   and words.normalized_text in ({word_placeholders})
                 """,
-                (study_date.isoformat(), *pending_words),
+                (study_date.isoformat(), user_id, *pending_words),
             ).fetchall()
-            study_cards = _study_cards_from_rows(connection, due_rows)
+            study_cards = _study_cards_from_rows(connection, due_rows, user_id)
             cards_by_id = {card.cardId: card for card in study_cards}
             for row in pending_rows:
                 card = cards_by_id.get(row["card_id"])
@@ -633,20 +716,26 @@ def _read_today_queue_session(study_date: date) -> TodaySessionResponse:
         )
 
 
-def get_due_reviews(due_date: date) -> DueReviewsResponse:
-    cards = _get_due_study_cards(due_date, None)
+def get_due_reviews(user_id: str, due_date: date) -> DueReviewsResponse:
+    cards = _get_due_study_cards(due_date, None, user_id)
     return DueReviewsResponse(date=due_date, total=len(cards), cards=cards)
 
 
-def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
+def review_card(
+    user_id: str, card_id: str, request: ReviewCardRequest
+) -> ReviewCardResponse:
     reviewed_on = request.reviewedDate or request.reviewedAt.date()
     reviewed_at = request.reviewedAt.isoformat()
 
     with connect() as connection:
+        # BEGIN IMMEDIATE acquires the write lock up front so the
+        # read-check-write sequence below cannot race a concurrent review
+        # of the same card (QA F-01 finding, fixed in v2 batch 2).
+        connection.execute("BEGIN IMMEDIATE")
         card = connection.execute(
             "select id, stage, status, due_at, ef, interval_days"
-            " from cards where id = ?",
-            (card_id,),
+            " from cards where id = ? and user_id = ?",
+            (card_id, user_id),
         ).fetchone()
         if card is None:
             raise LookupError("Card not found")
@@ -672,6 +761,7 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
             """
             insert into reviews (
                 id,
+                user_id,
                 card_id,
                 rating,
                 reviewed_at,
@@ -679,10 +769,11 @@ def review_card(card_id: str, request: ReviewCardRequest) -> ReviewCardResponse:
                 next_stage,
                 next_due_at
             )
-            values (?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid4()),
+                user_id,
                 card_id,
                 request.rating,
                 reviewed_at,
@@ -747,15 +838,16 @@ def _upsert_word(
     return word_id
 
 
-def _word_card_count(connection, word_id: str) -> int:
+def _word_card_count(connection, word_id: str, user_id: str) -> int:
     row = connection.execute(
         """
         select count(*) as total
         from entries
         join cards on cards.entry_id = entries.id
         where entries.word_id = ?
+          and cards.user_id = ?
         """,
-        (word_id,),
+        (word_id, user_id),
     ).fetchone()
     return row["total"]
 
@@ -800,30 +892,35 @@ def _delete_word_study_material(connection, word_id: str) -> None:
 def _get_due_study_cards(
     due_date: date,
     limit: int | None,
+    user_id: str,
 ) -> list[StudyCardResponse]:
     return _get_due_study_cards_by_queue(
         due_date=due_date,
         queue_condition="1 = 1",
         limit=limit,
+        user_id=user_id,
     )
 
 
-def _get_due_review_cards(due_date: date) -> list[StudyCardResponse]:
+def _get_due_review_cards(due_date: date, user_id: str) -> list[StudyCardResponse]:
     return _get_due_study_cards_by_queue(
         due_date=due_date,
         queue_condition="cards.last_reviewed_at is not null",
         limit=None,
+        user_id=user_id,
     )
 
 
 def _get_due_new_cards(
     due_date: date,
     limit: int,
+    user_id: str,
 ) -> list[StudyCardResponse]:
     return _get_due_study_cards_by_queue(
         due_date=due_date,
         queue_condition="cards.last_reviewed_at is null",
         limit=limit,
+        user_id=user_id,
     )
 
 
@@ -831,9 +928,10 @@ def _get_due_study_cards_by_queue(
     due_date: date,
     queue_condition: str,
     limit: int | None,
+    user_id: str,
 ) -> list[StudyCardResponse]:
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        book_id = get_current_book_id(connection, user_id)
         card_rows = connection.execute(
             f"""
             select
@@ -859,6 +957,7 @@ def _get_due_study_cards_by_queue(
             join entries on entries.id = cards.entry_id
             join words on words.id = entries.word_id
             where cards.due_at <= ?
+              and cards.user_id = ?
               and cards.status in ('new', 'learning', 'mastered')
               and exists (
                   -- PRD ch.9: after switching books the study pool only
@@ -878,19 +977,19 @@ def _get_due_study_cards_by_queue(
                 cards.created_on,
                 words.text
             """,
-            (book_id, due_date.isoformat(), book_id),
+            (book_id, due_date.isoformat(), user_id, book_id),
         ).fetchall()
 
         if not card_rows:
             return []
 
-        cards = _study_cards_from_rows(connection, card_rows)
+        cards = _study_cards_from_rows(connection, card_rows, user_id)
         return cards if limit is None else cards[:limit]
 
 
-def _count_new_words_studied_on(study_date: date) -> int:
+def _count_new_words_studied_on(user_id: str, study_date: date) -> int:
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        book_id = get_current_book_id(connection, user_id)
         row = connection.execute(
             """
             select count(*) as total
@@ -900,7 +999,8 @@ def _count_new_words_studied_on(study_date: date) -> int:
                 join cards on cards.id = reviews.card_id
                 join entries on entries.id = cards.entry_id
                 join words on words.id = entries.word_id
-                where substr(reviews.reviewed_at, 1, 10) = ?
+                where reviews.user_id = ?
+                  and substr(reviews.reviewed_at, 1, 10) = ?
                   and exists (
                       -- PRD ch.9: the daily new-word quota is tracked per
                       -- book — a word of another book never consumes the
@@ -915,19 +1015,22 @@ def _count_new_words_studied_on(study_date: date) -> int:
                     from reviews previous_reviews
                     join cards previous_cards on previous_cards.id = previous_reviews.card_id
                     join entries previous_entries on previous_entries.id = previous_cards.entry_id
-                    where previous_entries.word_id = entries.word_id
+                    where previous_reviews.user_id = ?
+                      and previous_entries.word_id = entries.word_id
                       and substr(previous_reviews.reviewed_at, 1, 10) < ?
                   )
                 group by words.normalized_text
             )
             """,
-            (study_date.isoformat(), book_id, study_date.isoformat()),
+            (user_id, study_date.isoformat(), book_id, user_id, study_date.isoformat()),
         ).fetchone()
 
     return row["total"]
 
 
-def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
+def _study_cards_from_rows(
+    connection, card_rows, user_id: str
+) -> list[StudyCardResponse]:
     due_card_ids_by_word: dict[str, list[str]] = {}
     queue_type_by_word: dict[str, Literal["new", "review"]] = {}
     for row in card_rows:
@@ -940,7 +1043,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
 
     normalized_words = list(due_card_ids_by_word)
     normalized_placeholders = ", ".join("?" for _ in normalized_words)
-    book_id = get_current_book_id(connection)
+    book_id = get_current_book_id(connection, user_id)
     all_sense_rows = connection.execute(
         f"""
         select
@@ -966,6 +1069,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
         join entries on entries.id = cards.entry_id
         join words on words.id = entries.word_id
         where words.normalized_text in ({normalized_placeholders})
+          and cards.user_id = ?
           and cards.status in ('new', 'learning', 'mastered')
         order by
             case when book_sequence_index is null then 1 else 0 end,
@@ -975,7 +1079,7 @@ def _study_cards_from_rows(connection, card_rows) -> list[StudyCardResponse]:
             cards.created_on,
             words.text
         """,
-        (book_id, *normalized_words),
+        (book_id, *normalized_words, user_id),
     ).fetchall()
 
     card_ids = [row["card_id"] for row in all_sense_rows]

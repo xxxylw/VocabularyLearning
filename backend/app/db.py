@@ -5,6 +5,7 @@ import sqlite3
 from app.auth import ensure_super_account
 from app.books import DEFAULT_BOOK_ID, ensure_default_book
 from app.scheduling_migration import migrate_cards_sm2
+from app.user_isolation_migration import migrate_user_isolation
 
 
 def db_path() -> Path:
@@ -68,6 +69,13 @@ def migrate(connection: sqlite3.Connection) -> None:
     # password from VOCAB_SUPER_EMAIL / VOCAB_SUPER_PASSWORD). INSERT OR
     # IGNORE keeps an already-rotated password untouched.
     ensure_super_account(connection)
+
+    # v2 cloud batch 2 (C-05): per-user data isolation. Legacy databases
+    # gain user_id columns / rebuilt queue tables with rows attributed to
+    # the super account; fresh databases are already in the new shape via
+    # schema.sql, so this is a no-op for them. Must run after
+    # ensure_super_account (legacy rows are attributed to super).
+    migrate_user_isolation(connection)
 
     # SM-2 scheduling migration (P0-4): adds ef / interval_days to cards
     # and back-fills each legacy card's interval from its stage. No-op

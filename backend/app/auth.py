@@ -13,10 +13,13 @@ Design decisions:
 - Passwords: stdlib ``hashlib.scrypt`` (n=2^14, r=8, p=1) with a
   random 16-byte salt and constant-time verification. No new
   dependency.
-- ``VOCAB_REQUIRE_AUTH=0`` disables the request guard so the legacy
-  v1.1 test suites (which drive the study API without sessions) keep
-  running unchanged. Default is enforcement ON; batch 2 removes the
-  fallback together with per-user data isolation.
+- Batch 2 removed the ``VOCAB_REQUIRE_AUTH=0`` legacy fallback: the
+  request guard is always on, and every study-API read/write is scoped
+  to the authenticated user (C-05/C-06/C-07). The legacy v1.1 test
+  suites authenticate through a test session instead (see
+  backend/tests/conftest.py).
+- Password policy (batch 2, P2 fix): minimum 8 characters AND at least
+  one letter and one digit, enforced on register / reset / change.
 """
 
 from __future__ import annotations
@@ -49,6 +52,27 @@ _SUPER_EMAIL_DEFAULT = "super@vocab.local"
 _SUPER_PASSWORD_DEFAULT = "vocab-super-2026"
 
 MIN_PASSWORD_LENGTH = 8
+
+PASSWORD_POLICY_MESSAGE = (
+    "Password must be at least 8 characters and contain both letters and digits"
+)
+
+
+def password_policy_error(password: str) -> str | None:
+    """Return the policy violation message, or None when acceptable.
+
+    Batch 2 (P2 fix, decision record D3): on top of the batch-1 minimum
+    length, passwords must mix letters and digits. Enforced server-side
+    on every password-setting path (register / reset / change).
+    """
+
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return PASSWORD_POLICY_MESSAGE
+    if not any(char.isalpha() for char in password):
+        return PASSWORD_POLICY_MESSAGE
+    if not any(char.isdigit() for char in password):
+        return PASSWORD_POLICY_MESSAGE
+    return None
 
 
 @dataclass(frozen=True)
@@ -422,20 +446,13 @@ def ensure_super_account(connection) -> None:
 # ---------------------------------------------------------------------------
 
 
-def auth_guard_enabled() -> bool:
-    return os.environ.get("VOCAB_REQUIRE_AUTH", "1") != "0"
-
-
 def require_user(request: Request) -> AuthContext:
     """FastAPI dependency guarding the study API in the cloud edition.
 
-    With the guard disabled (tests / v1.1 desktop compat) every request
-    is anonymous-but-allowed. Enabled (the deployment default), a valid
-    ``Authorization: Bearer <session-token>`` header is required.
+    Batch 2 removed the ``VOCAB_REQUIRE_AUTH=0`` fallback: a valid
+    ``Authorization: Bearer <session-token>`` header is always required.
     """
 
-    if not auth_guard_enabled():
-        return ANONYMOUS
     header = request.headers.get("authorization", "")
     scheme, _, raw_token = header.partition(" ")
     if scheme.lower() != "bearer" or not raw_token.strip():
@@ -449,18 +466,7 @@ def require_user(request: Request) -> AuthContext:
     )
 
 
-def require_user_strict(request: Request) -> AuthContext:
-    """Same as require_user but never allows the disabled-guard bypass.
-
-    Used by endpoints whose semantics need a real identity (me /
-    logout / change-password), so they fail loudly under
-    VOCAB_REQUIRE_AUTH=0 rather than silently acting on nobody.
-    """
-
-    if not auth_guard_enabled():
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "auth_guard_disabled",
-                    "message": "Auth endpoints require VOCAB_REQUIRE_AUTH=1"},
-        )
-    return require_user(request)
+# Batch 2: with the disabled-guard fallback gone, require_user_strict is
+# simply require_user. Kept as an alias so the auth routes read the same
+# as in batch 1.
+require_user_strict = require_user

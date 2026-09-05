@@ -116,6 +116,31 @@ describe('LoginView', () => {
     expect(await screen.findByText('邮箱或密码不正确')).toBeInTheDocument();
   });
 
+  it('toggles the password visibility through the trailing eye button', async () => {
+    const user = userEvent.setup();
+    render(<LoginView onLoginSuccess={vi.fn()} />);
+
+    const password = screen.getByLabelText('密码');
+    await user.type(password, 'secret123');
+    expect(password).toHaveAttribute('type', 'password');
+
+    const toggle = screen.getByRole('button', { name: '显示密码' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(toggle);
+    expect(password).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: '隐藏密码' })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: '隐藏密码' }));
+    expect(password).toHaveAttribute('type', 'password');
+  });
+
+  it('auto-focuses the password field when arriving from verify/reset', () => {
+    render(<LoginView initialEmail="user@example.com" autoFocusPassword onLoginSuccess={vi.fn()} />);
+
+    expect(screen.getByLabelText('密码')).toHaveFocus();
+  });
+
   it('links to forgot-password and register', async () => {
     const user = userEvent.setup();
     render(<LoginView onLoginSuccess={vi.fn()} />);
@@ -149,12 +174,35 @@ describe('RegisterView', () => {
     await user.type(screen.getByLabelText('密码'), 'short');
     expect(cta).toBeDisabled();
 
+    // letters-only misses the new letter+digit policy
+    await user.clear(screen.getByLabelText('密码'));
+    await user.type(screen.getByLabelText('密码'), 'onlyletterstoolong');
+    expect(cta).toBeDisabled();
+
     await user.clear(screen.getByLabelText('密码'));
     await user.type(screen.getByLabelText('密码'), 'longenough1');
     expect(cta).toBeDisabled();
 
     await user.type(screen.getByLabelText('确认密码'), 'longenough1');
     expect(cta).toBeEnabled();
+  });
+
+  it('shows the letter+digit complexity hint as a field error on blur', async () => {
+    const user = userEvent.setup();
+    render(<RegisterView />);
+
+    // standing hint below the field
+    expect(screen.getByText('至少 8 位，且需包含字母和数字')).toBeInTheDocument();
+
+    const password = screen.getByLabelText('密码');
+    await user.type(password, 'onlyletters');
+    fireEvent.blur(password);
+
+    // after blur the inline error repeats the policy copy inside the field
+    const field = password.closest('.auth-field');
+    expect(field?.querySelector('.auth-inline-error')?.textContent).toBe(
+      '至少 8 位，且需包含字母和数字'
+    );
   });
 
   it('flags mismatched confirmation on blur', async () => {
@@ -182,7 +230,7 @@ describe('RegisterView', () => {
     await user.click(screen.getByRole('button', { name: '创建账号' }));
 
     await waitFor(() =>
-      expect(window.location.hash).toBe('#/check-email?email=new%40example.com')
+      expect(window.location.hash).toBe('#/check-email?email=new%40example.com&from=register')
     );
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/register', {
       method: 'POST',

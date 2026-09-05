@@ -19,6 +19,7 @@ Acceptance criteria covered here:
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from conftest import super_user_id
 from app.db import connect
 from app.books import DEFAULT_BOOK_ID, RED_BOOK_ID, RED_BOOK_TITLE
 
@@ -227,7 +228,8 @@ def test_prepare_job_with_book_id_targets_book_without_switching(tmp_path, monke
 
     with connect() as connection:
         pointer = connection.execute(
-            "select value from settings where key = 'current_book_id'"
+            "select value from user_settings where user_id = ? and key = 'current_book_id'",
+            (super_user_id(),),
         ).fetchone()
         assert pointer is None or pointer["value"] == DEFAULT_BOOK_ID
 

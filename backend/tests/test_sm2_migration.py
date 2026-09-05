@@ -29,6 +29,7 @@ from app.scheduling_migration import (
     _reconcile,
     migrate_cards_sm2,
 )
+from conftest import super_user_id
 from app.services import ReviewConflictError, review_card
 from app.models import ReviewCardRequest
 from datetime import datetime
@@ -258,6 +259,7 @@ def test_post_migration_review_uses_new_algorithm(tmp_path, monkeypatch):
         connection.commit()
 
     response = review_card(
+        super_user_id(),
         "card-5",
         ReviewCardRequest(
             rating="known",
@@ -284,6 +286,7 @@ def test_post_migration_review_uses_new_algorithm(tmp_path, monkeypatch):
     # same-day duplicate review still conflicts
     with pytest.raises(ReviewConflictError):
         review_card(
+            super_user_id(),
             "card-5",
             ReviewCardRequest(
                 rating="uncertain",
@@ -305,6 +308,7 @@ def test_post_migration_mastered_card_continues_new_algorithm(tmp_path, monkeypa
         connection.commit()
 
     response = review_card(
+        super_user_id(),
         "card-6",
         ReviewCardRequest(
             rating="known",
@@ -365,8 +369,8 @@ def test_migrate_cards_sm2_on_fresh_schema(tmp_path):
         )
         connection.executescript(schema)
         connection.execute(
-            "insert into cards (id, entry_id, status, stage, due_at, created_on, last_reviewed_at)"
-            " values ('c1', 'e1', 'learning', 2, '2026-01-01', '2026-01-01', null)"
+            "insert into cards (id, user_id, entry_id, status, stage, due_at, created_on, last_reviewed_at)"
+            " values ('c1', 'user-1', 'e1', 'learning', 2, '2026-01-01', '2026-01-01', null)"
         )
         connection.commit()
 

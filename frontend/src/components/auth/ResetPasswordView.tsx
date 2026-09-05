@@ -3,10 +3,12 @@ import { ApiError, fetchResetTokenInfo, resetPassword } from '../../api';
 import { navigate } from '../../router';
 import {
   AuthCard,
+  PasswordField,
   Spinner,
   Toast,
   isValidPassword,
-  useFlash
+  useFlash,
+  PASSWORD_POLICY_HINT
 } from './shared';
 
 type ResetPasswordViewProps = {
@@ -124,23 +126,25 @@ export function ResetPasswordView({ token }: ResetPasswordViewProps) {
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
           <label htmlFor="reset-new-password">新密码</label>
-          <input
+          <PasswordField
             id="reset-new-password"
-            className={fieldErrors.password !== undefined ? 'auth-input has-error' : 'auth-input'}
-            type="password"
             autoComplete="new-password"
-            placeholder="设置新密码（至少 8 位）"
+            placeholder="设置新密码（至少 8 位，含字母和数字）"
             value={newPassword}
+            hasError={fieldErrors.password !== undefined}
             disabled={isSubmitting}
             onChange={(event) => setNewPassword(event.target.value)}
             onBlur={() =>
               setFieldErrors((prev) => ({
                 ...prev,
-                password: newPassword !== '' && !isValidPassword(newPassword) ? '密码至少 8 位' : undefined
+                password:
+                  newPassword !== '' && !isValidPassword(newPassword)
+                    ? PASSWORD_POLICY_HINT
+                    : undefined
               }))
             }
           />
-          <p className="auth-field-hint">至少 8 位</p>
+          <p className="auth-field-hint">{PASSWORD_POLICY_HINT}</p>
           {fieldErrors.password !== undefined ? (
             <p className="auth-inline-error">{fieldErrors.password}</p>
           ) : null}
@@ -148,13 +152,12 @@ export function ResetPasswordView({ token }: ResetPasswordViewProps) {
 
         <div className="auth-field">
           <label htmlFor="reset-confirm-password">确认新密码</label>
-          <input
+          <PasswordField
             id="reset-confirm-password"
-            className={fieldErrors.confirm !== undefined ? 'auth-input has-error' : 'auth-input'}
-            type="password"
             autoComplete="new-password"
             placeholder="再次输入新密码"
             value={confirmPassword}
+            hasError={fieldErrors.confirm !== undefined}
             disabled={isSubmitting}
             onChange={(event) => setConfirmPassword(event.target.value)}
             onBlur={() =>

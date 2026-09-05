@@ -130,8 +130,124 @@ export function isValidEmailFormat(email: string): boolean {
 
 export const PASSWORD_MIN_LENGTH = 8;
 
+// C-01 / batch-2 D3: the backend policy (auth.password_policy_error)
+// now requires letters AND digits on every password-setting path; this
+// mirror keeps the client-side gate and the inline hint in sync with it.
+export const PASSWORD_POLICY_HINT = '至少 8 位，且需包含字母和数字';
+
 export function isValidPassword(password: string): boolean {
-  return password.length >= PASSWORD_MIN_LENGTH;
+  return (
+    password.length >= PASSWORD_MIN_LENGTH && /[a-zA-Z]/.test(password) && /\d/.test(password)
+  );
+}
+
+// Shared password input with the C-01 trailing show/hide toggle: the
+// eye icon is 28×28 visually but sits on a 44×44 touch hot area (padding
+// 8px + background-clip: content-box, see auth.css), and visibility is
+// toggled by switching the input's type between password / text.
+export function PasswordField({
+  id,
+  autoComplete,
+  placeholder,
+  value,
+  hasError,
+  disabled,
+  autoFocus,
+  onChange,
+  onBlur
+}: {
+  id: string;
+  autoComplete: string;
+  placeholder: string;
+  value: string;
+  hasError?: boolean;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onBlur?: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="auth-password-wrap">
+      <input
+        id={id}
+        className={hasError ? 'auth-input has-error auth-password-input' : 'auth-input auth-password-input'}
+        type={visible ? 'text' : 'password'}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+        value={value}
+        disabled={disabled}
+        autoFocus={autoFocus}
+        onChange={onChange}
+        onBlur={onBlur}
+      />
+      <button
+        className="auth-password-toggle"
+        type="button"
+        aria-label={visible ? '隐藏密码' : '显示密码'}
+        aria-pressed={visible}
+        disabled={disabled}
+        onClick={() => setVisible((current) => !current)}
+      >
+        {visible ? <EyeOffIcon /> : <EyeIcon />}
+      </button>
+    </div>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg
+      width="28"
+      height="28"
+      viewBox="0 0 28 28"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M4 14s3.8-6.4 10-6.4S24 14 24 14s-3.8 6.4-10 6.4S4 14 4 14Z"
+        stroke="#486f83"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <circle cx="14" cy="14" r="2.9" stroke="#486f83" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg
+      width="28"
+      height="28"
+      viewBox="0 0 28 28"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M5 5l18 18"
+        stroke="#486f83"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10.3 8.1A10.9 10.9 0 0 1 14 7.6c6.2 0 10 6.4 10 6.4a17.9 17.9 0 0 1-3.1 3.7M17 19.9a10.6 10.6 0 0 1-3 .5c-6.2 0-10-6.4-10-6.4a17.7 17.7 0 0 1 3.2-3.8"
+        stroke="#486f83"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M11.5 11.7a3.4 3.4 0 0 0 4.8 4.9"
+        stroke="#486f83"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }
 
 // C-05 spec: the "打开邮箱" CTA hands off to the OS default mail client

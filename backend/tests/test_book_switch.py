@@ -23,6 +23,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from conftest import super_user_id
 from app.db import connect
 
 
@@ -263,7 +264,8 @@ def test_switch_is_pointer_only_and_idempotent(tmp_path, monkeypatch):
 
     with connect() as connection:
         pointer = connection.execute(
-            "select value from settings where key = 'current_book_id'"
+            "select value from user_settings where user_id = ? and key = 'current_book_id'",
+            (super_user_id(),),
         ).fetchone()
         assert pointer["value"] == "book-b"
 
@@ -297,7 +299,8 @@ def test_pointer_to_missing_book_falls_back_to_default(tmp_path, monkeypatch):
 
     with connect() as connection:
         connection.execute(
-            "insert or replace into settings (key, value) values ('current_book_id', 'deleted-book')"
+            "insert or replace into user_settings (user_id, key, value) values (?, 'current_book_id', 'deleted-book')",
+            (super_user_id(),),
         )
 
     response = client.get("/api/books/current")
@@ -313,7 +316,8 @@ def test_pointer_to_missing_book_falls_back_to_default(tmp_path, monkeypatch):
 
     with connect() as connection:
         pointer = connection.execute(
-            "select value from settings where key = 'current_book_id'"
+            "select value from user_settings where user_id = ? and key = 'current_book_id'",
+            (super_user_id(),),
         ).fetchone()
         assert pointer["value"] == "default-book"
 

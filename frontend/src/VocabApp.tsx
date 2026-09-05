@@ -115,13 +115,21 @@ export function VocabApp() {
                   : null
             }
             next={query.get('next')}
+            autoFocusPassword={
+              query.get('from') === 'verify' || query.get('from') === 'reset'
+            }
             onLoginSuccess={handleLoginSuccess}
           />
         );
       case '/register':
         return <RegisterView initialEmail={query.get('email') ?? undefined} />;
       case '/check-email':
-        return <CheckEmailView email={query.get('email')} />;
+        return (
+          <CheckEmailView
+            email={query.get('email')}
+            notice={query.get('from') === 'register' ? '账号已创建，去邮箱激活' : null}
+          />
+        );
       case '/forgot-password':
         return <ForgotPasswordView initialEmail={query.get('email') ?? undefined} />;
       case '/reset-password':
