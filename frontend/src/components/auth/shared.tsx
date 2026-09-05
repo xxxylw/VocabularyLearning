@@ -280,6 +280,19 @@ export function CodeInput({
 }) {
   const refs = useRef<Array<HTMLInputElement | null>>([]);
 
+  // Designer walkthrough C-01a (P2): when the parent clears the code
+  // after a rejected submission the focus must land back on box 1 —
+  // without this the caret stays on box 6 and the user has to tab all
+  // the way back to retype. Only the non-empty → empty transition
+  // triggers it, so ordinary typing never fights the user.
+  const previousValue = useRef(value);
+  useEffect(() => {
+    if (previousValue.current !== '' && value === '') {
+      focusBox(0);
+    }
+    previousValue.current = value;
+  }, [value]);
+
   function focusBox(index: number) {
     refs.current[Math.min(Math.max(index, 0), EMAIL_CODE_LENGTH - 1)]?.focus();
   }

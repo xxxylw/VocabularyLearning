@@ -68,6 +68,28 @@ class TokenEmailResponse(BaseModel):
     email: str
 
 
+# v2 cloud batch 3 (C-09): subscription models. The plan response is
+# configuration-driven (VOCAB_SUB_PRICE_CENTS / VOCAB_SUB_CURRENCY) so
+# moving 0.1 → 4.99 never touches code; every timestamp is a UTC ISO
+# string. For super accounts ``plan`` is the synthesized "super" view
+# with ``expiresAt=None`` (permanent) and no subscriptions row exists.
+class SubscriptionPlanResponse(BaseModel):
+    plan: str
+    priceCents: int
+    currency: str
+    period: str
+
+
+class SubscriptionStatusResponse(BaseModel):
+    subscribed: bool
+    plan: str | None
+    status: str | None
+    startedAt: str | None
+    expiresAt: str | None
+    autoRenew: bool | None
+    source: str | None
+
+
 # ---------------------------------------------------------------------------
 # v1 study models
 # ---------------------------------------------------------------------------

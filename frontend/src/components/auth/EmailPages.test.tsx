@@ -38,16 +38,18 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
     vi.stubGlobal('fetch', vi.fn());
     render(<CheckEmailView email="new@example.com" />);
 
-    expect(screen.getByText('输入验证码')).toBeInTheDocument();
+    expect(screen.getByText('查收你的验证邮件')).toBeInTheDocument();
     expect(screen.getByText('new@example.com')).toBeInTheDocument();
     expect(screen.getByText('60s 后可重新发送')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '没收到？重新发送' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '没收到？重发验证码' })).toBeDisabled();
     for (let index = 1; index <= 6; index += 1) {
       expect(screen.getByLabelText(`验证码第 ${index} 位`)).toBeInTheDocument();
     }
     // C-01a: the 打开邮箱 hand-off is gone from the check-email page.
     expect(screen.queryByRole('button', { name: '打开邮箱' })).not.toBeInTheDocument();
-    expect(screen.getByText('验证码 10 分钟内有效；错误 5 次后需重新获取')).toBeInTheDocument();
+    expect(
+      screen.getByText('验证码 10 分钟内有效；错误 5 次后需重新获取；没收到请检查垃圾邮件箱')
+    ).toBeInTheDocument();
   });
 
   it('shows the from=register success banner on the landing page', () => {
@@ -124,6 +126,9 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
       expect(screen.getByLabelText('验证码第 1 位')).toHaveValue('');
       expect(screen.getByLabelText('验证码第 6 位')).toHaveValue('');
     });
+    // Designer walkthrough C-01a (P2 #1): after a rejected submission
+    // the focus must return to the first box for immediate retyping.
+    expect(screen.getByLabelText('验证码第 1 位')).toHaveFocus();
   });
 
   it('sends a resend after the cooldown elapses and restarts it', async () => {
@@ -134,7 +139,7 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await screen.findByText('可以重新发送了')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '没收到？重新发送' }));
+    fireEvent.click(screen.getByRole('button', { name: '没收到？重发验证码' }));
     await vi.waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/resend-verification', {
         method: 'POST',
@@ -142,7 +147,9 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
         body: JSON.stringify({ email: 'new@example.com' })
       })
     );
-    await vi.waitFor(() => expect(screen.getByText('已重新发送')).toBeInTheDocument());
+    await vi.waitFor(() =>
+      expect(screen.getByText('新验证码已发送，旧验证码已失效')).toBeInTheDocument()
+    );
   });
 
   it('ignores a double click on resend while a resend is in flight (QA C-01a)', async () => {
@@ -162,14 +169,16 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await screen.findByText('可以重新发送了')).toBeInTheDocument();
 
-    const button = screen.getByRole('button', { name: '没收到？重新发送' });
+    const button = screen.getByRole('button', { name: '没收到？重发验证码' });
     fireEvent.click(button);
     // The guard must disable the button while the request is in flight.
     expect(button).toBeDisabled();
     fireEvent.click(button); // double click — must be swallowed
 
     await vi.advanceTimersByTimeAsync(100);
-    await vi.waitFor(() => expect(screen.getByText('已重新发送')).toBeInTheDocument());
+    await vi.waitFor(() =>
+      expect(screen.getByText('新验证码已发送，旧验证码已失效')).toBeInTheDocument()
+    );
     const resendCalls = fetchMock.mock.calls.filter(
       ([url]) => url === '/api/auth/resend-verification'
     );
@@ -319,10 +328,12 @@ describe('VerifyEmailView (C-01a legacy links)', () => {
 
     render(<VerifyEmailView />);
 
-    expect(screen.getByText('链接式验证已停用')).toBeInTheDocument();
+    expect(screen.getByText('链接已失效')).toBeInTheDocument();
+    expect(screen.getByText('验证方式已升级为 6 位验证码')).toBeInTheDocument();
     expect(
       screen.getByText('激活链接已停用，请使用邮件中的 6 位数字验证码')
     ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新获取验证码' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '去登录' })).toBeEnabled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -332,7 +343,16 @@ describe('VerifyEmailView (C-01a legacy links)', () => {
 
     render(<VerifyEmailView email="user@example.com" />);
 
-    fireEvent.click(screen.getByRole('button', { name: '去输入验证码' }));
+    fireEvent.click(screen.getByRole('button', { name: '重新获取验证码' }));
     expect(window.location.hash).toBe('#/check-email?email=user%40example.com');
+  });
+
+  it('routes to the code entry page without an email too', () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    render(<VerifyEmailView />);
+
+    fireEvent.click(screen.getByRole('button', { name: '重新获取验证码' }));
+    expect(window.location.hash).toBe('#/check-email');
   });
 });

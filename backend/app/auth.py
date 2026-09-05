@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import re
 import secrets
@@ -496,9 +497,15 @@ def ensure_super_account(connection) -> None:
     restarts); credentials come from ``VOCAB_SUPER_EMAIL`` /
     ``VOCAB_SUPER_PASSWORD`` when provided. Super bypasses the email
     verification loop entirely.
+
+    P3 挂账 (batch 3): when ``VOCAB_SUPER_PASSWORD`` is unset the
+    well-known default is used — boot with a loud (but once-per-process)
+    WARNING so the operator notices and rotates it.
     """
 
     email, password = super_credentials()
+    if not os.environ.get("VOCAB_SUPER_PASSWORD", "").strip():
+        _warn_default_super_password(email)
     now = _iso(_now())
     connection.execute(
         """
@@ -507,6 +514,24 @@ def ensure_super_account(connection) -> None:
         values (?, ?, ?, 1, 1, ?, ?)
         """,
         (f"super-{email}", email, hash_password(password), now, now),
+    )
+
+
+_default_super_password_warned = False
+
+
+def _warn_default_super_password(email: str) -> None:
+    """migrate() runs on every connect; warn once per process, not per query."""
+
+    global _default_super_password_warned
+    if _default_super_password_warned:
+        return
+    _default_super_password_warned = True
+    logging.getLogger(__name__).warning(
+        "VOCAB_SUPER_PASSWORD is not set — the super account %s is protected by "
+        "the built-in default password. Set VOCAB_SUPER_PASSWORD and restart "
+        "before exposing this deployment.",
+        email,
     )
 
 

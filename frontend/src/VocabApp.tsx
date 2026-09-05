@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { App } from './App';
-import { fetchCurrentUser, logout } from './api';
-import type { AuthUser } from './api';
+import { fetchCurrentUser, fetchSubscriptionMe, logout } from './api';
+import type { AuthUser, SubscriptionStatus } from './api';
 import { navigate, routeToString, useHashRoute, isAuthRoute } from './router';
 import { clearSessionToken, getSessionToken, setSessionToken } from './session';
 import { CheckEmailView } from './components/auth/CheckEmailView';
@@ -9,19 +9,22 @@ import { ForgotPasswordView } from './components/auth/ForgotPasswordView';
 import { LoginView } from './components/auth/LoginView';
 import { RegisterView } from './components/auth/RegisterView';
 import { ResetPasswordView } from './components/auth/ResetPasswordView';
+import { SubscriptionView } from './components/auth/SubscriptionView';
 import { VerifyEmailView } from './components/auth/VerifyEmailView';
 import { Spinner } from './components/auth/shared';
 
 type SessionState =
   | { status: 'checking' }
-  | { status: 'authed'; user: AuthUser }
+  | { status: 'authed'; user: AuthUser; subscription?: SubscriptionStatus }
   | { status: 'guest' };
 
 // v2 cloud shell: hash routing (the verification emails link to
 // /#/verify-email?token=…, so a hash router is mandatory) plus the auth
 // guard from spec C-04:
-//   - guest visiting a study route → /login?next=<target>
-//   - logged-in user visiting an auth route → back to the study app
+//   - guest visiting a study route (incl. /subscription) → /login?next=<target>
+//   - logged-in user visiting an auth route → /today (subscribed) or
+//     /subscription (not subscribed) — batch 3 挂账项, subscription is
+//     display-only and never gates study features
 // App.tsx itself stays untouched — its six integration tests render it
 // directly and must keep passing.
 export function VocabApp() {
@@ -54,6 +57,48 @@ export function VocabApp() {
     };
   }, []);
 
+  // Load the subscription status for the authed user — feeds the
+  // auth-route 分流 and the account-menu status row. A failed lookup
+  // degrades to "not subscribed" so the 分流 still resolves (the
+  // subscription page itself has a retry for a real fetch).
+  useEffect(() => {
+    if (session.status !== 'authed') {
+      return;
+    }
+    let cancelled = false;
+    fetchSubscriptionMe()
+      .then((status) => {
+        if (!cancelled) {
+          setSession((current) =>
+            current.status === 'authed' ? { ...current, subscription: status } : current
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSession((current) =>
+            current.status === 'authed'
+              ? {
+                  ...current,
+                  subscription: {
+                    subscribed: false,
+                    plan: null,
+                    status: null,
+                    startedAt: null,
+                    expiresAt: null,
+                    autoRenew: null,
+                    source: null
+                  }
+                }
+              : current
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.status]);
+
   // Route guard. Runs only after the session is resolved so a reload
   // with a valid token doesn't bounce through /login first.
   useEffect(() => {
@@ -63,10 +108,22 @@ export function VocabApp() {
     if (session.status === 'guest' && !isAuthRoute(route.path)) {
       navigate(`/login?next=${encodeURIComponent(routeToString(route))}`);
     }
-    if (session.status === 'authed' && isAuthRoute(route.path)) {
-      navigate('/');
+    if (
+      session.status === 'authed' &&
+      isAuthRoute(route.path) &&
+      session.subscription !== undefined
+    ) {
+      // 认证路由分流（batch 3）：已订阅 → /today，未订阅 → /subscription。
+      // Waits for the subscription lookup so the destination is stable.
+      navigate(session.subscription.subscribed ? '/today' : '/subscription');
     }
   }, [session, route]);
+
+  function handleSubscriptionChange(next: SubscriptionStatus) {
+    setSession((current) =>
+      current.status === 'authed' ? { ...current, subscription: next } : current
+    );
+  }
 
   function handleLoginSuccess(token: string, user: AuthUser) {
     setSessionToken(token);
@@ -155,17 +212,51 @@ export function VocabApp() {
     );
   }
 
+  if (route.path === '/subscription') {
+    return (
+      <SubscriptionView onSubscriptionChange={handleSubscriptionChange} />
+    );
+  }
+
+  if (isAuthRoute(route.path)) {
+    // Authed user on an auth route while the subscription lookup is
+    // still in flight — the guard effect will 分流 as soon as it lands.
+    return (
+      <main className="auth-page">
+        <section className="auth-card">
+          <p className="auth-subtitle">
+            <Spinner /> 正在进入…
+          </p>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <>
-      <AccountArea user={session.user} onLogout={handleLogout} />
+      <AccountArea
+        user={session.user}
+        subscription={session.subscription}
+        onLogout={handleLogout}
+      />
       <App />
     </>
   );
 }
 
 // C-04 spec: a global account area pinned top-right of the app shell
-// with the signed-in email and 退出登录.
-function AccountArea({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
+// with the signed-in email, the subscription status row (C-10 挂账项,
+// badge 样式同订阅页) and 退出登录. ≤760px the panel becomes a
+// bottom sheet (偏差 D6 收口).
+function AccountArea({
+  user,
+  subscription,
+  onLogout
+}: {
+  user: AuthUser;
+  subscription?: SubscriptionStatus;
+  onLogout: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -202,8 +293,19 @@ function AccountArea({ user, onLogout }: { user: AuthUser; onLogout: () => void 
       </button>
       {open ? (
         <div className="account-menu-panel" role="menu" onClick={(event) => event.stopPropagation()}>
+          <span className="account-menu-handle" aria-hidden="true" />
           <p className="account-menu-email">{user.email}</p>
-          {user.isSuper ? <p className="account-menu-plan">super 账号</p> : null}
+          {user.isSuper ? (
+            <p className="account-menu-plan">super 账号</p>
+          ) : subscription !== undefined ? (
+            subscription.subscribed ? (
+              <p className="account-menu-plan">
+                <span className="subscription-badge">订阅高</span>
+              </p>
+            ) : (
+              <p className="account-menu-plan account-menu-plan-muted">未订阅</p>
+            )
+          ) : null}
           <button type="button" className="account-menu-logout" role="menuitem" onClick={onLogout}>
             退出登录
           </button>

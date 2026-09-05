@@ -458,3 +458,227 @@
     gap: 6px;
   }
 }
+
+
+
+/* ---------------------------------------------------------------------------
+   C-10: subscription page + account-menu subscription row + mobile
+   bottom-sheet drawer. All tokens reuse the section-1 baseline — no
+   new palette entries.
+--------------------------------------------------------------------------- */
+
+.subscription-card {
+  width: min(520px, calc(100% - 24px));
+}
+
+.subscription-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  min-width: 200px;
+  margin: 0;
+  padding: 20px 0 16px;
+  color: #2c2822;
+  line-height: 1;
+}
+
+.subscription-price-currency {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.subscription-price-integer {
+  font-size: 3.4rem;
+  font-weight: 800;
+}
+
+.subscription-price-fraction {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.subscription-price-period {
+  margin-left: 6px;
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: #6a6257;
+}
+
+.subscription-benefits {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.subscription-benefits li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  color: #4b463f;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.subscription-benefit-check {
+  flex: 0 0 auto;
+}
+
+.subscription-mock-note {
+  margin: 12px 0 0;
+  color: #8a8175;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+/* 已订阅状态卡 */
+.subscription-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(111, 139, 121, 0.14);
+  color: #6f8b79;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.subscription-expiry {
+  margin: 12px 0 20px;
+  color: #6a6257;
+  font-size: 0.95rem;
+}
+
+/* 已过期提示条（非模态浅条） */
+.subscription-expired-notice {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(154, 77, 69, 0.08);
+  color: #9a4d45;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* 加载骨架：价格行 120×48 + 权益区 3 行 80% 宽，600ms shimmer */
+.subscription-price-skeleton {
+  width: 120px;
+  height: 48px;
+  margin: 20px 0 16px;
+  border-radius: 8px;
+  background: rgba(110, 91, 68, 0.08);
+  animation: subscription-shimmer 600ms ease-in-out infinite alternate;
+}
+
+.subscription-benefits-skeleton {
+  width: 80%;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  margin: 0 0 24px;
+}
+
+.subscription-benefits-skeleton span {
+  display: block;
+  width: 80%;
+  height: 14px;
+  border-radius: 8px;
+  background: rgba(110, 91, 68, 0.08);
+  animation: subscription-shimmer 600ms ease-in-out infinite alternate;
+}
+
+@keyframes subscription-shimmer {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.55;
+  }
+}
+
+/* 拉取失败空态 */
+.subscription-empty {
+  margin: 8px 0 12px;
+  color: #6a6257;
+  font-size: 0.95rem;
+}
+
+.subscription-empty-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.subscription-retry {
+  width: auto;
+  min-width: 120px;
+}
+
+/* 「暂不订阅」ghost 链接：热区 44px */
+.subscription-skip-link {
+  margin-top: 16px;
+}
+
+/* ghost 按钮里的 spinner 落在浅底上，用深色描边（同 subtitle spinner） */
+.auth-ghost-cta .auth-spinner {
+  border-color: rgba(111, 139, 121, 0.35);
+  border-top-color: #6f8b79;
+}
+
+/* 账号菜单订阅状态行（badge 样式同订阅页） */
+.account-menu-plan-muted {
+  color: #8a8175;
+}
+
+/* 移动端账号菜单底部抽屉（偏差 D6 收口） */
+.account-menu-handle {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .subscription-card {
+    padding: 24px 20px;
+  }
+
+  .subscription-price-integer {
+    font-size: 2.8rem;
+  }
+
+  .subscription-benefits li {
+    text-align: left;
+    word-break: break-word;
+  }
+
+  .account-menu-panel {
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    min-width: 0;
+    border-radius: 14px 14px 0 0;
+    border-bottom: 0;
+    padding: 8px 16px 20px;
+    justify-items: stretch;
+  }
+
+  .account-menu-handle {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 4px auto 8px;
+    border-radius: 999px;
+    background: rgba(110, 91, 68, 0.25);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subscription-price-skeleton,
+  .subscription-benefits-skeleton span {
+    animation: none;
+  }
+}

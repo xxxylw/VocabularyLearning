@@ -28,6 +28,10 @@ BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 BREVO_SENDERS_URL = "https://api.brevo.com/v3/senders"
 REQUEST_TIMEOUT_SECONDS = 15
 SENDER_SELF_CHECK_TIMEOUT_SECONDS = 10
+# Batch 3 附带小修: the senders self-check sends this User-Agent because
+# Brevo's edge WAF rejects python-urllib's default signature with a 403
+# (a plain curl UA passes, so a custom identifying UA is enough).
+HTTP_USER_AGENT = "vocab-cloud/1.0"
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +136,14 @@ def verify_sender_configuration() -> None:
         return
     request = urllib.request.Request(
         BREVO_SENDERS_URL,
-        headers={"api-key": api_key, "accept": "application/json"},
+        # 附带小修 (batch 3): Brevo's edge WAF 403s python-urllib's
+        # default UA on this endpoint (a curl UA passes), so the
+        # self-check must identify itself with a custom User-Agent.
+        headers={
+            "api-key": api_key,
+            "accept": "application/json",
+            "User-Agent": HTTP_USER_AGENT,
+        },
         method="GET",
     )
     try:

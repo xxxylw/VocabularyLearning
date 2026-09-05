@@ -119,7 +119,9 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
     setIsResending(true);
     resendVerification(email)
       .then(() => {
-        showToast('已重新发送');
+        // C-05a spec: the resend voids the previous code server-side,
+        // so the toast must say so instead of a generic "已重新发送".
+        showToast('新验证码已发送，旧验证码已失效');
         cooldown.start(60);
       })
       .catch((error: unknown) => {
@@ -137,10 +139,10 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
   return (
     <AuthCard
       eyebrow="VOCABULARYLEARNING"
-      title="输入验证码"
+      title="查收你的验证邮件"
       subtitle={
         <>
-          验证码已发到{' '}
+          我们已把 6 位验证码发到{' '}
           <strong className="auth-email-echo">{email !== null && email !== '' ? email : '你的邮箱'}</strong>
           {email !== null && email !== '' && !isVerified ? (
             <>
@@ -158,7 +160,7 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
               </button>
             </>
           ) : null}
-          ，输入邮件中的 6 位数字验证码激活账号
+          ，在下方输入即可完成激活
         </>
       }
       icon={<EnvelopeIcon />}
@@ -210,12 +212,14 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
             disabled={cooldown.isCooling || isResending}
             onClick={() => handleResend()}
           >
-            没收到？重新发送
+            没收到？重发验证码
           </button>
         </>
       )}
 
-      <p className="auth-note">验证码 10 分钟内有效；错误 5 次后需重新获取</p>
+      <p className="auth-note">
+        验证码 10 分钟内有效；错误 5 次后需重新获取；没收到请检查垃圾邮件箱
+      </p>
       <Toast message={toastMessage} />
     </AuthCard>
   );

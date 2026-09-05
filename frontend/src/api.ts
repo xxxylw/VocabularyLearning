@@ -402,3 +402,82 @@ export function resetPassword(email: string, code: string, newPassword: string):
   // activation — {email, code, newPassword} — instead of a link token.
   return authJson<void>('POST', '/api/auth/reset-password', { email, code, newPassword });
 }
+
+// ---------------------------------------------------------------------------
+// v2 subscription API (cloud batch 3, C-09/C-10). Same authJson helper as
+// the auth endpoints so failures surface as structured ApiErrors. The
+// price lives ONLY in the backend plan payload (VOCAB_SUB_PRICE_CENTS)
+// — the UI renders it through formatPrice() and never hardcodes a
+// number into copy, so switching 0.1 → 4.99 is a config change.
+// ---------------------------------------------------------------------------
+
+export type SubscriptionPlan = {
+  plan: string;
+  priceCents: number;
+  currency: string;
+  period: string;
+};
+
+export type SubscriptionStatus = {
+  subscribed: boolean;
+  plan: string | null;
+  status: string | null;
+  startedAt: string | null;
+  expiresAt: string | null;
+  autoRenew: boolean | null;
+  source: string | null;
+};
+
+export function fetchSubscriptionPlan(): Promise<SubscriptionPlan> {
+  return authJson<SubscriptionPlan>('GET', '/api/subscription/plan');
+}
+
+export function fetchSubscriptionMe(): Promise<SubscriptionStatus> {
+  return authJson<SubscriptionStatus>('GET', '/api/subscription/me');
+}
+
+export function createMockOrder(): Promise<SubscriptionStatus> {
+  return authJson<SubscriptionStatus>('POST', '/api/subscription/mock-order');
+}
+
+export function cancelSubscription(): Promise<SubscriptionStatus> {
+  return authJson<SubscriptionStatus>('POST', '/api/subscription/cancel');
+}
+
+// C-10: price is data, not visuals. formatPrice turns the backend plan
+// object into display parts so the subscription card can typeset the
+// integer portion large and the fraction small — 0.1 → 4.99 changes
+// nothing here but the digits themselves.
+export type PriceParts = {
+  currencySymbol: string;
+  integer: string;
+  fraction: string;
+  periodLabel: string;
+};
+
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  CNY: '¥',
+  USD: '$',
+  EUR: '€'
+};
+
+const PERIOD_LABELS: Record<string, string> = {
+  month: '/ 月',
+  year: '/ 年',
+  week: '/ 周',
+  day: '/ 天'
+};
+
+export function formatPrice(plan: SubscriptionPlan): PriceParts {
+  const major = Math.floor(Math.abs(plan.priceCents) / 100);
+  const minor = Math.abs(plan.priceCents) % 100;
+  // 10 cents → ".1", 5 → ".05", 99 → ".99"; whole amounts drop the
+  // fraction entirely so the baseline alignment never renders ".00".
+  const minorText = minor === 0 ? '' : `.${String(minor).padStart(2, '0').replace(/0+$/, '')}`;
+  return {
+    currencySymbol: CURRENCY_SYMBOLS[plan.currency.toUpperCase()] ?? plan.currency,
+    integer: String(major),
+    fraction: minorText,
+    periodLabel: PERIOD_LABELS[plan.period] ?? `/ ${plan.period}`
+  };
+}

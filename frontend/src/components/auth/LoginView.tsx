@@ -101,7 +101,9 @@ export function LoginView({
     setResendError(null);
     resendVerification(email.trim())
       .then(() => {
-        showToast('已重新发送');
+        // C-05a spec copy (designer P2-② reuse): the resend voids the
+        // previous code server-side, so say so instead of 已重新发送.
+        showToast('新验证码已发送，旧验证码已失效');
         cooldown.start(60);
       })
       .catch(() => {

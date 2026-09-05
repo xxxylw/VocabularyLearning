@@ -4,11 +4,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import emailing
 from app.routes import health, router
 from app.routes_auth import router as auth_router
+from app.routes_subscription import router as subscription_router
 from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,23 @@ def create_app() -> FastAPI:
     # app.auth.require_user.
     app.include_router(router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
+    app.include_router(subscription_router, prefix="/api")
     app.get("/api/health")(health)
+
+    # C-01a designer walkthrough (P2 #5): activation emails sent before
+    # the code-based verification upgrade carried the path form
+    # /verify-email?token=… — with no matching FastAPI route that URL
+    # fell through to a bare 404 JSON (in packaged mode the static
+    # mount answers 404 for it too). 301 it to the hash form so the
+    # SPA's retired-link page explains the switch. Registered before the
+    # static mount so it always wins.
+    def legacy_verify_email_link(token: str = "") -> RedirectResponse:
+        target = "/#/verify-email"
+        if token:
+            target = f"{target}?token={token}"
+        return RedirectResponse(url=target, status_code=301)
+
+    app.get("/verify-email")(legacy_verify_email_link)
 
     # Mounted last so /api routes always win; html=True serves index.html
     # for the root path.

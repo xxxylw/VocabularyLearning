@@ -97,11 +97,39 @@ def register(request: RegisterRequest) -> RegisterResponse:
 
 
 def _delete_user(user_id: str) -> None:
+    """Roll a user back completely — P3 挂账 (batch 3): one transaction.
+
+    Register-failure rollback used to only clear sessions / email
+    tokens / users, which both left personal-layer rows dangling and
+    (with foreign keys on) would straight-up fail once the user had
+    any. All user-scoped tables — personal study layer, subscriptions,
+    sessions and email codes — are now deleted inside a single
+    ``with connect()`` block, i.e. one sqlite transaction: either the
+    account and everything it owns disappears, or nothing does.
+    """
+
     from app.db import connect
 
     with connect() as connection:
+        # Children first (FK order), the users row last.
+        connection.execute("delete from reviews where user_id = ?", (user_id,))
+        connection.execute("delete from cards where user_id = ?", (user_id,))
+        connection.execute(
+            "delete from today_queue where user_id = ?", (user_id,)
+        )
+        connection.execute(
+            "delete from today_queue_snapshots where user_id = ?", (user_id,)
+        )
+        connection.execute(
+            "delete from user_settings where user_id = ?", (user_id,)
+        )
+        connection.execute(
+            "delete from subscriptions where user_id = ?", (user_id,)
+        )
+        connection.execute(
+            "delete from email_tokens where user_id = ?", (user_id,)
+        )
         connection.execute("delete from sessions where user_id = ?", (user_id,))
-        connection.execute("delete from email_tokens where user_id = ?", (user_id,))
         connection.execute("delete from users where id = ?", (user_id,))
 
 
