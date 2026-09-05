@@ -123,6 +123,14 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
         // so the toast must say so instead of a generic "已重新发送".
         showToast('新验证码已发送，旧验证码已失效');
         cooldown.start(60);
+        // Walkthrough P2-a: whatever digits are sitting in the boxes
+        // belong to the now-voided code. Clearing them trips the
+        // CodeInput's non-empty → empty effect, which resets focus to
+        // box 1 so the user can start typing the fresh code right away.
+        if (code !== '') {
+          setCode('');
+          submittedCodeRef.current = null;
+        }
       })
       .catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 429) {

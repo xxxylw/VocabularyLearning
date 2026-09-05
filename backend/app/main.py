@@ -3,7 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -54,20 +54,36 @@ def create_app() -> FastAPI:
     app.include_router(subscription_router, prefix="/api")
     app.get("/api/health")(health)
 
-    # C-01a designer walkthrough (P2 #5): activation emails sent before
-    # the code-based verification upgrade carried the path form
-    # /verify-email?token=… — with no matching FastAPI route that URL
-    # fell through to a bare 404 JSON (in packaged mode the static
-    # mount answers 404 for it too). 301 it to the hash form so the
-    # SPA's retired-link page explains the switch. Registered before the
-    # static mount so it always wins.
-    def legacy_verify_email_link(token: str = "") -> RedirectResponse:
-        target = "/#/verify-email"
-        if token:
-            target = f"{target}?token={token}"
-        return RedirectResponse(url=target, status_code=301)
+    # C-01a designer walkthrough (P2 #5) + 订阅走查 P2-b: the SPA routes
+    # on the URL *hash*, so a path-form entry (/login, /verify-email?token=…,
+    # …) has no matching FastAPI route and falls through to a bare 404 JSON
+    # (in packaged mode the static mount answers 404 for it too — it only
+    # serves index.html for the root path). 301 every auth/subscription
+    # entry to its hash form, preserving the query string, so users typing
+    # the path by hand (or old emails carrying the path form) land in the
+    # SPA instead of a 404. Registered before the static mount so these
+    # routes always win.
+    spa_routes = (
+        "/login",
+        "/register",
+        "/check-email",
+        "/forgot-password",
+        "/reset-password",
+        "/verify-email",
+        "/subscription",
+    )
 
-    app.get("/verify-email")(legacy_verify_email_link)
+    def spa_path_redirect(spa_path: str):
+        def redirect(request: Request) -> RedirectResponse:
+            target = f"/#{spa_path}"
+            if request.url.query:
+                target = f"{target}?{request.url.query}"
+            return RedirectResponse(url=target, status_code=301)
+
+        return redirect
+
+    for spa_path in spa_routes:
+        app.get(spa_path)(spa_path_redirect(spa_path))
 
     # Mounted last so /api routes always win; html=True serves index.html
     # for the root path.

@@ -185,6 +185,39 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
     expect(resendCalls).toHaveLength(1);
   });
 
+  it('clears the boxes and refocuses box 1 after a successful resend (walkthrough P2-a)', async () => {
+    // The resend voids the old code server-side, so digits already
+    // typed into the boxes are stale: they must be cleared and the
+    // focus must return to box 1 for immediate retyping.
+    const fetchMock = vi.fn().mockImplementation(
+      (url: string) =>
+        url === '/api/auth/resend-verification'
+          ? Promise.resolve(ok({ ok: true }))
+          : Promise.resolve(ok({ verified: false }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CheckEmailView email="new@example.com" />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('验证码第 1 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 2 位'), '2');
+    await user.type(screen.getByLabelText('验证码第 3 位'), '3');
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await screen.findByText('可以重新发送了')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '没收到？重发验证码' }));
+    await vi.waitFor(() =>
+      expect(screen.getByText('新验证码已发送，旧验证码已失效')).toBeInTheDocument()
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('验证码第 1 位')).toHaveValue('');
+      expect(screen.getByLabelText('验证码第 3 位')).toHaveValue('');
+    });
+    expect(screen.getByLabelText('验证码第 1 位')).toHaveFocus();
+  });
+
   it('flips to the 已激活 badge when the status poll reports verified', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({ verified: true }));
     vi.stubGlobal('fetch', fetchMock);
