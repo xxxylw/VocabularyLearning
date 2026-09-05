@@ -7,7 +7,7 @@ import {
   logout,
   register,
   resetPassword,
-  verifyEmail
+  verifyEmailCode
 } from './api';
 import { setSessionToken } from './session';
 
@@ -139,28 +139,29 @@ describe('auth api', () => {
     expect((error as ApiError).message).toContain('502');
   });
 
-  it('verifies an email token via GET with an encoded query', async () => {
+  it('submits an email verification code via POST with email and code', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ email: 'a@example.com' }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await verifyEmail('abc/def+ghi');
+    await verifyEmailCode('a@example.com', '123456');
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/verify-email?token=abc%2Fdef%2Bghi', {
-      method: 'GET',
-      headers: {}
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'a@example.com', code: '123456' })
     });
   });
 
-  it('resets a password with token and newPassword in the body', async () => {
+  it('resets a password with email, code and newPassword in the body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await resetPassword('tok-1', 'new-secret-1');
+    await resetPassword('a@example.com', '654321', 'new-secret-1');
 
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'tok-1', newPassword: 'new-secret-1' })
+      body: JSON.stringify({ email: 'a@example.com', code: '654321', newPassword: 'new-secret-1' })
     });
   });
 });

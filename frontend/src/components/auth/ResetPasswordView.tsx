@@ -1,62 +1,46 @@
-import { useEffect, useState } from 'react';
-import { ApiError, fetchResetTokenInfo, resetPassword } from '../../api';
+import { useState } from 'react';
+import { ApiError, resetPassword } from '../../api';
 import { navigate } from '../../router';
 import {
   AuthCard,
+  CodeInput,
   PasswordField,
   Spinner,
   Toast,
+  isValidEmailFormat,
   isValidPassword,
   useFlash,
   PASSWORD_POLICY_HINT
 } from './shared';
 
 type ResetPasswordViewProps = {
-  token: string;
+  // ?email=… from the forgot-password hop; empty when the page is
+  // opened directly — the form then collects the address itself.
+  initialEmail?: string;
 };
 
-type TokenState =
-  | { status: 'checking' }
-  | { status: 'valid'; email: string }
-  | { status: 'invalid' };
-
-// C-05c: the landing page of the reset link from the email. The token
-// lives in the URL hash query (?token=…). We peek at it via
-// GET /api/auth/reset-token-info so the form can show which address the
-// new password is for; a 410 means expired/used → 重新申请 branch.
-export function ResetPasswordView({ token }: ResetPasswordViewProps) {
-  const [tokenState, setTokenState] = useState<TokenState>({ status: 'checking' });
+// C-05c + C-01a: the password-reset form. The emailed 6-digit code is
+// typed into the segmented input (auto-advance + paste); submitting
+// posts {email, code, newPassword} — there is no link token to peek at
+// anymore, so the page is fully self-contained.
+export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
+  const [email, setEmail] = useState(initialEmail ?? '');
+  const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<{ password?: string; confirm?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{
+    email?: string;
+    password?: string;
+    confirm?: string;
+  }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, showToast] = useFlash();
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchResetTokenInfo(token)
-      .then((info) => {
-        if (!cancelled) {
-          setTokenState({ status: 'valid', email: info.email });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setTokenState({ status: 'invalid' });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
+  const emailValid = isValidEmailFormat(email);
   const passwordsMatch = newPassword !== '' && newPassword === confirmPassword;
   const canSubmit =
-    tokenState.status === 'valid' &&
-    isValidPassword(newPassword) &&
-    passwordsMatch &&
-    !isSubmitting;
+    emailValid && code.length === 6 && isValidPassword(newPassword) && passwordsMatch && !isSubmitting;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,15 +50,15 @@ export function ResetPasswordView({ token }: ResetPasswordViewProps) {
     setFormError(null);
     setIsSubmitting(true);
     try {
-      await resetPassword(token, newPassword);
+      await resetPassword(email.trim(), code, newPassword);
       showToast('密码已重置');
-      const email = tokenState.status === 'valid' ? tokenState.email : '';
-      navigate(`/login?from=reset&email=${encodeURIComponent(email)}`);
+      navigate(`/login?from=reset&email=${encodeURIComponent(email.trim())}`);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 410) {
-        setTokenState({ status: 'invalid' });
-      } else if (error instanceof ApiError && error.status === 429) {
-        setFormError(error.message !== '' ? error.message : '发送过于频繁，请稍后再试');
+      if (error instanceof ApiError) {
+        setFormError(error.message !== '' ? error.message : '重置失败，请稍后重试');
+        // A rejected code (wrong / expired / exhausted) clears the boxes
+        // so the user retypes; the address and password fields stay.
+        setCode('');
       } else {
         setFormError('网络异常，请稍后重试');
       }
@@ -83,47 +67,49 @@ export function ResetPasswordView({ token }: ResetPasswordViewProps) {
     }
   }
 
-  if (tokenState.status === 'checking') {
-    return (
-      <AuthCard eyebrow="VOCABULARYLEARNING" title="设置新密码">
-        <p className="auth-subtitle">
-          <Spinner /> 正在校验链接…
-        </p>
-      </AuthCard>
-    );
-  }
-
-  if (tokenState.status === 'invalid') {
-    return (
-      <AuthCard eyebrow="VOCABULARYLEARNING" title="设置新密码" subtitle="这个重置链接已失效或已使用">
-        <p className="auth-inline-error auth-form-error" role="alert">
-          链接已失效或已使用
-        </p>
-        <button
-          className="auth-ghost-cta"
-          type="button"
-          onClick={() => navigate('/forgot-password')}
-        >
-          重新申请
-        </button>
-        <button className="auth-text-link" type="button" onClick={() => navigate('/login')}>
-          回登录
-        </button>
-      </AuthCard>
-    );
-  }
-
   return (
     <AuthCard
       eyebrow="VOCABULARYLEARNING"
       title="设置新密码"
-      subtitle={
-        <>
-          为 <strong className="auth-email-echo">{tokenState.email}</strong> 设置新密码
-        </>
-      }
+      subtitle="输入邮件中的 6 位数字验证码，并设置新密码"
     >
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
+        <div className="auth-field">
+          <label htmlFor="reset-email">邮箱</label>
+          <input
+            id="reset-email"
+            className={fieldErrors.email !== undefined ? 'auth-input has-error' : 'auth-input'}
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder="you@example.com"
+            value={email}
+            disabled={isSubmitting}
+            onChange={(event) => setEmail(event.target.value)}
+            onBlur={() =>
+              setFieldErrors((prev) => ({
+                ...prev,
+                email: email !== '' && !emailValid ? '邮箱格式不正确' : undefined
+              }))
+            }
+          />
+          {fieldErrors.email !== undefined ? (
+            <p className="auth-inline-error">{fieldErrors.email}</p>
+          ) : null}
+        </div>
+
+        <div className="auth-field">
+          <label htmlFor="reset-code-0">验证码</label>
+          <CodeInput
+            idPrefix="reset"
+            value={code}
+            onChange={(next) => setCode(next)}
+            disabled={isSubmitting}
+            hasError={formError !== null}
+          />
+          <p className="auth-field-hint">邮件中的 6 位数字验证码，10 分钟内有效</p>
+        </div>
+
         <div className="auth-field">
           <label htmlFor="reset-new-password">新密码</label>
           <PasswordField
@@ -190,8 +176,9 @@ export function ResetPasswordView({ token }: ResetPasswordViewProps) {
       </form>
 
       <p className="auth-switch">
-        <button className="auth-text-link" type="button" onClick={() => navigate('/login')}>
-          回登录
+        没收到验证码？
+        <button className="auth-text-link" type="button" onClick={() => navigate('/forgot-password')}>
+          重新获取
         </button>
       </p>
       <Toast message={toastMessage} />

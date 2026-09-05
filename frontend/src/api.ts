@@ -375,11 +375,11 @@ export function fetchCurrentUser(): Promise<AuthUser> {
   return authJson<AuthUser>('GET', '/api/auth/me');
 }
 
-export function verifyEmail(token: string): Promise<TokenEmail> {
-  return authJson<TokenEmail>(
-    'GET',
-    `/api/auth/verify-email?token=${encodeURIComponent(token)}`
-  );
+export function verifyEmailCode(email: string, code: string): Promise<TokenEmail> {
+  // C-01a: email activation moved from 1-hour links to a 6-digit code
+  // typed into the check-email page. The legacy GET entry point answers
+  // 410 link_disabled and is intentionally NOT wrapped here.
+  return authJson<TokenEmail>('POST', '/api/auth/verify-email', { email, code });
 }
 
 export function fetchEmailStatus(email: string): Promise<EmailStatus> {
@@ -397,13 +397,8 @@ export function requestPasswordReset(email: string): Promise<void> {
   return authJson<void>('POST', '/api/auth/forgot-password', { email });
 }
 
-export function fetchResetTokenInfo(token: string): Promise<TokenEmail> {
-  return authJson<TokenEmail>(
-    'GET',
-    `/api/auth/reset-token-info?token=${encodeURIComponent(token)}`
-  );
-}
-
-export function resetPassword(token: string, newPassword: string): Promise<void> {
-  return authJson<void>('POST', '/api/auth/reset-password', { token, newPassword });
+export function resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+  // C-01a: the reset flow uses the same 6-digit code semantics as
+  // activation — {email, code, newPassword} — instead of a link token.
+  return authJson<void>('POST', '/api/auth/reset-password', { email, code, newPassword });
 }

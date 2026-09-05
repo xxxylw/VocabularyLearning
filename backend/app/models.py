@@ -51,8 +51,16 @@ class EmailStatusResponse(BaseModel):
     verified: bool
 
 
+# C-01a: verification is submitted as email + 6-digit code (the code
+# arrives in the email body; no link is sent anymore).
+class VerifyEmailCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
 class ResetPasswordRequest(BaseModel):
-    token: str
+    email: str
+    code: str
     newPassword: str
 
 

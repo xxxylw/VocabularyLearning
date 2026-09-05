@@ -39,7 +39,10 @@ from fastapi import HTTPException, Request
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 SESSION_TTL_DAYS = 30
-EMAIL_TOKEN_TTL_SECONDS = 3600  # 1 hour, per the 2026-09-04 spec.
+# C-01a (2026-09-05 拍板): email verification moved from 1-hour links
+# to 6-digit codes — 10 minutes validity, voided after 5 wrong attempts.
+EMAIL_CODE_TTL_SECONDS = 600
+EMAIL_CODE_MAX_ATTEMPTS = 5
 
 # Resend throttling shared by register / resend-verification /
 # forgot-password (all Brevo-bound per the designer's C-05 spec):
@@ -97,16 +100,25 @@ class RateLimitedError(Exception):
         self.retry_after_seconds = retry_after_seconds
 
 
-class EmailTokenError(Exception):
-    """Raised when a verify/reset token is invalid, expired or used.
+class EmailCodeError(Exception):
+    """Raised when a 6-digit email code cannot be consumed (C-01a).
 
-    All three cases map to HTTP 410 per the v2 spec — the frontend
-    treats them uniformly as 「链接已失效或已使用」.
+    ``reason`` is one of:
+    - ``missing``      — no active code for this address+purpose
+                         (never requested, already used, or voided by
+                         a resend);
+    - ``expired``      — the active code is past its 10-minute TTL;
+    - ``max_attempts`` — the code was submitted wrongly 5 times and is
+                         now void;
+    - ``invalid``      — wrong code, attempts not yet exhausted. The
+                         exception carries ``remaining`` so the endpoint
+                         can tell the user how many tries are left.
     """
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, remaining: int | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.remaining = remaining
 
 
 def _now() -> datetime:
@@ -281,84 +293,131 @@ def revoke_all_sessions(user_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Email tokens (verify / reset)
+# Email verification codes (verify / reset) — C-01a
+#
+# The 2026-09-05 decision replaced 1-hour single-use links with 6-digit
+# numeric codes sent in the email body. Storage reuses the ``email_tokens``
+# table ("同一存储扩展承载" per the PM spec): ``token_hash`` holds a salted
+# scrypt hash of the code (never plaintext), the new ``attempts`` column
+# counts wrong submissions, and issuing a new code immediately voids any
+# previous active row for the same user+purpose — one mailbox has at most
+# one live code at a time.
 # ---------------------------------------------------------------------------
 
 
-def issue_email_token(user_id: str, purpose: str) -> str:
+def issue_email_code(user_id: str, purpose: str) -> str:
+    """Create a new 6-digit code, voiding any previous active one."""
+
     from app.db import connect
+
     if purpose not in ("verify_email", "reset_password"):
-        raise ValueError(f"unsupported email token purpose: {purpose}")
-    raw_token = secrets.token_urlsafe(32)
+        raise ValueError(f"unsupported email code purpose: {purpose}")
+    code = f"{secrets.randbelow(1_000_000):06d}"
     now = _now()
     with connect() as connection:
+        # 单一有效验证码: a resend must kill the old code immediately.
+        connection.execute(
+            """
+            update email_tokens set used_at = ?
+            where user_id = ? and purpose = ? and used_at is null
+            """,
+            (_iso(now), user_id, purpose),
+        )
         connection.execute(
             """
             insert into email_tokens (id, user_id, token_hash, purpose,
-                                      expires_at, used_at, created_at)
-            values (?, ?, ?, ?, ?, null, ?)
+                                      expires_at, used_at, created_at, attempts)
+            values (?, ?, ?, ?, ?, null, ?, 0)
             """,
             (
                 uuid.uuid4().hex,
                 user_id,
-                _hash_token(raw_token),
+                hash_password(code),  # salted scrypt — 库内无明文
                 purpose,
-                _iso(now + timedelta(seconds=EMAIL_TOKEN_TTL_SECONDS)),
+                _iso(now + timedelta(seconds=EMAIL_CODE_TTL_SECONDS)),
                 _iso(now),
             ),
         )
-    return raw_token
+    return code
 
 
-def consume_email_token(raw_token: str, purpose: str) -> dict[str, object]:
-    """Validate + burn an email token and return its user row."""
+def consume_email_code(
+    email: str, code: str, purpose: str
+) -> dict[str, object]:
+    """Validate a submitted code and burn it on success; return the user row.
 
-    from app.db import connect
-
-    now = _now()
-    with connect() as connection:
-        row = connection.execute(
-            "select * from email_tokens where token_hash = ? and purpose = ?",
-            (_hash_token(raw_token), purpose),
-        ).fetchone()
-        if row is None:
-            raise EmailTokenError("invalid")
-        record = dict(row)
-        if record["used_at"] is not None:
-            raise EmailTokenError("used")
-        if record["expires_at"] <= _iso(now):
-            raise EmailTokenError("expired")
-        connection.execute(
-            "update email_tokens set used_at = ? where id = ?",
-            (_iso(now), record["id"]),
-        )
-    user = find_user_by_id(str(record["user_id"]))
-    if user is None:
-        raise EmailTokenError("invalid")
-    return user
-
-
-def peek_email_token(raw_token: str, purpose: str) -> dict[str, object] | None:
-    """Return the user row behind a token without burning it.
-
-    Used by ``GET /api/auth/reset-token-info`` so the reset page can
-    render 「为 xxx@example.com 设置新密码」 before the user submits.
+    Semantics (C-01a):
+    - the newest active row (``used_at is null``) is THE live code;
+    - a submitted code that matches an older, already-voided row answers
+      ``missing`` (the code was superseded by a resend) instead of
+      silently burning attempts on the live one;
+    - wrong codes increment ``attempts`` on the live row and persist
+      even though we raise — the raise happens AFTER the ``with`` block
+      so sqlite's context manager commits, not rolls back.
     """
 
     from app.db import connect
 
+    user = find_user_by_email(email)
+    if user is None:
+        # Same error as "no code": never leak which addresses exist.
+        raise EmailCodeError("missing")
     now = _now()
+    window_start = _iso(now - timedelta(seconds=EMAIL_CODE_TTL_SECONDS))
+    error: EmailCodeError | None = None
     with connect() as connection:
-        row = connection.execute(
-            "select * from email_tokens where token_hash = ? and purpose = ?",
-            (_hash_token(raw_token), purpose),
-        ).fetchone()
-    if row is None:
-        return None
-    record = dict(row)
-    if record["used_at"] is not None or record["expires_at"] <= _iso(now):
-        return None
-    return find_user_by_id(str(record["user_id"]))
+        rows = connection.execute(
+            """
+            select * from email_tokens
+            where user_id = ? and purpose = ?
+              and created_at > ?
+            order by created_at desc
+            limit 20
+            """,
+            (str(user["id"]), purpose, window_start),
+        ).fetchall()
+        active = next((row for row in rows if row["used_at"] is None), None)
+        if active is None:
+            error = EmailCodeError("missing")
+        elif str(active["expires_at"]) <= _iso(now):
+            error = EmailCodeError("expired")
+        elif int(active["attempts"] or 0) >= EMAIL_CODE_MAX_ATTEMPTS:
+            error = EmailCodeError("max_attempts")
+        elif verify_password(code, str(active["token_hash"])):
+            connection.execute(
+                "update email_tokens set used_at = ? where id = ?",
+                (_iso(now), active["id"]),
+            )
+        else:
+            # Not the live code. If it matches a superseded row the user
+            # is typing an old email's code — tell them it's dead.
+            stale_match = any(
+                verify_password(code, str(row["token_hash"]))
+                for row in rows
+                if row["used_at"] is not None
+            )
+            if stale_match:
+                error = EmailCodeError("missing")
+            else:
+                attempts = int(active["attempts"] or 0) + 1
+                connection.execute(
+                    "update email_tokens set attempts = ? where id = ?",
+                    (attempts, active["id"]),
+                )
+                if attempts >= EMAIL_CODE_MAX_ATTEMPTS:
+                    # 第 5 次错误：作废该码，必须重新获取
+                    connection.execute(
+                        "update email_tokens set used_at = ? where id = ?",
+                        (_iso(now), active["id"]),
+                    )
+                    error = EmailCodeError("max_attempts")
+                else:
+                    error = EmailCodeError(
+                        "invalid", remaining=EMAIL_CODE_MAX_ATTEMPTS - attempts
+                    )
+    if error is not None:
+        raise error
+    return user
 
 
 # ---------------------------------------------------------------------------

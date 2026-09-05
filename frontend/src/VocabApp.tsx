@@ -127,15 +127,15 @@ export function VocabApp() {
         return (
           <CheckEmailView
             email={query.get('email')}
-            notice={query.get('from') === 'register' ? '账号已创建，去邮箱激活' : null}
+            notice={query.get('from') === 'register' ? '账号已创建，验证码已发送至你的邮箱' : null}
           />
         );
       case '/forgot-password':
         return <ForgotPasswordView initialEmail={query.get('email') ?? undefined} />;
       case '/reset-password':
-        return <ResetPasswordView token={query.get('token') ?? ''} />;
+        return <ResetPasswordView initialEmail={query.get('email') ?? undefined} />;
       case '/verify-email':
-        return <VerifyEmailView token={query.get('token') ?? ''} />;
+        return <VerifyEmailView email={query.get('email') ?? undefined} />;
       default:
         return null;
     }

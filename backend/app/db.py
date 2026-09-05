@@ -56,6 +56,21 @@ def migrate(connection: sqlite3.Connection) -> None:
         """
     )
 
+    # Verify/reset token table comment (C-05): 1h expiry, single use
+    # (used_at), stored hashed like sessions.
+    # C-01a (2026-09-05): the table now carries 6-digit email codes —
+    # token_hash holds a salted scrypt hash of the code and `attempts`
+    # counts wrong submissions. Legacy databases created before this
+    # change lack the column (CREATE TABLE IF NOT EXISTS is a no-op for
+    # them), so add it explicitly here.
+    token_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(email_tokens)")
+    }
+    if "attempts" not in token_columns:
+        connection.execute(
+            "ALTER TABLE email_tokens ADD COLUMN attempts integer not null default 0"
+        )
+
     # Default book (雅思词汇真经) + back-fill: idempotent on every connect.
     # INSERT OR IGNORE keeps the row stable; the UPDATE only touches rows
     # that were never assigned to a book.

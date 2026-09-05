@@ -41,6 +41,9 @@ class EmailNotConfiguredError(EmailError):
 
 
 def _public_base_url() -> str:
+    # C-01a: emails now carry a 6-digit code instead of links, so the
+    # public base URL is no longer embedded anywhere — kept for any
+    # future template that needs absolute URLs.
     return os.environ.get("VOCAB_PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
@@ -180,58 +183,56 @@ def _wrap(title: str, body_html: str) -> str:
   <h1 style="font-size:22px;margin:0 0 16px;color:#2c2822;">{title}</h1>
   {body_html}
   <p style="font-size:12px;color:#8a8175;margin-top:32px;">
-    这封邮件由 VocabularyLearning 发送，链接 1 小时内有效。
+    这封邮件由 VocabularyLearning 发送，验证码 10 分钟内有效。
+    请勿转发本邮件，以免验证码泄露。
   </p>
 </div>
 """
 
 
-def send_verification_email(to: str, token: str) -> None:
-    link = f"{_public_base_url()}/#/verify-email?token={token}"
+def _code_block(code: str) -> str:
+    return (
+        '<p style="margin:0 0 24px;font-size:32px;font-weight:800;'
+        'letter-spacing:.35em;color:#2c2822;'
+        'background:#f4f1ea;border-radius:8px;padding:18px 20px;'
+        'text-align:center;">' + code + "</p>"
+    )
+
+
+def send_verification_email(to: str, code: str) -> None:
     _send(
         to,
-        "激活你的 VocabularyLearning 账号",
+        "你的 VocabularyLearning 激活验证码",
         _wrap(
             "激活你的账号",
             f"""
             <p style="margin:0 0 20px;color:#6a6257;">
-              感谢注册。点击下面的链接激活账号（1 小时内有效）：
+              感谢注册。请在网站的验证码输入框中输入以下 6 位数字验证码
+              完成激活（10 分钟内有效）：
             </p>
-            <p style="margin:0 0 24px;">
-              <a href="{link}"
-                 style="display:inline-block;background:#6f8b79;color:#fffdf7;
-                        font-weight:800;padding:14px 18px;border-radius:8px;
-                        text-decoration:none;">激活账号</a>
-            </p>
+            {_code_block(code)}
             <p style="font-size:13px;color:#8a8175;margin:0;">
-              按钮无法点击时，请复制此链接到浏览器打开：<br>{link}
+              如果验证码已过期或输入错误次数过多，请回到页面重新获取。
             </p>
             """,
         ),
     )
 
 
-def send_password_reset_email(to: str, token: str) -> None:
-    link = f"{_public_base_url()}/#/reset-password?token={token}"
+def send_password_reset_email(to: str, code: str) -> None:
     _send(
         to,
-        "重置你的 VocabularyLearning 密码",
+        "你的 VocabularyLearning 密码重置验证码",
         _wrap(
             "重置密码",
             f"""
             <p style="margin:0 0 20px;color:#6a6257;">
-              我们收到了重置密码的请求。点击下面的链接设置新密码
-              （1 小时内有效，仅可使用一次）：
+              我们收到了重置密码的请求。请在网站的重置页面输入以下
+              6 位数字验证码并设置新密码（10 分钟内有效）：
             </p>
-            <p style="margin:0 0 24px;">
-              <a href="{link}"
-                 style="display:inline-block;background:#6f8b79;color:#fffdf7;
-                        font-weight:800;padding:14px 18px;border-radius:8px;
-                        text-decoration:none;">设置新密码</a>
-            </p>
+            {_code_block(code)}
             <p style="font-size:13px;color:#8a8175;margin:0;">
-              如果这不是你的操作，请忽略本邮件，密码不会变化。<br>
-              按钮无法点击时，请复制此链接到浏览器打开：<br>{link}
+              如果这不是你的操作，请忽略本邮件，密码不会变化。
             </p>
             """,
         ),

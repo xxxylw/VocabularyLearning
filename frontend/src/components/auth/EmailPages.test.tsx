@@ -15,7 +15,15 @@ function ok(body: unknown, status = 200) {
   };
 }
 
-describe('CheckEmailView (C-05a)', () => {
+function pasteEvent(text: string) {
+  return {
+    clipboardData: {
+      getData: () => text
+    }
+  };
+}
+
+describe('CheckEmailView (C-05a + C-01a code flow)', () => {
   beforeEach(() => {
     window.location.hash = '';
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -26,22 +34,27 @@ describe('CheckEmailView (C-05a)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('echoes the email from the route and starts the 60s cooldown', () => {
+  it('echoes the email, renders six code boxes, and starts the 60s cooldown', () => {
     vi.stubGlobal('fetch', vi.fn());
     render(<CheckEmailView email="new@example.com" />);
 
-    expect(screen.getByText('查收你的验证邮件')).toBeInTheDocument();
+    expect(screen.getByText('输入验证码')).toBeInTheDocument();
     expect(screen.getByText('new@example.com')).toBeInTheDocument();
     expect(screen.getByText('60s 后可重新发送')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '没收到？重发邮件' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '打开邮箱' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '没收到？重新发送' })).toBeDisabled();
+    for (let index = 1; index <= 6; index += 1) {
+      expect(screen.getByLabelText(`验证码第 ${index} 位`)).toBeInTheDocument();
+    }
+    // C-01a: the 打开邮箱 hand-off is gone from the check-email page.
+    expect(screen.queryByRole('button', { name: '打开邮箱' })).not.toBeInTheDocument();
+    expect(screen.getByText('验证码 10 分钟内有效；错误 5 次后需重新获取')).toBeInTheDocument();
   });
 
   it('shows the from=register success banner on the landing page', () => {
     vi.stubGlobal('fetch', vi.fn());
-    render(<CheckEmailView email="new@example.com" notice="账号已创建，去邮箱激活" />);
+    render(<CheckEmailView email="new@example.com" notice="账号已创建，验证码已发送至你的邮箱" />);
 
-    expect(screen.getByText('账号已创建，去邮箱激活')).toBeInTheDocument();
+    expect(screen.getByText('账号已创建，验证码已发送至你的邮箱')).toBeInTheDocument();
   });
 
   it('returns to /register with the email prefilled from 修改邮箱', () => {
@@ -52,6 +65,67 @@ describe('CheckEmailView (C-05a)', () => {
     expect(window.location.hash).toBe('#/register?email=new%40example.com');
   });
 
+  it('auto-submits the code once all six digits are typed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ email: 'new@example.com' }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CheckEmailView email="new@example.com" />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('验证码第 1 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 2 位'), '2');
+    await user.type(screen.getByLabelText('验证码第 3 位'), '3');
+    await user.type(screen.getByLabelText('验证码第 4 位'), '4');
+    await user.type(screen.getByLabelText('验证码第 5 位'), '5');
+    await user.type(screen.getByLabelText('验证码第 6 位'), '6');
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'new@example.com', code: '123456' })
+      })
+    );
+    expect(await screen.findByText('已激活')).toBeInTheDocument();
+  });
+
+  it('supports pasting a code (digits extracted) into the boxes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ email: 'new@example.com' }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CheckEmailView email="new@example.com" />);
+
+    fireEvent.paste(screen.getByLabelText('验证码第 1 位'), pasteEvent('验证码：654321'));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'new@example.com', code: '654321' })
+      })
+    );
+  });
+
+  it('shows the backend error message and clears the boxes on a rejected code', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      ok({ detail: { code: 'code_invalid', message: '验证码错误，还可尝试 4 次' } }, 400)
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CheckEmailView email="new@example.com" />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('验证码第 1 位'), '9');
+    await user.type(screen.getByLabelText('验证码第 2 位'), '9');
+    await user.type(screen.getByLabelText('验证码第 3 位'), '9');
+    await user.type(screen.getByLabelText('验证码第 4 位'), '9');
+    await user.type(screen.getByLabelText('验证码第 5 位'), '9');
+    await user.type(screen.getByLabelText('验证码第 6 位'), '9');
+
+    expect(await screen.findByText('验证码错误，还可尝试 4 次')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('验证码第 1 位')).toHaveValue('');
+      expect(screen.getByLabelText('验证码第 6 位')).toHaveValue('');
+    });
+  });
+
   it('sends a resend after the cooldown elapses and restarts it', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);
@@ -60,7 +134,7 @@ describe('CheckEmailView (C-05a)', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await screen.findByText('可以重新发送了')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '没收到？重发邮件' }));
+    fireEvent.click(screen.getByRole('button', { name: '没收到？重新发送' }));
     await vi.waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/resend-verification', {
         method: 'POST',
@@ -85,7 +159,7 @@ describe('CheckEmailView (C-05a)', () => {
   });
 });
 
-describe('ForgotPasswordView (C-05b)', () => {
+describe('ForgotPasswordView (C-05b + C-01a code flow)', () => {
   beforeEach(() => {
     window.location.hash = '';
   });
@@ -94,40 +168,42 @@ describe('ForgotPasswordView (C-05b)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('requests a reset email and switches to the sent state', async () => {
+  it('requests a code and hops to /reset-password with the email prefilled', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockResolvedValue(ok({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<ForgotPasswordView />);
     await user.type(screen.getByLabelText('邮箱'), 'user@example.com');
-    await user.click(screen.getByRole('button', { name: '发送重置邮件' }));
+    await user.click(screen.getByRole('button', { name: '发送验证码' }));
 
-    expect(await screen.findByText('查收你的重置邮件')).toBeInTheDocument();
-    expect(screen.getByText('user@example.com')).toBeInTheDocument();
-    expect(screen.getByText('链接 1 小时内有效，仅可使用一次')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/forgot-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'user@example.com' })
     });
+    await waitFor(() =>
+      expect(window.location.hash).toBe('#/reset-password?email=user%40example.com')
+    );
+    // No intermediate sent-state page, no 打开邮箱 hand-off.
+    expect(screen.queryByText('查收你的重置邮件')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开邮箱' })).not.toBeInTheDocument();
   });
 
-  it('links back to login from the sent state', async () => {
+  it('links back to login', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ ok: true })));
 
     render(<ForgotPasswordView />);
     await user.type(screen.getByLabelText('邮箱'), 'user@example.com');
-    await user.click(screen.getByRole('button', { name: '发送重置邮件' }));
-    await screen.findByText('查收你的重置邮件');
+    await user.click(screen.getByRole('button', { name: '发送验证码' }));
 
     await user.click(screen.getByRole('button', { name: '回登录' }));
     expect(window.location.hash).toBe('#/login');
   });
 });
 
-describe('ResetPasswordView (C-05c)', () => {
+describe('ResetPasswordView (C-05c + C-01a code flow)', () => {
   beforeEach(() => {
     window.location.hash = '';
   });
@@ -136,20 +212,24 @@ describe('ResetPasswordView (C-05c)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows which account the token belongs to and resets the password', async () => {
+  it('resets the password with email + code + newPassword', async () => {
     const user = userEvent.setup();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(ok({ email: 'user@example.com' }))
-      .mockResolvedValueOnce(ok({ ok: true }));
+    const fetchMock = vi.fn().mockResolvedValue(ok({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<ResetPasswordView token="tok-1" />);
-    expect(await screen.findByText('user@example.com')).toBeInTheDocument();
+    render(<ResetPasswordView initialEmail="user@example.com" />);
+    expect(screen.getByDisplayValue('user@example.com')).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText('新密码'), 'brand-new-pass1');
-    await user.type(screen.getByLabelText('确认新密码'), 'brand-new-pass1');
-    await user.click(screen.getByRole('button', { name: '重置密码' }));
+    const user2 = userEvent.setup();
+    await user2.type(screen.getByLabelText('验证码第 1 位'), '2');
+    await user2.type(screen.getByLabelText('验证码第 2 位'), '4');
+    await user2.type(screen.getByLabelText('验证码第 3 位'), '6');
+    await user2.type(screen.getByLabelText('验证码第 4 位'), '8');
+    await user2.type(screen.getByLabelText('验证码第 5 位'), '1');
+    await user2.type(screen.getByLabelText('验证码第 6 位'), '0');
+    await user2.type(screen.getByLabelText('新密码'), 'brand-new-pass1');
+    await user2.type(screen.getByLabelText('确认新密码'), 'brand-new-pass1');
+    await user2.click(screen.getByRole('button', { name: '重置密码' }));
 
     await waitFor(() =>
       expect(window.location.hash).toBe('#/login?from=reset&email=user%40example.com')
@@ -157,28 +237,43 @@ describe('ResetPasswordView (C-05c)', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'tok-1', newPassword: 'brand-new-pass1' })
+      body: JSON.stringify({
+        email: 'user@example.com',
+        code: '246810',
+        newPassword: 'brand-new-pass1'
+      })
     });
   });
 
-  it('falls into the 链接已失效 branch when the token is rejected (410)', async () => {
+  it('shows the backend error and clears the code when the code is rejected', async () => {
     const user = userEvent.setup();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        ok({ detail: { code: 'token_invalid', message: '链接已失效或已使用' } }, 410)
-      )
+    const fetchMock = vi.fn().mockResolvedValue(
+      ok({ detail: { code: 'code_max_attempts', message: '验证码错误次数过多已作废，请重新获取' } }, 410)
     );
+    vi.stubGlobal('fetch', fetchMock);
 
-    render(<ResetPasswordView token="expired" />);
-    expect(await screen.findByText('链接已失效或已使用')).toBeInTheDocument();
+    render(<ResetPasswordView initialEmail="user@example.com" />);
+    await user.type(screen.getByLabelText('验证码第 1 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 2 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 3 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 4 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 5 位'), '1');
+    await user.type(screen.getByLabelText('验证码第 6 位'), '1');
+    await user.type(screen.getByLabelText('新密码'), 'brand-new-pass1');
+    await user.type(screen.getByLabelText('确认新密码'), 'brand-new-pass1');
+    await user.click(screen.getByRole('button', { name: '重置密码' }));
 
-    await user.click(screen.getByRole('button', { name: '重新申请' }));
+    expect(await screen.findByText('验证码错误次数过多已作废，请重新获取')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('验证码第 1 位')).toHaveValue('');
+    });
+
+    await user.click(screen.getByRole('button', { name: '重新获取' }));
     expect(window.location.hash).toBe('#/forgot-password');
   });
 });
 
-describe('VerifyEmailView', () => {
+describe('VerifyEmailView (C-01a legacy links)', () => {
   beforeEach(() => {
     window.location.hash = '';
   });
@@ -187,33 +282,26 @@ describe('VerifyEmailView', () => {
     vi.unstubAllGlobals();
   });
 
-  it('consumes the token and bounces to /login with the email prefilled', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const fetchMock = vi.fn().mockResolvedValue(ok({ email: 'user@example.com' }));
+  it('renders the link-disabled notice without any network call', () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<VerifyEmailView token="tok-1" />);
-    expect(await screen.findByText('邮箱已激活')).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/verify-email?token=tok-1', {
-      method: 'GET',
-      headers: {}
-    });
+    render(<VerifyEmailView />);
 
-    await vi.advanceTimersByTimeAsync(1_300);
-    expect(window.location.hash).toBe('#/login?from=verify&email=user%40example.com');
-    vi.useRealTimers();
+    expect(screen.getByText('链接式验证已停用')).toBeInTheDocument();
+    expect(
+      screen.getByText('激活链接已停用，请使用邮件中的 6 位数字验证码')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '去登录' })).toBeEnabled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('shows the invalid-link state on 410', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        ok({ detail: { code: 'token_invalid', message: '链接已失效或已使用' } }, 410)
-      )
-    );
+  it('routes to the code entry page when the email is known', () => {
+    vi.stubGlobal('fetch', vi.fn());
 
-    render(<VerifyEmailView token="stale" />);
-    expect(await screen.findByText('链接已失效或已使用')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '去登录' })).toBeEnabled();
+    render(<VerifyEmailView email="user@example.com" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '去输入验证码' }));
+    expect(window.location.hash).toBe('#/check-email?email=user%40example.com');
   });
 });

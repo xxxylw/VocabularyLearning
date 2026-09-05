@@ -211,7 +211,10 @@ CREATE TABLE IF NOT EXISTS email_tokens (
     purpose text not null check (purpose in ('verify_email', 'reset_password')),
     expires_at text not null,
     used_at text null,
-    created_at text not null
+    created_at text not null,
+    -- C-01a: wrong-submission counter for the 6-digit code scheme
+    -- (5 wrong attempts void the code). Legacy link-era rows read as 0.
+    attempts integer not null default 0
 );
 
 -- Per-user settings (C-05): current_book_id moved out of the global

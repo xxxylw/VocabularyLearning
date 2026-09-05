@@ -250,13 +250,116 @@ function EyeOffIcon() {
   );
 }
 
-// C-05 spec: the "打开邮箱" CTA hands off to the OS default mail client
-// without embedding a specific provider.
-export function openMailClient(): void {
-  try {
-    window.location.href = 'mailto:';
-  } catch {
-    // jsdom / exotic environments — the surrounding UI still tells the
-    // user to open their mailbox manually.
+// C-05 spec (retired by C-01a): the "打开邮箱" CTA was removed together
+// with the mailto: hand-off — the check-email page now hosts the 6-digit
+// code input itself, so there is nothing to hand off to.
+
+// ---------------------------------------------------------------------------
+// C-01a: the 6-digit email verification code input.
+//
+// Six single-character boxes with auto-advance, paste support (any
+// pasted text keeps only its digits), and keyboard navigation. The
+// component is fully controlled via a contiguous digit string — box i
+// shows value[i], the parent owns submission.
+// ---------------------------------------------------------------------------
+
+export const EMAIL_CODE_LENGTH = 6;
+
+export function CodeInput({
+  idPrefix,
+  value,
+  onChange,
+  disabled,
+  hasError
+}: {
+  idPrefix: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+  hasError?: boolean;
+}) {
+  const refs = useRef<Array<HTMLInputElement | null>>([]);
+
+  function focusBox(index: number) {
+    refs.current[Math.min(Math.max(index, 0), EMAIL_CODE_LENGTH - 1)]?.focus();
   }
+
+  function handleBoxChange(index: number, raw: string) {
+    const cleaned = raw.replace(/\D/g, '');
+    if (cleaned === '') {
+      // The box was cleared (Backspace/Delete on its own digit): drop
+      // that digit, keeping the remaining ones contiguous.
+      onChange(value.slice(0, index) + value.slice(index + 1));
+      return;
+    }
+    const digit = cleaned.slice(-1);
+    if (index < value.length) {
+      // Overwrite the digit that already sits in this box.
+      onChange(value.slice(0, index) + digit + value.slice(index + 1));
+      focusBox(index + 1);
+    } else {
+      // Typing ahead of the filled prefix appends at the end.
+      const next = (value + digit).slice(0, EMAIL_CODE_LENGTH);
+      onChange(next);
+      focusBox(next.length);
+    }
+  }
+
+  function handleKeyDown(index: number, event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Backspace' && value[index] === undefined) {
+      // Backspace on an empty box clears the previous one and moves
+      // the caret there, the way OTP inputs behave.
+      event.preventDefault();
+      if (index > 0) {
+        onChange(value.slice(0, index - 1));
+        focusBox(index - 1);
+      }
+    }
+    if (event.key === 'ArrowLeft' && index > 0) {
+      event.preventDefault();
+      focusBox(index - 1);
+    }
+    if (event.key === 'ArrowRight' && index < EMAIL_CODE_LENGTH - 1) {
+      event.preventDefault();
+      focusBox(index + 1);
+    }
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLInputElement>) {
+    event.preventDefault();
+    const text = event.clipboardData.getData('text');
+    const digits = text.replace(/\D/g, '').slice(0, EMAIL_CODE_LENGTH);
+    if (digits === '') {
+      return;
+    }
+    onChange(digits);
+    focusBox(digits.length);
+  }
+
+  return (
+    <div className={hasError ? 'auth-code-input has-error' : 'auth-code-input'}>
+      {Array.from({ length: EMAIL_CODE_LENGTH }, (_, index) => (
+        <input
+          key={`${idPrefix}-code-${index}`}
+          ref={(element) => {
+            refs.current[index] = element;
+          }}
+          id={`${idPrefix}-code-${index}`}
+          className="auth-code-box"
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={1}
+          value={value[index] ?? ''}
+          disabled={disabled}
+          autoFocus={index === 0}
+          aria-label={`验证码第 ${index + 1} 位`}
+          onChange={(event) => handleBoxChange(index, event.target.value)}
+          onKeyDown={(event) => handleKeyDown(index, event)}
+          onPaste={handlePaste}
+          onFocus={(event) => event.target.select()}
+        />
+      ))}
+    </div>
+  );
 }

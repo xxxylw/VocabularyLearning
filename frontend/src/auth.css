@@ -404,3 +404,57 @@
     animation: none;
   }
 }
+
+
+/* C-01a: the 6-digit email-code segmented input. Same visual tokens as
+   the auth inputs (8px radii, #486f83 focus ring), centered, with a
+   has-error variant for rejected codes. */
+.auth-code-input {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.auth-code-box {
+  width: 48px;
+  height: 56px;
+  border: 1px solid rgba(64, 58, 49, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.72);
+  color: #2f2a24;
+  font-size: 1.4rem;
+  font-weight: 800;
+  text-align: center;
+  caret-color: #486f83;
+}
+
+.auth-code-box:focus {
+  outline: none;
+  border-color: #486f83;
+  box-shadow: 0 0 0 3px rgba(72, 111, 131, 0.18);
+}
+
+.auth-code-box:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.auth-code-input.has-error .auth-code-box {
+  border-color: #b3563f;
+}
+
+.auth-code-input.has-error .auth-code-box:focus {
+  box-shadow: 0 0 0 3px rgba(179, 86, 63, 0.18);
+}
+
+@media (max-width: 420px) {
+  .auth-code-box {
+    width: 42px;
+    gap: 6px;
+  }
+
+  .auth-code-input {
+    gap: 6px;
+  }
+}
