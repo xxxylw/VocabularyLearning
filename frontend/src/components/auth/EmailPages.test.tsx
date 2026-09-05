@@ -145,6 +145,37 @@ describe('CheckEmailView (C-05a + C-01a code flow)', () => {
     await vi.waitFor(() => expect(screen.getByText('已重新发送')).toBeInTheDocument());
   });
 
+  it('ignores a double click on resend while a resend is in flight (QA C-01a)', async () => {
+    // In-flight guard: a slow resend request + a double click must
+    // still produce exactly ONE /api/auth/resend-verification call.
+    const fetchMock = vi.fn().mockImplementation(
+      (url: string) =>
+        url === '/api/auth/resend-verification'
+          ? new Promise((resolve) => {
+              setTimeout(() => resolve(ok({ ok: true })), 50);
+            })
+          : Promise.resolve(ok({ verified: false }))
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CheckEmailView email="new@example.com" />);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await screen.findByText('可以重新发送了')).toBeInTheDocument();
+
+    const button = screen.getByRole('button', { name: '没收到？重新发送' });
+    fireEvent.click(button);
+    // The guard must disable the button while the request is in flight.
+    expect(button).toBeDisabled();
+    fireEvent.click(button); // double click — must be swallowed
+
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.waitFor(() => expect(screen.getByText('已重新发送')).toBeInTheDocument());
+    const resendCalls = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/auth/resend-verification'
+    );
+    expect(resendCalls).toHaveLength(1);
+  });
+
   it('flips to the 已激活 badge when the status poll reports verified', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({ verified: true }));
     vi.stubGlobal('fetch', fetchMock);

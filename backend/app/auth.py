@@ -353,7 +353,11 @@ def consume_email_code(
       silently burning attempts on the live one;
     - wrong codes increment ``attempts`` on the live row and persist
       even though we raise — the raise happens AFTER the ``with`` block
-      so sqlite's context manager commits, not rolls back.
+      so sqlite's context manager commits, not rolls back;
+    - the read-check-write sequence runs inside BEGIN IMMEDIATE so two
+      concurrent wrong submissions cannot both read the same ``attempts``
+      value and lose one increment (QA C-01a finding; same pattern as
+      services.review_card / QA F-01).
     """
 
     from app.db import connect
@@ -366,6 +370,12 @@ def consume_email_code(
     window_start = _iso(now - timedelta(seconds=EMAIL_CODE_TTL_SECONDS))
     error: EmailCodeError | None = None
     with connect() as connection:
+        # BEGIN IMMEDIATE acquires the sqlite write lock up front so the
+        # select → attempts check → update sequence below cannot race a
+        # concurrent wrong submission of the same code (QA C-01a
+        # finding): without it two threads can both read attempts=0 and
+        # both write attempts=1, losing one burned attempt.
+        connection.execute("BEGIN IMMEDIATE")
         rows = connection.execute(
             """
             select * from email_tokens

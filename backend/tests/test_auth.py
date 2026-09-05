@@ -373,6 +373,69 @@ def test_verify_email_unknown_email_is_missing(cloud_env, email_spy):
     assert response.json()["detail"]["code"] == "code_missing"
 
 
+def test_concurrent_wrong_codes_burn_both_attempts(cloud_env, email_spy):
+    """QA C-01a regression (P2): two concurrent wrong submissions must
+    BOTH count. Without BEGIN IMMEDIATE around the select→check→update
+    sequence in ``consume_email_code`` the two threads race, both read
+    attempts=0, and both write attempts=1 — a lost update. With the write
+    lock the final value is 2."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app import auth as auth_module
+    from app.db import connect
+
+    client = _client()
+    client.post(
+        "/api/auth/register",
+        json={"email": "race@example.com", "password": "goodpass1"},
+    )
+    code = email_spy.last_verify_code
+    assert code is not None
+    wrong = "000000" if code != "000000" else "111111"
+
+    def submit_wrong() -> None:
+        try:
+            auth_module.consume_email_code("race@example.com", wrong, "verify_email")
+        except auth_module.EmailCodeError:
+            pass  # the expected outcome; the assertion is on attempts
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(submit_wrong) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=30)
+
+    with connect() as conn:
+        row = conn.execute(
+            "select attempts from email_tokens where used_at is null"
+        ).fetchone()
+    assert row is not None, "the live code row must survive 2 wrong attempts"
+    assert int(row["attempts"]) == 2, (
+        "concurrent wrong submissions lost an increment — check the "
+        "BEGIN IMMEDIATE write lock in consume_email_code"
+    )
+
+
+def test_verify_email_normalizes_email_case(cloud_env, email_spy):
+    """QA C-01a regression (P3): the code-submission path must treat
+    Mixed@Case.com and mixed@case.com as the same account
+    (normalize_email) — register with mixed case, verify lowercase."""
+
+    client = _client()
+    register = client.post(
+        "/api/auth/register",
+        json={"email": "Mixed@Case.com", "password": "goodpass1"},
+    )
+    assert register.status_code == 201, register.text
+    assert register.json()["email"] == "mixed@case.com"
+    code = email_spy.last_verify_code
+    assert code is not None
+
+    response = _submit_verify_code(client, "mixed@case.com", code)
+    assert response.status_code == 200, response.text
+    assert response.json()["email"] == "mixed@case.com"
+
+
 def test_resend_voids_previous_code(cloud_env, email_spy, monkeypatch):
     """Single active code: a resend instantly kills the older code."""
 

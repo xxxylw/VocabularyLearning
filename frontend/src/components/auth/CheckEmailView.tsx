@@ -30,6 +30,7 @@ const VERIFIED_REDIRECT_DELAY_MS = 5000;
 export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
   const [code, setCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResending, setIsResending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isVerified, setIsVerified] = useState(false);
   const [toastMessage, showToast] = useFlash();
@@ -109,10 +110,13 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
   }, [code, email, isVerified]);
 
   function handleResend() {
-    if (email === null || email === '' || cooldown.isCooling || isSubmitting) {
+    // In-flight guard (QA C-01a finding): without it a double click
+    // fires two resend requests and two success toasts.
+    if (email === null || email === '' || cooldown.isCooling || isSubmitting || isResending) {
       return;
     }
     setSubmitError(null);
+    setIsResending(true);
     resendVerification(email)
       .then(() => {
         showToast('已重新发送');
@@ -124,6 +128,9 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
         } else {
           setSubmitError('重发失败，请稍后再试');
         }
+      })
+      .finally(() => {
+        setIsResending(false);
       });
   }
 
@@ -200,7 +207,7 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
           <button
             className="auth-ghost-cta"
             type="button"
-            disabled={cooldown.isCooling}
+            disabled={cooldown.isCooling || isResending}
             onClick={() => handleResend()}
           >
             没收到？重新发送
