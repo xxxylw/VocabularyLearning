@@ -195,6 +195,14 @@ def create_user(
                 now,
             ),
         )
+        if not is_super:
+            # V3-01: the 7-day trial row is written INSIDE the register
+            # transaction — a failure rolls the whole registration back
+            # (不允许「有账号无试用行」的中间态). super accounts never get
+            # a trial row. Lazy import keeps module load order clean.
+            from app.subscription import insert_trial_row
+
+            insert_trial_row(connection, user_id, now)
     return {"id": user_id, "email": normalize_email(email)}
 
 

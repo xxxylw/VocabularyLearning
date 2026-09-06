@@ -1424,3 +1424,56 @@ a {
     flex-direction: column;
   }
 }
+
+/* ---------------------------------------------------------------------------
+v3 P0（2026-09-06）：只读模式非模态引导条 + Today 锁定态（V3-01）。
+--------------------------------------------------------------------------- */
+
+.readonly-notice {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(154, 77, 69, 0.08);
+  border-bottom: 1px solid rgba(154, 77, 69, 0.15);
+  color: #9a4d45;
+  font-size: 0.88rem;
+}
+
+.readonly-notice-lock {
+  display: inline-flex;
+}
+
+.readonly-notice-text {
+  margin: 0;
+}
+
+.readonly-notice-cta {
+  padding: 4px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #9a4d45;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.today-locked strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8b8172;
+}
+
+.today-locked-lock {
+  display: inline-flex;
+}
+
+.today-locked-cta {
+  background: #8b8172;
+}

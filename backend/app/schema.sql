@@ -231,6 +231,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
 -- Subscriptions (C-09 data model, batch 2 schema / batch 3 endpoints):
 -- independent table, price is configuration-driven, ``source`` marks
 -- mock orders so real payment channels can be told apart later.
+-- v3 (V3-01/V3-08): source extends to trial / alipay / wechat / mock /
+-- super-synthesized; status 启用 trialing. Legacy databases gain the
+-- remark / order_no columns via ALTER in app.db.migrate (they are
+-- audit/linkage only — the read path keeps answering from the latest
+-- row's status + expires_at, unchanged).
 CREATE TABLE IF NOT EXISTS subscriptions (
     id text primary key,
     user_id text not null references users(id),
@@ -242,8 +247,46 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     started_at text not null,
     expires_at text not null,
     auto_renew integer not null default 0,
+    remark text null,
+    order_no text null,
     created_at text not null,
     updated_at text not null
+);
+
+-- v3 (V3-03/V3-08): payment orders. One row per 下单 attempt; the
+-- payable amount is snapshotted at creation (backend 按订阅快照计算应
+-- 收金额写入 orders) and the callback MUST match it before the order
+-- is confirmed (金额不符不确认入账). status: pending → paid / closed
+-- (收银台 15 分钟超时自动关单 / 用户取消支付) / failed (网关下单失败).
+CREATE TABLE IF NOT EXISTS orders (
+    id text primary key,
+    out_trade_no text not null unique,
+    user_id text not null references users(id),
+    plan text not null,
+    amount_cents integer not null,
+    currency text not null default 'CNY',
+    status text not null check (status in ('pending', 'paid', 'closed', 'failed')),
+    channel text not null default 'xunhupay',
+    pay_url text null,
+    pay_qr_url text null,
+    transaction_id text null,
+    created_at text not null,
+    updated_at text not null,
+    paid_at text null
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_user_created
+ON orders (user_id, created_at);
+
+-- v3 (V3-03): payment callback archive — every notify payload is
+-- stored verbatim (原始报文留档) with the processing result, for
+-- troubleshooting and reconciliation.
+CREATE TABLE IF NOT EXISTS payment_callbacks (
+    id text primary key,
+    out_trade_no text null,
+    payload_json text not null,
+    result text not null,
+    created_at text not null
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_book_words_source_sequence

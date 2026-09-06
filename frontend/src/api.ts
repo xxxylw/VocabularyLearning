@@ -321,7 +321,7 @@ function toApiError(status: number, parsed: unknown, fallbackMessage: string): A
   return new ApiError(status, fallbackMessage);
 }
 
-async function authJson<T>(method: 'GET' | 'POST', url: string, body?: unknown): Promise<T> {
+async function authJson<T>(method: 'GET' | 'POST' | 'PUT', url: string, body?: unknown): Promise<T> {
   const token = getSessionToken();
   const headers: Record<string, string> = {};
   if (body !== undefined) {
@@ -404,19 +404,13 @@ export function resetPassword(email: string, code: string, newPassword: string):
 }
 
 // ---------------------------------------------------------------------------
-// v2 subscription API (cloud batch 3, C-09/C-10). Same authJson helper as
-// the auth endpoints so failures surface as structured ApiErrors. The
-// price lives ONLY in the backend plan payload (VOCAB_SUB_PRICE_CENTS)
-// — the UI renders it through formatPrice() and never hardcodes a
-// number into copy, so switching 0.1 → 4.99 is a config change.
+// v3 subscription + payment API (v3 P0, V3-01/02/03). Same authJson helper
+// as the auth endpoints so failures surface as structured ApiErrors. All
+// prices come from the backend plans payload (config-driven: 改价不发版)
+// — the UI renders them through formatPrice() and never hardcodes an
+// amount into copy. The v2 mock-order / cancel endpoints are retired for
+// normal users (V3-08) and are NOT wrapped here anymore.
 // ---------------------------------------------------------------------------
-
-export type SubscriptionPlan = {
-  plan: string;
-  priceCents: number;
-  currency: string;
-  period: string;
-};
 
 export type SubscriptionStatus = {
   subscribed: boolean;
@@ -426,27 +420,91 @@ export type SubscriptionStatus = {
   expiresAt: string | null;
   autoRenew: boolean | null;
   source: string | null;
+  // v3 extensions (V3-01/V3-02): trial countdown, read-only flag,
+  // renew-eligibility snapshot (server-judged) and the 续费提醒开关.
+  trialDaysLeft: number | null;
+  readOnly: boolean;
+  renewEligible: boolean;
+  renewDeadline: string | null;
+  renewReminder: boolean | null;
 };
 
-export function fetchSubscriptionPlan(): Promise<SubscriptionPlan> {
-  return authJson<SubscriptionPlan>('GET', '/api/subscription/plan');
+export type SubscriptionTier = {
+  plan: string;
+  label: string;
+  priceCents: number;
+  currency: string;
+  durationDays: number;
+};
+
+export type SubscriptionPlans = {
+  plans: SubscriptionTier[];
+  currency: string;
+  trialDays: number;
+  renewGraceDays: number;
+  renewEligible: boolean;
+  paymentEnabled: boolean;
+};
+
+export type PaymentOrder = {
+  outTradeNo: string;
+  plan: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  channel: string;
+  payUrl: string | null;
+  payQrUrl: string | null;
+  createdAt: string;
+  paidAt: string | null;
+  expiresAt: string | null;
+};
+
+export type LatestOrder = {
+  order: PaymentOrder | null;
+  subscription: SubscriptionStatus;
+};
+
+export function fetchSubscriptionPlans(): Promise<SubscriptionPlans> {
+  return authJson<SubscriptionPlans>('GET', '/api/subscription/plans');
 }
 
 export function fetchSubscriptionMe(): Promise<SubscriptionStatus> {
   return authJson<SubscriptionStatus>('GET', '/api/subscription/me');
 }
 
-export function createMockOrder(): Promise<SubscriptionStatus> {
-  return authJson<SubscriptionStatus>('POST', '/api/subscription/mock-order');
+// V3-03 下单: the backend snapshots the payable amount from the user's
+// subscription state (续费窗口内 2.99 / 逾期标价 — 后端判定) and creates
+// a pending order carrying the gateway QR / H5 link.
+export function createOrder(plan: string): Promise<PaymentOrder> {
+  return authJson<PaymentOrder>('POST', '/api/subscription/orders', { plan });
 }
 
-export function cancelSubscription(): Promise<SubscriptionStatus> {
-  return authJson<SubscriptionStatus>('POST', '/api/subscription/cancel');
+// 收银台轮询 + 补单兜底: also answers with the fresh subscription view
+// so the checkout can flip to the status card the moment the gateway
+// confirms (回调可能先于用户刷新).
+export function fetchLatestOrder(): Promise<LatestOrder> {
+  return authJson<LatestOrder>('GET', '/api/subscription/orders/latest');
 }
 
-// C-10: price is data, not visuals. formatPrice turns the backend plan
-// object into display parts so the subscription card can typeset the
-// integer portion large and the fraction small — 0.1 → 4.99 changes
+// 订单级「取消支付」(V3-02 附则: 收银台 15 分钟倒计时超时自动关单,
+// 用户也可主动取消 — 这是全站唯二合法的「取消」字样之一).
+export function cancelOrder(outTradeNo: string): Promise<PaymentOrder> {
+  return authJson<PaymentOrder>(
+    'POST',
+    `/api/subscription/orders/${encodeURIComponent(outTradeNo)}/cancel`
+  );
+}
+
+// 续费提醒开关 (管理页唯一用户自主开关, 默认开; 只控制 T-3/T-1 站内
+// 提醒与到期邮件, 不影响任何权益).
+export function setRenewReminder(enabled: boolean): Promise<SubscriptionStatus> {
+  return authJson<SubscriptionStatus>('PUT', '/api/subscription/reminder', { enabled });
+}
+
+// C-10 → v3: price is data, not visuals. formatPrice turns cents +
+// currency into display parts so the tier cards can typeset the integer
+// portion large and the fraction small — a config price change alters
 // nothing here but the digits themselves.
 export type PriceParts = {
   currencySymbol: string;
@@ -461,23 +519,36 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   EUR: '€'
 };
 
-const PERIOD_LABELS: Record<string, string> = {
-  month: '/ 月',
-  year: '/ 年',
-  week: '/ 周',
-  day: '/ 天'
-};
+function periodLabelForDuration(durationDays: number): string {
+  if (durationDays === 30) {
+    return '/ 月';
+  }
+  if (durationDays % 360 === 0) {
+    return `/ ${durationDays / 360} 年`;
+  }
+  if (durationDays % 180 === 0) {
+    return '/ 半年';
+  }
+  if (durationDays % 30 === 0) {
+    return `/ ${durationDays / 30} 月`;
+  }
+  return `/ ${durationDays} 天`;
+}
 
-export function formatPrice(plan: SubscriptionPlan): PriceParts {
-  const major = Math.floor(Math.abs(plan.priceCents) / 100);
-  const minor = Math.abs(plan.priceCents) % 100;
+export function formatPrice(
+  priceCents: number,
+  currency: string,
+  durationDays: number
+): PriceParts {
+  const major = Math.floor(Math.abs(priceCents) / 100);
+  const minor = Math.abs(priceCents) % 100;
   // 10 cents → ".1", 5 → ".05", 99 → ".99"; whole amounts drop the
   // fraction entirely so the baseline alignment never renders ".00".
   const minorText = minor === 0 ? '' : `.${String(minor).padStart(2, '0').replace(/0+$/, '')}`;
   return {
-    currencySymbol: CURRENCY_SYMBOLS[plan.currency.toUpperCase()] ?? plan.currency,
+    currencySymbol: CURRENCY_SYMBOLS[currency.toUpperCase()] ?? currency,
     integer: String(major),
     fraction: minorText,
-    periodLabel: PERIOD_LABELS[plan.period] ?? `/ ${plan.period}`
+    periodLabel: periodLabelForDuration(durationDays)
   };
 }

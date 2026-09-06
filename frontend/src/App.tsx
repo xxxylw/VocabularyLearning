@@ -27,7 +27,10 @@ type DayProgress = {
   reviewedCards: number;
 };
 
-export function App() {
+// V3-01 只读模式：readOnly=true 时 Today 的学习入口进入锁定态
+// （书架/进度/统计照常浏览），后端仍以 403 拦截学习动作做双保险。
+// 不传时行为与 v2 完全一致（既有集成测试直接渲染 App）。
+export function App({ readOnly = false, onGoSubscribe }: { readOnly?: boolean; onGoSubscribe?: () => void }) {
   const [screen, setScreen] = useState<Screen>('today');
   const [cards, setCards] = useState<StudyCard[]>([]);
   const [dayProgress, setDayProgress] = useState<DayProgress | null>(null);
@@ -203,6 +206,8 @@ export function App() {
         bookTotalWords={bookTotalWords}
         bookLearnedWords={bookLearnedWords}
         onOpenBookShelf={() => void openBookShelf()}
+        readOnly={readOnly}
+        onGoSubscribe={onGoSubscribe}
       />
       {screen === 'empty' ? (
         <section className="empty-state" aria-live="polite">

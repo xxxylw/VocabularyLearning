@@ -31,7 +31,12 @@ const NOT_SUBSCRIBED = {
   startedAt: null,
   expiresAt: null,
   autoRenew: null,
-  source: null
+  source: null,
+  trialDaysLeft: null,
+  readOnly: false,
+  renewEligible: false,
+  renewDeadline: null,
+  renewReminder: null
 };
 
 const ACTIVE = {
@@ -41,10 +46,27 @@ const ACTIVE = {
   startedAt: '2026-09-05T00:00:00+00:00',
   expiresAt: '2026-10-05T00:00:00+00:00',
   autoRenew: true,
-  source: 'mock'
+  source: 'mock',
+  trialDaysLeft: null,
+  readOnly: false,
+  renewEligible: false,
+  renewDeadline: null,
+  renewReminder: true
 };
 
-const PLAN = { plan: 'monthly', priceCents: 10, currency: 'CNY', period: 'month' };
+// v3 四档 plans 载荷（V3-02：价格全部后端配置下发）。
+const PLANS = {
+  plans: [
+    { plan: 'monthly', label: '单月', priceCents: 500, currency: 'CNY', durationDays: 30 },
+    { plan: 'halfyear', label: '半年卡', priceCents: 1700, currency: 'CNY', durationDays: 180 },
+    { plan: 'yearly', label: '年卡', priceCents: 3400, currency: 'CNY', durationDays: 360 }
+  ],
+  currency: 'CNY',
+  trialDays: 7,
+  renewGraceDays: 7,
+  renewEligible: false,
+  paymentEnabled: true
+};
 
 function stubSessionFetch(status: typeof NOT_SUBSCRIBED | typeof ACTIVE) {
   return vi.fn().mockImplementation((url: string) => {
@@ -54,8 +76,8 @@ function stubSessionFetch(status: typeof NOT_SUBSCRIBED | typeof ACTIVE) {
     if (url === '/api/subscription/me') {
       return Promise.resolve(ok(status));
     }
-    if (url === '/api/subscription/plan') {
-      return Promise.resolve(ok(PLAN));
+    if (url === '/api/subscription/plans') {
+      return Promise.resolve(ok(PLANS));
     }
     return Promise.resolve(ok({}));
   });
@@ -127,7 +149,7 @@ describe('VocabApp subscription routing (batch 3)', () => {
     render(<VocabApp />);
 
     expect(await screen.findByText('/ 月')).toBeInTheDocument();
-    expect(screen.getByText('.1')).toBeInTheDocument();
+    expect(screen.getAllByText('¥').length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByTestId('study-app')).toBeNull();
   });
 
@@ -142,7 +164,7 @@ describe('VocabApp subscription routing (batch 3)', () => {
     await screen.findByTestId('study-app');
     await user.click(screen.getByRole('button', { name: '账号' }));
 
-    expect(screen.getByText('订阅高')).toBeInTheDocument();
+    expect(screen.getByText('订阅生效中')).toBeInTheDocument();
     expect(screen.getByText('user@example.com')).toBeInTheDocument();
   });
 

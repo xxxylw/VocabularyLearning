@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.auth import AuthContext, require_user
+from app.subscription import SubscriptionError, require_study_entitlement
 from app.books import DEFAULT_BOOK_ID
 from app.lookup import lookup_oxford_word
 from app.pronunciation import lookup_wiktionary_pronunciation
@@ -104,11 +105,28 @@ def book_words_progress(
     return get_book_progress(context.user_id)
 
 
+def _require_study_entitlement(context: AuthContext) -> None:
+    """V3 只读模式：试用到期/未订阅用户的学习动作在服务端拦截。"""
+    from app import auth
+
+    user = auth.find_user_by_id(str(context.user_id)) if context.user_id else None
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    try:
+        require_study_entitlement(user)
+    except SubscriptionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": error.message},
+        ) from error
+
+
 @router.post("/prepare-jobs")
 def create_prepare_job(
     request: PrepareJobRequest,
     context: Annotated[AuthContext, Depends(require_user)],
 ) -> PrepareJobResponse:
+    _require_study_entitlement(context)
     try:
         return prepare_book_words(
             context.user_id, request, is_super=context.is_super
@@ -126,6 +144,7 @@ def create_today_session(
     request: TodayStartRequest,
     context: Annotated[AuthContext, Depends(require_user)],
 ) -> TodaySessionResponse:
+    _require_study_entitlement(context)
     return start_today_session(context.user_id, request)
 
 
@@ -135,6 +154,7 @@ def create_card_review(
     request: ReviewCardRequest,
     context: Annotated[AuthContext, Depends(require_user)],
 ) -> ReviewCardResponse:
+    _require_study_entitlement(context)
     try:
         return review_card(context.user_id, card_id, request)
     except ReviewConflictError as error:

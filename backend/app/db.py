@@ -1,11 +1,17 @@
+import logging
 from pathlib import Path
 import os
 import sqlite3
+from datetime import datetime, timezone
 
 from app.auth import ensure_super_account
 from app.books import DEFAULT_BOOK_ID, ensure_default_book
 from app.scheduling_migration import migrate_cards_sm2
 from app.user_isolation_migration import migrate_user_isolation
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def db_path() -> Path:
@@ -69,6 +75,46 @@ def migrate(connection: sqlite3.Connection) -> None:
     if "attempts" not in token_columns:
         connection.execute(
             "ALTER TABLE email_tokens ADD COLUMN attempts integer not null default 0"
+        )
+
+    # v3 (V3-08): subscriptions gains remark (mock 清退备注/审计) and
+    # order_no (link to the paying order) columns. Legacy databases get
+    # them via ALTER; fresh ones already have them from schema.sql.
+    sub_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(subscriptions)")
+    }
+    if "remark" not in sub_columns:
+        connection.execute("ALTER TABLE subscriptions ADD COLUMN remark text null")
+    if "order_no" not in sub_columns:
+        connection.execute("ALTER TABLE subscriptions ADD COLUMN order_no text null")
+
+    # v3 (V3-08) one-time migration: 存量 source=mock 且 active 的订阅行
+    # 批量置 canceled（带备注，保留审计痕迹；不清物理数据）。Guarded by
+    # a settings flag so the super-only mock test stub created afterwards
+    # (app.subscription.create_mock_order) is NOT swept by later connects.
+    # The pre-update count is logged for 执行前出数核对 (V3-08 验收 2).
+    cleanup_done = connection.execute(
+        "select value from settings where key = 'v3_mock_cleanup_done'"
+    ).fetchone()
+    if cleanup_done is None:
+        stale = connection.execute(
+            "select count(*) as total from subscriptions"
+            " where source = 'mock' and status = 'active'"
+        ).fetchone()["total"]
+        if stale:
+            connection.execute(
+                "update subscriptions set status = 'canceled', auto_renew = 0,"
+                " remark = 'v3 mock 清退（V3-08）', updated_at = ?"
+                " where source = 'mock' and status = 'active'",
+                (_utc_now_iso(),),
+            )
+            logging.getLogger(__name__).warning(
+                "v3 mock 清退: %d active mock subscription(s) canceled", stale
+            )
+        connection.execute(
+            "insert or replace into settings (key, value)"
+            " values ('v3_mock_cleanup_done', ?)",
+            (_utc_now_iso(),),
         )
 
     # Default book (雅思词汇真经) + back-fill: idempotent on every connect.

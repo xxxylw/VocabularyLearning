@@ -17,6 +17,9 @@ type TodayViewProps = {
   bookTotalWords?: number | null;
   bookLearnedWords?: number | null;
   onOpenBookShelf?: () => void;
+  // V3-01 只读模式：订阅到期后学习动作锁定（书架/进度/统计仍可看）。
+  readOnly?: boolean;
+  onGoSubscribe?: () => void;
 };
 
 export function TodayView({
@@ -31,7 +34,9 @@ export function TodayView({
   bookTitle,
   bookTotalWords,
   bookLearnedWords,
-  onOpenBookShelf
+  onOpenBookShelf,
+  readOnly = false,
+  onGoSubscribe
 }: TodayViewProps) {
   const [targetDraft, setTargetDraft] = useState(String(newWordTarget));
 
@@ -100,32 +105,54 @@ export function TodayView({
       </div>
 
       <div className="desk-panel" aria-label="Study desk summary">
-        <div className="stat-row">
-          <label htmlFor="new-word-target">New word target</label>
-          <input
-            id="new-word-target"
-            className="target-input"
-            type="number"
-            min="1"
-            max="200"
-            step="1"
-            value={targetDraft}
-            onChange={(event) => handleTargetChange(event.target.value)}
-            disabled={isLoading}
-          />
-        </div>
-        <div className="stat-row">
-          <span>Mode</span>
-          <strong>Today cards</strong>
-        </div>
+        {readOnly ? (
+          // 只读锁定态：置灰 + 锁图标（后端同样拦截 403，双重保险）。
+          <div className="stat-row today-locked" data-testid="today-locked">
+            <span>Mode</span>
+            <strong>
+              <span className="today-locked-lock" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </span>
+              学习功能已锁定
+            </strong>
+          </div>
+        ) : (
+          <div className="stat-row">
+            <label htmlFor="new-word-target">New word target</label>
+            <input
+              id="new-word-target"
+              className="target-input"
+              type="number"
+              min="1"
+              max="200"
+              step="1"
+              value={targetDraft}
+              onChange={(event) => handleTargetChange(event.target.value)}
+              disabled={isLoading}
+            />
+          </div>
+        )}
         <div className="stat-row">
           <span>Rhythm</span>
           <strong>Reveal, rate, continue</strong>
         </div>
-        <button className="primary-action" type="button" onClick={handleStart} disabled={isLoading}>
-          {isLoading ? 'Preparing cards' : 'Start today cards'}
-        </button>
-        {canPracticeSpelling && onPracticeSpelling ? (
+        {readOnly ? (
+          <button
+            className="primary-action today-locked-cta"
+            type="button"
+            onClick={onGoSubscribe}
+          >
+            续费解锁学习
+          </button>
+        ) : (
+          <button className="primary-action" type="button" onClick={handleStart} disabled={isLoading}>
+            {isLoading ? 'Preparing cards' : 'Start today cards'}
+          </button>
+        )}
+        {canPracticeSpelling && onPracticeSpelling && !readOnly ? (
           <button className="secondary-action" type="button" onClick={onPracticeSpelling} disabled={isLoading}>
             Practice spelling
           </button>

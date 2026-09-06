@@ -87,7 +87,12 @@ export function VocabApp() {
                     startedAt: null,
                     expiresAt: null,
                     autoRenew: null,
-                    source: null
+                    source: null,
+                    trialDaysLeft: null,
+                    readOnly: false,
+                    renewEligible: false,
+                    renewDeadline: null,
+                    renewReminder: null
                   }
                 }
               : current
@@ -239,7 +244,30 @@ export function VocabApp() {
         subscription={session.subscription}
         onLogout={handleLogout}
       />
-      <App />
+      {session.subscription?.readOnly ? (
+        // V3-01 只读模式：非模态订阅引导条（不打扰浏览 — 书架/进度/
+        // 统计仍可看，学习动作前后端双重锁定）。
+        <aside className="readonly-notice" data-testid="readonly-notice">
+          <span className="readonly-notice-lock" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </span>
+          <p className="readonly-notice-text">订阅已到期，学习功能已锁定 · 书架、进度与统计仍可浏览</p>
+          <button
+            type="button"
+            className="readonly-notice-cta"
+            onClick={() => navigate('/subscription')}
+          >
+            去续费
+          </button>
+        </aside>
+      ) : null}
+      <App
+        readOnly={session.subscription?.readOnly === true}
+        onGoSubscribe={() => navigate('/subscription')}
+      />
     </>
   );
 }
@@ -298,10 +326,21 @@ function AccountArea({
           {user.isSuper ? (
             <p className="account-menu-plan">super 账号</p>
           ) : subscription !== undefined ? (
-            subscription.subscribed ? (
-              <p className="account-menu-plan">
-                <span className="subscription-badge">订阅高</span>
+            subscription.status === 'trialing' ? (
+              // V3-01 试用剩余天数常显（≤3 天强调色 + 订阅入口）。
+              <p
+                className={`account-menu-plan account-menu-plan-trial${
+                  (subscription.trialDaysLeft ?? 0) <= 3 ? ' account-menu-plan-urgent' : ''
+                }`}
+              >
+                试用剩余 {subscription.trialDaysLeft ?? '—'} 天
               </p>
+            ) : subscription.subscribed ? (
+              <p className="account-menu-plan">
+                <span className="subscription-badge">订阅生效中</span>
+              </p>
+            ) : subscription.readOnly ? (
+              <p className="account-menu-plan account-menu-plan-muted">已到期 · 只读模式</p>
             ) : (
               <p className="account-menu-plan account-menu-plan-muted">未订阅</p>
             )

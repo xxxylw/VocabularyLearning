@@ -682,3 +682,199 @@
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+v3 P0（2026-09-06）：四档价格 + 收银台 + 状态卡三态 + 续费提醒开关。
+desktop 4 列 / mobile 2 列；年卡主 CTA；全部复用既有 token。
+--------------------------------------------------------------------------- */
+
+.subscription-badge-trial {
+  background: rgba(72, 111, 131, 0.12);
+  color: #486f83;
+}
+
+.subscription-badge-expired {
+  background: rgba(154, 77, 69, 0.1);
+  color: #9a4d45;
+}
+
+.subscription-trial-urgent {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(154, 77, 69, 0.08);
+  color: #9a4d45;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.subscription-renew-window {
+  margin: 0 0 8px;
+  color: #486f83;
+  font-size: 0.85rem;
+}
+
+.subscription-reminder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  color: #6a6257;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.subscription-reminder-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #6f8b79;
+}
+
+.subscription-tiers {
+  width: 100%;
+  margin-top: 24px;
+  border-top: 1px solid rgba(110, 91, 68, 0.12);
+  padding-top: 20px;
+}
+
+.subscription-tiers-title {
+  margin: 0 0 14px;
+  color: #6a6257;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.subscription-payment-disabled {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(72, 111, 131, 0.08);
+  color: #486f83;
+  font-size: 0.85rem;
+}
+
+.subscription-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.subscription-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px 16px;
+  border-radius: 12px;
+  background: rgba(110, 91, 68, 0.04);
+  border: 1px solid rgba(110, 91, 68, 0.1);
+}
+
+.subscription-tier-primary {
+  border: 2px solid rgba(111, 139, 121, 0.5);
+  background: rgba(111, 139, 121, 0.08);
+}
+
+.subscription-tier-name {
+  margin: 0;
+  color: #6a6257;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.subscription-tier .subscription-price {
+  margin: 0;
+}
+
+.subscription-tier .subscription-price-integer {
+  font-size: 1.7rem;
+}
+
+.subscription-tier .subscription-price-period {
+  font-size: 0.72rem;
+}
+
+.subscription-tier-note {
+  margin: 0;
+  color: #486f83;
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.subscription-tier .auth-cta,
+.subscription-tier .auth-ghost-cta {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+}
+
+.subscription-checkout {
+  width: 100%;
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 12px;
+  background: rgba(111, 139, 121, 0.06);
+  border: 1px solid rgba(111, 139, 121, 0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.subscription-checkout-title {
+  margin: 0;
+  color: #6a6257;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.subscription-checkout-amount {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #4a4133;
+}
+
+.subscription-checkout-qr {
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid rgba(110, 91, 68, 0.15);
+}
+
+.subscription-checkout-hint {
+  margin: 0;
+  color: #6a6257;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.subscription-checkout-countdown {
+  margin: 0;
+  color: #9a4d45;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.subscription-checkout-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.account-menu-plan-trial {
+  color: #486f83;
+  font-weight: 700;
+}
+
+.account-menu-plan-urgent {
+  color: #9a4d45;
+}
+
+@media (max-width: 760px) {
+  .subscription-tier-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -18,6 +18,13 @@ DEFAULT_BOOK_TITLE = "雅思词汇真经"
 RED_BOOK_ID = "kaoyan-hongbaoshu-2027"
 RED_BOOK_TITLE = "考研英语红宝书"
 
+# v3 书架三书 (V3-05): the third book, 考研词汇闪过, is *data-driven* —
+# the shelf slot appears only after its word list is imported on the server
+# (scripts/import_book_csv.py). The id is a stable contract shared with the
+# import pipeline and the frontend cover palette (蓝色系程序化封面).
+SHAN_BOOK_ID = "kaoyan-shanguo-2027"
+SHAN_BOOK_TITLE = "考研词汇闪过"
+
 CURRENT_BOOK_SETTING_KEY = "current_book_id"
 
 

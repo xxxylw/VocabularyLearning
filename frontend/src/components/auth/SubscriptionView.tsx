@@ -1,23 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  cancelSubscription,
-  createMockOrder,
+  cancelOrder,
+  createOrder,
+  fetchLatestOrder,
   fetchSubscriptionMe,
-  fetchSubscriptionPlan
+  fetchSubscriptionPlans,
+  setRenewReminder
 } from '../../api';
-import type { SubscriptionPlan, SubscriptionStatus } from '../../api';
+import type {
+  PaymentOrder,
+  SubscriptionPlans,
+  SubscriptionStatus,
+  SubscriptionTier
+} from '../../api';
 import { formatPrice } from '../../api';
 import { navigate } from '../../router';
 import { Spinner, Toast, useFlash } from './shared';
 
-// C-10: the subscription page. The whole card is data-driven — the
-// price comes from GET /api/subscription/plan and renders through
-// formatPrice(); no amount is ever hardcoded in copy, so a config
-// change from 0.1 to 4.99 requires zero visual edits. Subscribed
-// visitors see the status card (badge + expiry + mock cancel), and
-// expired visitors get the non-modal renewal hint above the price.
-// Nothing here gates study features — subscription is display-only
-// (2026-09-05 拍板) and sends no email at any point.
+// v3 P0 订阅页（V3-01/V3-02/V3-03）。整页数据驱动：
+// - 四档价格全部来自 GET /api/subscription/plans（配置化，改价不发版），
+//   通过 formatPrice() 渲染，文案不出现任何硬编码金额；
+// - 状态卡按 trialing / active / expired 三态展示（PM 附则 2026-09-06）：
+//   trialing 显「试用剩余 X 天」；active 显「有效期至 X」+（续费窗口内）
+//   2.99 优惠倒计时只读展示；expired 显「已到期 · 只读模式」+ 续费 CTA；
+// - 收银台：下单 → 展示网关二维码 + 15 分钟倒计时 + 「取消支付」（订单级），
+//   3 秒轮询最新订单状态，支付成功即刷新状态卡；
+// - 手动续费模式：无「取消订阅 / 恢复订阅」语义，管理侧唯一开关是
+//   「续费提醒」toggle（默认开）；
+// - 支付未配置（虎皮椒密钥未就绪）：显式提示 + 按钮置灰，其余可浏览。
+// 全站文案硬约束：不出现「自动续费 / 连续包月 / 自动扣款」。
 
 type SubscriptionViewProps = {
   onSubscriptionChange?: (status: SubscriptionStatus) => void;
@@ -26,13 +37,28 @@ type SubscriptionViewProps = {
 type LoadState =
   | { phase: 'loading' }
   | { phase: 'error' }
-  | { phase: 'ready'; plan: SubscriptionPlan; status: SubscriptionStatus };
+  | { phase: 'ready'; plans: SubscriptionPlans; status: SubscriptionStatus };
+
+type CheckoutState =
+  | { phase: 'idle' }
+  | { phase: 'creating'; plan: string }
+  | { phase: 'paying'; order: PaymentOrder };
+
+const POLL_INTERVAL_MS = 3000;
 
 const BENEFITS = [
   '云端同步学习进度，多设备无缝衔接',
   '学习数据云端保存，换设备不丢失',
   '支持项目持续开发，优先获得新功能'
 ];
+
+// 四档标签（V3-02）。label 仅做档位命名，价格一律后端下发。
+const TIER_META: Record<string, { name: string; note: string | null; primary: boolean }> = {
+  monthly: { name: '单月', note: null, primary: false },
+  renew: { name: '续费优惠', note: '到期前或到期后 7 天内可享', primary: false },
+  halfyear: { name: '半年卡', note: '约 5.7 折', primary: false },
+  yearly: { name: '年卡', note: '约 5.7 折', primary: true }
+};
 
 function formatExpiryDate(expiresAt: string | null): string {
   if (expiresAt === null) {
@@ -46,22 +72,64 @@ function formatExpiryDate(expiresAt: string | null): string {
   return `有效期至 ${year}-${month}-${day}`;
 }
 
+function formatAmountCents(amountCents: number): string {
+  return `${(amountCents / 100).toFixed(2)} 元`;
+}
+
+function countdownSeconds(expiresAt: string | null, now: number): number | null {
+  if (expiresAt === null) {
+    return null;
+  }
+  const remaining = Math.floor((new Date(expiresAt).getTime() - now) / 1000);
+  return remaining > 0 ? remaining : 0;
+}
+
+function formatCountdown(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
 export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps) {
   const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
-  const [isSubscribing, setIsSubscribing] = useState(false);
-  const [isCanceling, setIsCanceling] = useState(false);
+  const [checkout, setCheckout] = useState<CheckoutState>({ phase: 'idle' });
+  const [isCancelingOrder, setIsCancelingOrder] = useState(false);
+  const [isTogglingReminder, setIsTogglingReminder] = useState(false);
   const [toastMessage, showToast] = useFlash();
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  // 收银台倒计时 + 轮询共享的 tick；Unmount 时清理。
+  const pollTimer = useRef<number | null>(null);
+  const mounted = useRef(true);
+  // onSubscriptionChange 可能在轮询/重试时才被消费；ref 保证拿到最新回调。
+  const onSubscriptionChangeRef = useRef(onSubscriptionChange);
+  useEffect(() => {
+    onSubscriptionChangeRef.current = onSubscriptionChange;
+  });
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (pollTimer.current !== null) {
+        window.clearInterval(pollTimer.current);
+      }
+    };
+  }, []);
 
   const loadAll = useCallback(() => {
     setLoad({ phase: 'loading' });
-    Promise.all([fetchSubscriptionPlan(), fetchSubscriptionMe()])
-      .then(([plan, status]) => {
-        setLoad({ phase: 'ready', plan, status });
+    Promise.all([fetchSubscriptionPlans(), fetchSubscriptionMe()])
+      .then(([plans, status]) => {
+        if (mounted.current) {
+          setLoad({ phase: 'ready', plans, status });
+          onSubscriptionChangeRef.current?.(status);
+        }
       })
       .catch(() => {
-        // plan 拉取失败 → 卡片内空态 + 重试；me 失败也按整体失败
-        // 处理，重试按钮一次重拉两者。
-        setLoad({ phase: 'error' });
+        // plans / me 任一失败 → 卡片内空态 + 重试；重试按钮一次重拉两者。
+        if (mounted.current) {
+          setLoad({ phase: 'error' });
+        }
       });
   }, []);
 
@@ -73,39 +141,128 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
     setLoad((current) =>
       current.phase === 'ready' ? { ...current, status: next } : current
     );
-    onSubscriptionChange?.(next);
+    onSubscriptionChangeRef.current?.(next);
   }
 
-  async function subscribe(): Promise<void> {
-    if (load.phase !== 'ready' || isSubscribing || load.status.subscribed) {
+  // 收银台轮询（V3-03 兜底：回调可能先于用户刷新到达）。
+  const pollLatest = useCallback(() => {
+    fetchLatestOrder()
+      .then(({ order, subscription }) => {
+        if (!mounted.current) {
+          return;
+        }
+        if (subscription.subscribed) {
+          // 已入账：刷新状态卡，收银台收起。
+          applyStatus(subscription);
+          setCheckout({ phase: 'idle' });
+          showToast('支付成功，已恢复全部学习功能');
+          return;
+        }
+        setCheckout((current) => {
+          if (current.phase !== 'paying') {
+            return current;
+          }
+          if (order === null || order.status === 'closed' || order.status === 'failed') {
+            showToast('订单已关闭，请重新下单');
+            return { phase: 'idle' };
+          }
+          return { ...current, order };
+        });
+      })
+      .catch(() => {
+        // 单次轮询失败静默忽略，下一轮 tick 重试。
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (checkout.phase !== 'paying') {
+      if (pollTimer.current !== null) {
+        window.clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
       return;
     }
-    setIsSubscribing(true);
+    pollTimer.current = window.setInterval(() => {
+      pollLatest();
+      setNowMs(Date.now());
+    }, POLL_INTERVAL_MS);
+    return () => {
+      if (pollTimer.current !== null) {
+        window.clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
+    };
+  }, [checkout.phase, pollLatest]);
+
+  async function startCheckout(plan: string): Promise<void> {
+    if (load.phase !== 'ready' || checkout.phase !== 'idle') {
+      return;
+    }
+    if (!load.plans.paymentEnabled) {
+      showToast('支付通道尚未开通，暂时无法下单');
+      return;
+    }
+    setCheckout({ phase: 'creating', plan });
     try {
-      const next = await createMockOrder();
-      applyStatus(next);
-      showToast('订阅成功');
-    } catch {
-      // mock 下单失败：保持价格卡，toast 提示稍后重试。
-      showToast('订阅失败，请稍后重试');
-    } finally {
-      setIsSubscribing(false);
+      const order = await createOrder(plan);
+      if (!mounted.current) {
+        return;
+      }
+      setNowMs(Date.now());
+      setCheckout({ phase: 'paying', order });
+    } catch (error) {
+      if (!mounted.current) {
+        return;
+      }
+      setCheckout({ phase: 'idle' });
+      showToast(error instanceof Error ? error.message : '下单失败，请稍后重试');
     }
   }
 
-  async function cancel(): Promise<void> {
-    if (load.phase !== 'ready' || isCanceling) {
+  async function cancelCheckout(): Promise<void> {
+    if (checkout.phase !== 'paying' || isCancelingOrder) {
       return;
     }
-    setIsCanceling(true);
+    setIsCancelingOrder(true);
     try {
-      const next = await cancelSubscription();
-      applyStatus(next);
-      showToast('已取消订阅（模拟）');
-    } catch {
-      showToast('取消失败，请稍后重试');
+      await cancelOrder(checkout.order.outTradeNo);
+      if (mounted.current) {
+        setCheckout({ phase: 'idle' });
+      }
+    } catch (error) {
+      // 关单失败（网络抖动 / 订单已被超时关闭）：订单侧反正会过期，
+      // 前端直接收起收银台并刷新一次状态。
+      if (mounted.current) {
+        setCheckout({ phase: 'idle' });
+        pollLatest();
+        showToast(error instanceof Error ? error.message : '订单已取消');
+      }
     } finally {
-      setIsCanceling(false);
+      if (mounted.current) {
+        setIsCancelingOrder(false);
+      }
+    }
+  }
+
+  async function toggleReminder(next: boolean): Promise<void> {
+    if (load.phase !== 'ready' || isTogglingReminder) {
+      return;
+    }
+    setIsTogglingReminder(true);
+    try {
+      const status = await setRenewReminder(next);
+      if (mounted.current) {
+        applyStatus(status);
+      }
+    } catch {
+      if (mounted.current) {
+        showToast('设置失败，请稍后重试');
+      }
+    } finally {
+      if (mounted.current) {
+        setIsTogglingReminder(false);
+      }
     }
   }
 
@@ -122,9 +279,8 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
             <span />
           </div>
           <button type="button" className="auth-cta" disabled>
-            立即订阅
+            立即支付
           </button>
-          <p className="subscription-mock-note">模拟订阅，不会产生真实扣款</p>
         </section>
       </main>
     );
@@ -148,102 +304,246 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
     );
   }
 
-  const { plan, status } = load;
-  const price = formatPrice(plan);
+  const { plans, status } = load;
+
+  // 未满足优惠资格的用户不展示续费优惠档（V3-02 交互规则 3：
+  // 后端判定，不信任前端 — plans.renewEligible 即服务端判定结果）。
+  const visibleTiers = plans.plans.filter(
+    (tier) => tier.plan !== 'renew' || plans.renewEligible
+  );
 
   return (
     <main className="auth-page">
       <section className="auth-card subscription-card">
         <p className="eyebrow">SUBSCRIPTION</p>
-        {status.subscribed ? (
-          // 已订阅：整卡切订阅状态卡（badge + 有效期 + ghost 取消）。
+
+        {status.subscribed || status.readOnly ? (
+          // 状态卡（PM 附则：trialing / active / expired 三态）。
           <>
             <h1 className="auth-title">订阅状态</h1>
-            <span className="subscription-badge" data-testid="subscription-badge">
-              订阅高
-            </span>
-            <p className="subscription-expiry">{formatExpiryDate(status.expiresAt)}</p>
-            <button
-              type="button"
-              className="auth-ghost-cta"
-              disabled={isCanceling}
-              onClick={() => {
-                void cancel();
-              }}
-            >
-              {isCanceling ? (
-                <>
-                  <Spinner /> 取消中…
-                </>
-              ) : (
-                '取消订阅（模拟）'
-              )}
-            </button>
-          </>
-        ) : (
-          // 未订阅 / 已过期：价格卡（价格只在价格面板出现一次）。
-          <>
-            <h1 className="auth-title">开通订阅</h1>
-            {status.status === 'expired' ? (
-              <p className="subscription-expired-notice">订阅已过期，续订后恢复云同步</p>
+            {status.status === 'trialing' ? (
+              <>
+                <span className="subscription-badge subscription-badge-trial" data-testid="subscription-badge">
+                  试用中
+                </span>
+                <p className="subscription-expiry">
+                  试用剩余 {status.trialDaysLeft ?? '—'} 天 · {formatExpiryDate(status.expiresAt)}
+                </p>
+                {status.trialDaysLeft !== null && status.trialDaysLeft <= 3 ? (
+                  <p className="subscription-trial-urgent" data-testid="trial-urgent">
+                    试用即将结束，续费后保留全部学习进度
+                  </p>
+                ) : null}
+              </>
+            ) : status.readOnly ? (
+              <>
+                <span className="subscription-badge subscription-badge-expired" data-testid="subscription-badge">
+                  已到期 · 只读模式
+                </span>
+                <p className="subscription-expiry">
+                  {formatExpiryDate(status.expiresAt)}到期 · 书架、进度与统计仍可浏览
+                </p>
+                {status.renewEligible && status.renewDeadline !== null ? (
+                  <p className="subscription-renew-window">
+                    续费优惠价剩 {Math.max(0, Math.ceil((new Date(status.renewDeadline).getTime() - nowMs) / 86400000))} 天（到期后 7 天内）
+                  </p>
+                ) : null}
+              </>
+            ) : status.subscribed ? (
+              <>
+                <span className="subscription-badge" data-testid="subscription-badge">
+                  订阅生效中
+                </span>
+                <p className="subscription-expiry">{formatExpiryDate(status.expiresAt)}</p>
+                {status.renewEligible && status.renewDeadline !== null ? (
+                  <p className="subscription-renew-window">
+                    2.99 续费优惠剩 {Math.max(0, Math.ceil((new Date(status.renewDeadline).getTime() - nowMs) / 86400000))} 天
+                  </p>
+                ) : null}
+              </>
             ) : null}
-            <div className="subscription-price">
-              <span className="subscription-price-currency">{price.currencySymbol}</span>
-              <span className="subscription-price-integer">{price.integer}</span>
-              <span className="subscription-price-fraction">{price.fraction}</span>
-              <span className="subscription-price-period">{price.periodLabel}</span>
-            </div>
-            <ul className="subscription-benefits">
-              {BENEFITS.map((benefit) => (
-                <li key={benefit}>
-                  <svg
-                    className="subscription-benefit-check"
-                    width="18"
-                    height="18"
-                    viewBox="0 0 18 18"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="M3.5 9.5l3.5 3.5 7.5-7.5"
-                      stroke="#6f8b79"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>{benefit}</span>
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              className="auth-cta"
-              disabled={isSubscribing}
-              onClick={() => {
-                void subscribe();
-              }}
-            >
-              {isSubscribing ? (
-                <>
-                  <Spinner /> 订阅中…
-                </>
-              ) : (
-                '立即订阅'
-              )}
-            </button>
-            <p className="subscription-mock-note">模拟订阅，不会产生真实扣款</p>
+            {/* 续费提醒：管理侧唯一用户自主开关（默认开）。 */}
+            <label className="subscription-reminder-toggle">
+              <input
+                type="checkbox"
+                checked={status.renewReminder !== false}
+                disabled={isTogglingReminder}
+                onChange={(event) => {
+                  void toggleReminder(event.target.checked);
+                }}
+              />
+              <span>到期前提醒我续费</span>
+            </label>
+            {plans.paymentEnabled ? (
+              <button
+                type="button"
+                className="auth-cta"
+                onClick={() => {
+                  setCheckout({ phase: 'idle' });
+                  document
+                    .getElementById('subscription-tiers')
+                    ?.scrollIntoView({ behavior: 'smooth' });
+                }}
+              >
+                续费
+              </button>
+            ) : null}
           </>
-        )}
+        ) : null}
+
+        {/* 价格四档（数据驱动，desktop 4 列 / mobile 2 列）。 */}
+        <div id="subscription-tiers" className="subscription-tiers">
+          <h2 className="subscription-tiers-title">
+            {status.subscribed ? '选择续费档位' : '选择订阅档位'}
+          </h2>
+          {!plans.paymentEnabled ? (
+            <p className="subscription-payment-disabled" data-testid="payment-disabled">
+              支付通道尚未开通：管理员还未配置支付网关密钥，暂时无法下单；书架与已有进度不受影响。
+            </p>
+          ) : null}
+          <div className="subscription-tier-grid" data-testid="subscription-tier-grid">
+            {visibleTiers.map((tier) => (
+              <TierCard
+                key={tier.plan}
+                tier={tier}
+                currency={plans.currency}
+                disabled={!plans.paymentEnabled || checkout.phase !== 'idle'}
+                isPaying={checkout.phase === 'creating' && checkout.plan === tier.plan}
+                onBuy={() => {
+                  void startCheckout(tier.plan);
+                }}
+              />
+            ))}
+          </div>
+          <ul className="subscription-benefits">
+            {BENEFITS.map((benefit) => (
+              <li key={benefit}>
+                <svg
+                  className="subscription-benefit-check"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M3.5 9.5l3.5 3.5 7.5-7.5"
+                    stroke="#6f8b79"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>{benefit}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* 收银台（订单级 15 分钟倒计时 + 二维码 + 取消支付）。 */}
+        {checkout.phase === 'paying' ? (
+          <div className="subscription-checkout" data-testid="subscription-checkout">
+            <h2 className="subscription-checkout-title">扫码支付</h2>
+            <p className="subscription-checkout-amount">
+              {formatAmountCents(checkout.order.amountCents)}
+            </p>
+            {checkout.order.payQrUrl ? (
+              <img
+                className="subscription-checkout-qr"
+                src={checkout.order.payQrUrl}
+                alt="支付二维码（微信 / 支付宝扫码）"
+                width={200}
+                height={200}
+              />
+            ) : null}
+            <p className="subscription-checkout-hint">
+              使用微信或支付宝扫码支付；支付完成本页会自动刷新
+            </p>
+            {countdownSeconds(checkout.order.expiresAt, nowMs) !== null ? (
+              <p className="subscription-checkout-countdown" data-testid="checkout-countdown">
+                订单保留 {formatCountdown(countdownSeconds(checkout.order.expiresAt, nowMs) ?? 0)}
+              </p>
+            ) : null}
+            <div className="subscription-checkout-actions">
+              {checkout.order.payUrl ? (
+                <a
+                  className="auth-ghost-cta"
+                  href={checkout.order.payUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  打开支付页面
+                </a>
+              ) : null}
+              <button
+                type="button"
+                className="auth-text-link"
+                disabled={isCancelingOrder}
+                onClick={() => {
+                  void cancelCheckout();
+                }}
+              >
+                {isCancelingOrder ? '取消中…' : '取消支付'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <button
           type="button"
           className="auth-text-link subscription-skip-link"
           onClick={() => navigate('/today')}
         >
-          暂不订阅，先去背单词
+          {status.readOnly ? '返回浏览（只读模式）' : '暂不订阅，先去背单词'}
         </button>
       </section>
       <Toast message={toastMessage} />
     </main>
+  );
+}
+
+function TierCard({
+  tier,
+  currency,
+  disabled,
+  isPaying,
+  onBuy
+}: {
+  tier: SubscriptionTier;
+  currency: string;
+  disabled: boolean;
+  isPaying: boolean;
+  onBuy: () => void;
+}) {
+  const meta = TIER_META[tier.plan] ?? { name: tier.plan, note: null, primary: false };
+  const price = formatPrice(tier.priceCents, currency, tier.durationDays);
+  return (
+    <div
+      className={`subscription-tier${meta.primary ? ' subscription-tier-primary' : ''}`}
+      data-testid={`subscription-tier-${tier.plan}`}
+    >
+      <p className="subscription-tier-name">{meta.name}</p>
+      <p className="subscription-price">
+        <span className="subscription-price-currency">{price.currencySymbol}</span>
+        <span className="subscription-price-integer">{price.integer}</span>
+        <span className="subscription-price-fraction">{price.fraction}</span>
+        <span className="subscription-price-period">{price.periodLabel}</span>
+      </p>
+      {meta.note ? <p className="subscription-tier-note">{meta.note}</p> : null}
+      <button
+        type="button"
+        className={meta.primary ? 'auth-cta' : 'auth-ghost-cta'}
+        disabled={disabled || isPaying}
+        onClick={onBuy}
+      >
+        {isPaying ? (
+          <>
+            <Spinner /> 下单中…
+          </>
+        ) : (
+          '立即支付'
+        )}
+      </button>
+    </div>
   );
 }

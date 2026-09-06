@@ -126,6 +126,11 @@ def _delete_user(user_id: str) -> None:
         connection.execute(
             "delete from subscriptions where user_id = ?", (user_id,)
         )
+        # v3: orders carry a per-user payment lifecycle; payment_callbacks
+        # is not user-scoped (raw gateway archive) so it stays.
+        connection.execute(
+            "delete from orders where user_id = ?", (user_id,)
+        )
         connection.execute(
             "delete from email_tokens where user_id = ?", (user_id,)
         )

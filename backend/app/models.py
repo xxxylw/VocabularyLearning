@@ -68,16 +68,26 @@ class TokenEmailResponse(BaseModel):
     email: str
 
 
-# v2 cloud batch 3 (C-09): subscription models. The plan response is
-# configuration-driven (VOCAB_SUB_PRICE_CENTS / VOCAB_SUB_CURRENCY) so
-# moving 0.1 → 4.99 never touches code; every timestamp is a UTC ISO
-# string. For super accounts ``plan`` is the synthesized "super" view
-# with ``expiresAt=None`` (permanent) and no subscriptions row exists.
-class SubscriptionPlanResponse(BaseModel):
+# v3 (V3-02): the plan response became four configuration-driven tiers
+# (月付 / 续费优惠 / 半年 / 一年) + server-judged renew eligibility.
+# Every timestamp is a UTC ISO string. For super accounts ``plan`` is
+# the synthesized "super" view with ``expiresAt=None`` (permanent) and
+# no subscriptions row exists.
+class SubscriptionTierResponse(BaseModel):
     plan: str
+    label: str
     priceCents: int
     currency: str
-    period: str
+    durationDays: int
+
+
+class SubscriptionPlansResponse(BaseModel):
+    plans: list[SubscriptionTierResponse]
+    currency: str
+    trialDays: int
+    renewGraceDays: int
+    renewEligible: bool
+    paymentEnabled: bool
 
 
 class SubscriptionStatusResponse(BaseModel):
@@ -88,6 +98,44 @@ class SubscriptionStatusResponse(BaseModel):
     expiresAt: str | None
     autoRenew: bool | None
     source: str | None
+    # v3 extensions (V3-01/V3-02): trial countdown, read-only flag,
+    # renew-eligibility snapshot (server-judged) and the 续费提醒开关
+    # (management-page's only user-controlled switch, default on).
+    trialDaysLeft: int | None = None
+    readOnly: bool = False
+    renewEligible: bool = False
+    renewDeadline: str | None = None
+    renewReminder: bool | None = None
+
+
+# v3 (V3-03): payment order models. amountCents is the snapshotted
+# payable amount (回调金额必须一致才确认入账); expiresAt is the
+# checkout countdown basis (下单时刻 + 15 分钟, 超时自动关单).
+class CreateOrderRequest(BaseModel):
+    plan: str
+
+
+class OrderResponse(BaseModel):
+    outTradeNo: str
+    plan: str
+    amountCents: int
+    currency: str
+    status: str
+    channel: str
+    payUrl: str | None
+    payQrUrl: str | None
+    createdAt: str
+    paidAt: str | None
+    expiresAt: str | None
+
+
+class LatestOrderResponse(BaseModel):
+    order: OrderResponse | None
+    subscription: SubscriptionStatusResponse
+
+
+class RenewReminderRequest(BaseModel):
+    enabled: bool
 
 
 # ---------------------------------------------------------------------------
