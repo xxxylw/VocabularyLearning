@@ -839,9 +839,68 @@ desktop 4 列 / mobile 2 列；年卡主 CTA；全部复用既有 token。
 }
 
 .subscription-checkout-qr {
+  width: 200px;
+  height: 200px;
   border-radius: 8px;
   background: #fff;
   border: 1px solid rgba(110, 91, 68, 0.15);
+}
+
+.subscription-checkout-qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.subscription-checkout-qr-skeleton {
+  background: rgba(111, 139, 121, 0.12);
+}
+
+.subscription-checkout-channel {
+  margin: 0;
+  color: #9a9484;
+  font-size: 0.75rem;
+}
+
+.subscription-channel-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.subscription-channel-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(111, 139, 121, 0.35);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.subscription-channel-button:hover:not(:disabled) {
+  border-color: #6f8b79;
+  background: rgba(111, 139, 121, 0.08);
+}
+
+.subscription-channel-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.subscription-channel-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #4a4133;
+}
+
+.subscription-channel-hint {
+  font-size: 0.8rem;
+  color: #9a9484;
 }
 
 .subscription-checkout-hint {

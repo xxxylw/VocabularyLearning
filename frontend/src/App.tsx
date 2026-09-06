@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  ApiError,
   getBookProgress,
   getCurrentBook,
   listBooks,
@@ -115,8 +116,18 @@ export function App({ readOnly = false, onGoSubscribe }: { readOnly?: boolean; o
       const progress = await getBookProgress();
       setEmptyReason(progress.totalWords === 0 ? 'no-book-words' : 'no-cards');
       setScreen('empty');
-    } catch {
-      setError('Today cards could not be loaded. Please try again.');
+    } catch (error) {
+      // QA P2: api 层错误已带 status/code，这里把 403 subscription_expired
+      // 从普通加载失败里区分出来 —— 到期只读模式下给出续费引导，而不是
+      // 一句含混的「加载失败」。
+      if (
+        error instanceof ApiError &&
+        (error.code === 'subscription_expired' || error.status === 403)
+      ) {
+        setError('订阅已到期，学习功能已进入只读模式。续费后即可恢复学习。');
+      } else {
+        setError('Today cards could not be loaded. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }

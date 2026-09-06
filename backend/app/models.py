@@ -88,6 +88,9 @@ class SubscriptionPlansResponse(BaseModel):
     renewGraceDays: int
     renewEligible: bool
     paymentEnabled: bool
+    # v3 官方通道（2026-09-06 拍板）：逐渠道可用性，收银台据此点亮
+    # 微信扫码 / 支付宝跳转按钮。paymentEnabled = 任一渠道可用。
+    channels: dict[str, bool]
 
 
 class SubscriptionStatusResponse(BaseModel):
@@ -111,8 +114,10 @@ class SubscriptionStatusResponse(BaseModel):
 # v3 (V3-03): payment order models. amountCents is the snapshotted
 # payable amount (回调金额必须一致才确认入账); expiresAt is the
 # checkout countdown basis (下单时刻 + 15 分钟, 超时自动关单).
+# channel: 'wechat'（Native 扫码）或 'alipay'（官方收银台跳转）。
 class CreateOrderRequest(BaseModel):
     plan: str
+    channel: str
 
 
 class OrderResponse(BaseModel):

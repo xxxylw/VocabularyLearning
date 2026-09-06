@@ -50,9 +50,17 @@ def cloud_env(tmp_path, monkeypatch):
         "VOCAB_PRICE_YEARLY_CENTS",
         "VOCAB_TRIAL_DAYS",
         "VOCAB_RENEW_GRACE_DAYS",
-        "XUNHUPAY_APPID",
-        "XUNHUPAY_APPSECRET",
-        "XUNHUPAY_NOTIFY_URL",
+        "WECHAT_APPID",
+        "WECHAT_MCHID",
+        "WECHAT_APIV3_KEY",
+        "WECHAT_MCH_PRIVATE_KEY_PATH",
+        "WECHAT_MCH_CERT_SERIAL",
+        "ALIPAY_APPID",
+        "ALIPAY_PRIVATE_KEY_PATH",
+        "ALIPAY_PUBLIC_KEY_PATH",
+        "PAYMENT_NOTIFY_URL",
+        "WECHAT_NOTIFY_URL",
+        "ALIPAY_NOTIFY_URL",
     ):
         monkeypatch.delenv(name, raising=False)
     return tmp_path
@@ -168,7 +176,7 @@ def test_plans_defaults_four_tiers(cloud_env, email_spy):
     assert body["currency"] == "CNY"
     assert body["trialDays"] == 7
     assert body["renewGraceDays"] == 7
-    assert body["paymentEnabled"] is False  # xunhupay keys 未配置
+    assert body["paymentEnabled"] is False  # 支付渠道密钥未配置
     assert body["renewEligible"] is False  # 试用行不算订阅行
     tiers = {tier["plan"]: tier for tier in body["plans"]}
     assert set(tiers) == {"monthly", "renew", "halfyear", "yearly"}
@@ -330,7 +338,11 @@ def test_super_order_and_stubs_conflict(cloud_env):
     client = _client()
     headers = _super_headers(client)
 
-    response = client.post("/api/subscription/orders", json={"plan": "monthly"}, headers=headers)
+    response = client.post(
+        "/api/subscription/orders",
+        json={"plan": "monthly", "channel": "wechat"},
+        headers=headers,
+    )
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "super_account"
 
@@ -481,7 +493,7 @@ def test_delete_user_cascades_across_all_user_tables(cloud_env, email_spy):
             "insert into orders (id, out_trade_no, user_id, plan, amount_cents,"
             " currency, status, channel, created_at, updated_at)"
             " values ('o1', 'VL1', ?, 'monthly', 500, 'CNY', 'pending',"
-            " 'xunhupay', ?, ?)",
+            " 'wechat', ?, ?)",
             (user_id, now, now),
         )
         session_count = connection.execute(

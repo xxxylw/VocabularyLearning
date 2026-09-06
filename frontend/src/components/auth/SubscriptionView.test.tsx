@@ -89,21 +89,30 @@ const PLANS = {
   trialDays: 7,
   renewGraceDays: 7,
   renewEligible: false,
-  paymentEnabled: true
+  paymentEnabled: true,
+  channels: { wechat: true, alipay: true }
 };
 
-const ORDER = {
+const WECHAT_ORDER = {
   outTradeNo: 'VL20260906120000abcdef1234',
   plan: 'monthly',
   amountCents: 500,
   currency: 'CNY',
   status: 'pending',
-  channel: 'xunhupay',
-  payUrl: 'https://pay.example/h5',
-  payQrUrl: 'https://pay.example/qr.png',
+  channel: 'wechat',
+  payUrl: null,
+  payQrUrl: 'weixin://wxpay/bizpayurl?pr=abc123',
   createdAt: '2026-09-06T12:00:00+00:00',
   paidAt: null,
   expiresAt: '2099-01-01T00:00:00+00:00'
+};
+
+const ALIPAY_ORDER = {
+  ...WECHAT_ORDER,
+  outTradeNo: 'VL20260906120000abcdef5678',
+  channel: 'alipay',
+  payUrl: 'https://openapi.alipay.com/gateway.do?alipay_sdk=demo',
+  payQrUrl: null
 };
 
 function stubFetch(
@@ -119,15 +128,15 @@ function stubFetch(
       return Promise.resolve(ok(statusBody));
     }
     if (url === '/api/subscription/orders' && init?.method === 'POST') {
-      return Promise.resolve(ok(extra.order ?? ORDER));
+      return Promise.resolve(ok(extra.order ?? WECHAT_ORDER));
     }
     if (url === '/api/subscription/orders/latest') {
       return Promise.resolve(
-        ok(extra.latest ?? { order: ORDER, subscription: statusBody })
+        ok(extra.latest ?? { order: WECHAT_ORDER, subscription: statusBody })
       );
     }
     if (url.startsWith('/api/subscription/orders/') && url.endsWith('/cancel')) {
-      return Promise.resolve(ok({ ...ORDER, status: 'closed' }));
+      return Promise.resolve(ok({ ...WECHAT_ORDER, status: 'closed' }));
     }
     if (url === '/api/subscription/reminder') {
       return Promise.resolve(ok({ ...(statusBody as object), renewReminder: false }));
@@ -184,18 +193,25 @@ describe('SubscriptionView', () => {
   });
 
   it('shows the payment-disabled banner and blocks checkout when unconfigured', async () => {
-    const fetchMock = stubFetch({ ...PLANS, paymentEnabled: false }, EXPIRED);
+    const fetchMock = stubFetch(
+      { ...PLANS, paymentEnabled: false, channels: { wechat: false, alipay: false } },
+      EXPIRED
+    );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
     render(<SubscriptionView />);
 
     expect(await screen.findByTestId('payment-disabled')).toBeInTheDocument();
-    await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
+    // 档位按钮置灰：点击无效，连渠道面板都不进入。
+    const tierButton = screen.getAllByRole('button', { name: '立即支付' })[0];
+    expect(tierButton).toBeDisabled();
+    await user.click(tierButton);
+    expect(screen.queryByTestId('subscription-channel-picker')).toBeNull();
     expect(fetchMock.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(true);
   });
 
-  it('checkout: creates an order, polls, and refreshes on payment success', async () => {
+  it('checkout: picks wechat, creates an order, polls, and refreshes on payment success', async () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: { method?: string }) => {
       if (url === '/api/subscription/plans') {
         return Promise.resolve(ok(PLANS));
@@ -204,12 +220,12 @@ describe('SubscriptionView', () => {
         return Promise.resolve(ok(EXPIRED));
       }
       if (url === '/api/subscription/orders' && init?.method === 'POST') {
-        return Promise.resolve(ok(ORDER));
+        return Promise.resolve(ok(WECHAT_ORDER));
       }
       if (url === '/api/subscription/orders/latest') {
         // 第二次轮询返回已支付 + 恢复订阅。
         return Promise.resolve(
-          ok({ order: { ...ORDER, status: 'paid' }, subscription: ACTIVE })
+          ok({ order: { ...WECHAT_ORDER, status: 'paid' }, subscription: ACTIVE })
         );
       }
       return Promise.resolve(ok({}));
@@ -222,10 +238,21 @@ describe('SubscriptionView', () => {
     await screen.findByTestId('subscription-tier-grid');
     await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
 
-    // 收银台：金额 + 二维码 + 取消支付（订单级）。
+    // 渠道选择 → 微信（code_url 本地渲染二维码）。
+    expect(await screen.findByTestId('subscription-channel-picker')).toBeInTheDocument();
+    await user.click(screen.getByTestId('channel-wechat'));
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === '/api/subscription/orders' && init?.method === 'POST'
+    );
+    expect(JSON.parse(postCall?.[1]?.body ?? '{}')).toEqual({
+      plan: 'monthly',
+      channel: 'wechat'
+    });
+
+    // 收银台：金额 + 本地渲染的微信二维码 + 取消支付（订单级）。
     expect(await screen.findByTestId('subscription-checkout')).toBeInTheDocument();
     expect(screen.getByText('5.00 元')).toBeInTheDocument();
-    expect(screen.getByAltText(/支付二维码/)).toBeInTheDocument();
+    expect(await screen.findByTestId('wechat-qr')).toBeInTheDocument();
     expect(screen.getByText('取消支付')).toBeInTheDocument();
 
     // 轮询命中支付成功 → 状态卡刷新、收银台收起。
@@ -236,6 +263,45 @@ describe('SubscriptionView', () => {
       { timeout: 5000 }
     );
     expect(screen.queryByTestId('subscription-checkout')).toBeNull();
+  });
+
+  it('checkout: alipay channel jumps to the official cashier page', async () => {
+    const fetchMock = stubFetch(PLANS, EXPIRED, { order: ALIPAY_ORDER });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    render(<SubscriptionView />);
+
+    await screen.findByTestId('subscription-tier-grid');
+    await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
+    await user.click((await screen.findByTestId('channel-alipay')));
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === '/api/subscription/orders' && init?.method === 'POST'
+    );
+    expect(JSON.parse(postCall?.[1]?.body ?? '{}').channel).toBe('alipay');
+
+    // 支付宝收银台：跳转官方收银台的链接 + 无二维码。
+    expect(await screen.findByTestId('subscription-checkout')).toBeInTheDocument();
+    expect(screen.getByText('支付宝支付')).toBeInTheDocument();
+    expect(screen.queryByTestId('wechat-qr')).toBeNull();
+    const link = screen.getByRole('link', { name: '打开支付宝收银台' });
+    expect(link).toHaveAttribute('href', ALIPAY_ORDER.payUrl);
+  });
+
+  it('greys out an unconfigured single channel while the other stays usable', async () => {
+    const fetchMock = stubFetch(
+      { ...PLANS, channels: { wechat: true, alipay: false } },
+      EXPIRED
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    render(<SubscriptionView />);
+
+    await screen.findByTestId('subscription-tier-grid');
+    await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
+    expect(await screen.findByTestId('channel-wechat')).toBeEnabled();
+    expect(screen.getByTestId('channel-alipay')).toBeDisabled();
   });
 
   it('expired read-only state: badge + renewal CTA + skip link copy', async () => {

@@ -137,11 +137,18 @@ async function sendJson<T>(method: 'POST' | 'PUT', url: string, body: unknown): 
   });
 
   if (!response.ok) {
-    const errorBody = await readResponseBody(response);
+    const { text: errorBody, code } = await readErrorInfo(response);
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
 
-    throw new Error(`${method} ${url} failed with ${response.status}${statusText}${detail}`);
+    // QA P2 (frontend half): v1.1 threw a plain string Error, so views
+    // could not branch on status/code (e.g. 403 subscription_expired).
+    // Same message text, now structured.
+    throw new ApiError(
+      response.status,
+      `${method} ${url} failed with ${response.status}${statusText}${detail}`,
+      code
+    );
   }
 
   const bodyText = await response.text();
@@ -166,11 +173,16 @@ async function getJson<T>(url: string): Promise<T> {
     : await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 
   if (!response.ok) {
-    const errorBody = await readResponseBody(response);
+    const { text: errorBody, code } = await readErrorInfo(response);
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
 
-    throw new Error(`GET ${url} failed with ${response.status}${statusText}${detail}`);
+    // QA P2: structured error (status + code), v1.1 message preserved.
+    throw new ApiError(
+      response.status,
+      `GET ${url} failed with ${response.status}${statusText}${detail}`,
+      code
+    );
   }
 
   const bodyText = await response.text();
@@ -186,28 +198,44 @@ async function getJson<T>(url: string): Promise<T> {
   }
 }
 
-async function readResponseBody(response: Response): Promise<string> {
+async function readErrorInfo(response: Response): Promise<{ text: string; code?: string }> {
+  // QA P2: single pass over the error body — `text` keeps the exact
+  // v1.1 readResponseBody semantics (api.test.ts asserts the resulting
+  // message strings), `code` additionally surfaces FastAPI's
+  // detail.code (e.g. subscription_expired) for branch-on-error views.
   const bodyText = await response.text().catch(() => '');
 
   if (!bodyText) {
-    return '';
+    return { text: '' };
   }
 
   try {
     const parsed = JSON.parse(bodyText) as unknown;
 
     if (typeof parsed === 'string') {
-      return parsed;
+      return { text: parsed };
     }
 
     if (isErrorObject(parsed)) {
-      return parsed.message ?? parsed.error ?? '';
+      const code = (parsed as { code?: unknown }).code;
+      return {
+        text: parsed.message ?? parsed.error ?? '',
+        code: typeof code === 'string' ? code : undefined
+      };
+    }
+
+    const detail = (parsed as { detail?: unknown } | null)?.detail;
+    if (detail !== null && typeof detail === 'object' && detail !== undefined) {
+      const code = (detail as { code?: unknown }).code;
+      if (typeof code === 'string') {
+        return { text: bodyText, code };
+      }
     }
   } catch {
-    return bodyText;
+    return { text: bodyText };
   }
 
-  return bodyText;
+  return { text: bodyText };
 }
 
 function isErrorObject(value: unknown): value is { message?: string; error?: string } {
@@ -437,6 +465,8 @@ export type SubscriptionTier = {
   durationDays: number;
 };
 
+export type PaymentChannel = 'wechat' | 'alipay';
+
 export type SubscriptionPlans = {
   plans: SubscriptionTier[];
   currency: string;
@@ -444,6 +474,8 @@ export type SubscriptionPlans = {
   renewGraceDays: number;
   renewEligible: boolean;
   paymentEnabled: boolean;
+  // 官方双通道逐渠道可用性（密钥未配置的渠道为 false，收银台置灰）。
+  channels: Record<PaymentChannel, boolean>;
 };
 
 export type PaymentOrder = {
@@ -475,9 +507,10 @@ export function fetchSubscriptionMe(): Promise<SubscriptionStatus> {
 
 // V3-03 下单: the backend snapshots the payable amount from the user's
 // subscription state (续费窗口内 2.99 / 逾期标价 — 后端判定) and creates
-// a pending order carrying the gateway QR / H5 link.
-export function createOrder(plan: string): Promise<PaymentOrder> {
-  return authJson<PaymentOrder>('POST', '/api/subscription/orders', { plan });
+// a pending order. Channel is explicit: wechat → Native code_url (扫码),
+// alipay → page/wap pay 跳转官方收银台.
+export function createOrder(plan: string, channel: PaymentChannel): Promise<PaymentOrder> {
+  return authJson<PaymentOrder>('POST', '/api/subscription/orders', { plan, channel });
 }
 
 // 收银台轮询 + 补单兜底: also answers with the fresh subscription view

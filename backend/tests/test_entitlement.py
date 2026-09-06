@@ -28,9 +28,20 @@ def cloud_env(tmp_path, monkeypatch):
     monkeypatch.setenv("BREVO_SENDER_EMAIL", "noreply@test.local")
     monkeypatch.setenv("VOCAB_SUPER_EMAIL", "super@test.local")
     monkeypatch.setenv("VOCAB_SUPER_PASSWORD", "super-pass-2026")
-    monkeypatch.delenv("XUNHUPAY_APPID", raising=False)
-    monkeypatch.delenv("XUNHUPAY_APPSECRET", raising=False)
-    monkeypatch.delenv("XUNHUPAY_NOTIFY_URL", raising=False)
+    for name in (
+        "WECHAT_APPID",
+        "WECHAT_MCHID",
+        "WECHAT_APIV3_KEY",
+        "WECHAT_MCH_PRIVATE_KEY_PATH",
+        "WECHAT_MCH_CERT_SERIAL",
+        "ALIPAY_APPID",
+        "ALIPAY_PRIVATE_KEY_PATH",
+        "ALIPAY_PUBLIC_KEY_PATH",
+        "PAYMENT_NOTIFY_URL",
+        "WECHAT_NOTIFY_URL",
+        "ALIPAY_NOTIFY_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
     return tmp_path
 
 

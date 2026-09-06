@@ -266,7 +266,7 @@ CREATE TABLE IF NOT EXISTS orders (
     amount_cents integer not null,
     currency text not null default 'CNY',
     status text not null check (status in ('pending', 'paid', 'closed', 'failed')),
-    channel text not null default 'xunhupay',
+    channel text not null default 'wechat',
     pay_url text null,
     pay_qr_url text null,
     transaction_id text null,

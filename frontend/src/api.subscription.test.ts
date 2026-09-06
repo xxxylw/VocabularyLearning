@@ -37,7 +37,8 @@ const plansPayload = {
   trialDays: 7,
   renewGraceDays: 7,
   renewEligible: false,
-  paymentEnabled: true
+  paymentEnabled: true,
+  channels: { wechat: true, alipay: true }
 };
 
 const statusPayload = {
@@ -61,9 +62,9 @@ const orderPayload = {
   amountCents: 500,
   currency: 'CNY',
   status: 'pending',
-  channel: 'xunhupay',
-  payUrl: 'https://pay.example/h5',
-  payQrUrl: 'https://pay.example/qr.png',
+  channel: 'wechat',
+  payUrl: null,
+  payQrUrl: 'weixin://wxpay/bizpayurl?pr=abc123',
   createdAt: '2026-09-06T12:00:00+00:00',
   paidAt: null,
   expiresAt: '2026-09-06T12:15:00+00:00'
@@ -90,17 +91,17 @@ describe('subscription api', () => {
     });
   });
 
-  it('sends createOrder as a POST with the plan body', async () => {
+  it('sends createOrder as a POST with the plan + channel body', async () => {
     setSessionToken('stored-token');
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(orderPayload));
     vi.stubGlobal('fetch', fetchMock);
 
-    const order = await createOrder('monthly');
+    const order = await createOrder('monthly', 'wechat');
 
     expect(order.outTradeNo).toBe(orderPayload.outTradeNo);
     expect(fetchMock.mock.calls[0][0]).toBe('/api/subscription/orders');
     expect(fetchMock.mock.calls[0][1].method).toBe('POST');
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ plan: 'monthly' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ plan: 'monthly', channel: 'wechat' });
   });
 
   it('polls the latest order and cancels by out_trade_no', async () => {
@@ -148,7 +149,7 @@ describe('subscription api', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const error = await createOrder('monthly').catch((e: unknown) => e);
+    const error = await createOrder('monthly', 'alipay').catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(Error);
     expect((error as { status: number }).status).toBe(503);

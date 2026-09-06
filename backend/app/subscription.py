@@ -4,7 +4,8 @@ One ``subscriptions`` row == one subscription period. The read path
 answers "is this user entitled" from the *latest* row's ``status`` +
 ``expires_at`` only, so the payment source stays decoupled from the
 read side — v3 only changed the write side (trial rows at register,
-paid rows from the 虎皮椒 callback via app.payment).
+paid rows from the official payment callback via app.payment (微信支付
+Native / 支付宝官方收银台, 2026-09-06 拍板替代虎皮椒聚合通道).
 
 v3 decisions (spec 2026-09-06, all three 拍板 confirmed):
 - registration writes a 7-day trial row **inside the register
@@ -170,6 +171,7 @@ def get_plans(user: dict[str, object] | None = None) -> dict[str, object]:
         "renewGraceDays": renew_grace_days(),
         "renewEligible": renew_eligible,
         "paymentEnabled": payment.is_configured(),
+        "channels": payment.channels_configured(),
     }
 
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import {
   cancelOrder,
   createOrder,
@@ -8,6 +9,7 @@ import {
   setRenewReminder
 } from '../../api';
 import type {
+  PaymentChannel,
   PaymentOrder,
   SubscriptionPlans,
   SubscriptionStatus,
@@ -23,11 +25,14 @@ import { Spinner, Toast, useFlash } from './shared';
 // - 状态卡按 trialing / active / expired 三态展示（PM 附则 2026-09-06）：
 //   trialing 显「试用剩余 X 天」；active 显「有效期至 X」+（续费窗口内）
 //   2.99 优惠倒计时只读展示；expired 显「已到期 · 只读模式」+ 续费 CTA；
-// - 收银台：下单 → 展示网关二维码 + 15 分钟倒计时 + 「取消支付」（订单级），
+// - 收银台：选档 → 选渠道（微信扫码 / 支付宝跳转官方收银台）→ 下单 →
+//   微信展示本地渲染的二维码（code_url → SVG）或支付宝跳转链接 +
+//   15 分钟倒计时 + 「取消支付」（订单级），
 //   3 秒轮询最新订单状态，支付成功即刷新状态卡；
 // - 手动续费模式：无「取消订阅 / 恢复订阅」语义，管理侧唯一开关是
 //   「续费提醒」toggle（默认开）；
-// - 支付未配置（虎皮椒密钥未就绪）：显式提示 + 按钮置灰，其余可浏览。
+// - 支付未配置（双通道密钥均未就绪）：显式提示 + 按钮置灰，其余可浏览；
+//   单渠道未配置：渠道按钮置灰标注「暂未开通」。
 // 全站文案硬约束：不出现「自动续费 / 连续包月 / 自动扣款」。
 
 type SubscriptionViewProps = {
@@ -41,8 +46,24 @@ type LoadState =
 
 type CheckoutState =
   | { phase: 'idle' }
-  | { phase: 'creating'; plan: string }
+  | { phase: 'selecting'; plan: string }
+  | { phase: 'creating'; plan: string; channel: PaymentChannel }
   | { phase: 'paying'; order: PaymentOrder };
+
+// CHANNELS drives the checkout channel picker: 渠道可用性来自 plans.channels
+// （后端按 env/密钥逐渠道判定），未配置渠道置灰并说明原因。
+const CHANNELS: Array<{
+  id: PaymentChannel;
+  name: string;
+  hint: string;
+}> = [
+  { id: 'wechat', name: '微信支付', hint: '扫码支付' },
+  { id: 'alipay', name: '支付宝', hint: '跳转官方收银台' }
+];
+
+function channelLabel(channel: string): string {
+  return channel === 'wechat' ? '微信支付' : channel === 'alipay' ? '支付宝' : channel;
+}
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -195,17 +216,21 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
     };
   }, [checkout.phase, pollLatest]);
 
-  async function startCheckout(plan: string): Promise<void> {
-    if (load.phase !== 'ready' || checkout.phase !== 'idle') {
+  async function startCheckout(plan: string, channel: PaymentChannel): Promise<void> {
+    if (load.phase !== 'ready' || checkout.phase === 'creating' || checkout.phase === 'paying') {
       return;
     }
     if (!load.plans.paymentEnabled) {
       showToast('支付通道尚未开通，暂时无法下单');
       return;
     }
-    setCheckout({ phase: 'creating', plan });
+    if (!load.plans.channels[channel]) {
+      showToast('该支付渠道尚未开通，请选择其他支付方式');
+      return;
+    }
+    setCheckout({ phase: 'creating', plan, channel });
     try {
-      const order = await createOrder(plan);
+      const order = await createOrder(plan, channel);
       if (!mounted.current) {
         return;
       }
@@ -410,7 +435,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                 disabled={!plans.paymentEnabled || checkout.phase !== 'idle'}
                 isPaying={checkout.phase === 'creating' && checkout.plan === tier.plan}
                 onBuy={() => {
-                  void startCheckout(tier.plan);
+                  setCheckout({ phase: 'selecting', plan: tier.plan });
                 }}
               />
             ))}
@@ -440,24 +465,60 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
           </ul>
         </div>
 
-        {/* 收银台（订单级 15 分钟倒计时 + 二维码 + 取消支付）。 */}
+        {/* 渠道选择（官方双通道：微信扫码 / 支付宝跳转收银台）。 */}
+        {checkout.phase === 'selecting' ? (
+          <div className="subscription-checkout" data-testid="subscription-channel-picker">
+            <h2 className="subscription-checkout-title">选择支付方式</h2>
+            <div className="subscription-channel-grid">
+              {CHANNELS.map((channel) => {
+                const available = plans.channels[channel.id] ?? false;
+                return (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    className="subscription-channel-button"
+                    data-testid={`channel-${channel.id}`}
+                    disabled={!available}
+                    onClick={() => {
+                      void startCheckout(checkout.plan, channel.id);
+                    }}
+                  >
+                    <span className="subscription-channel-name">{channel.name}</span>
+                    <span className="subscription-channel-hint">
+                      {available ? channel.hint : '暂未开通'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="auth-text-link"
+              onClick={() => {
+                setCheckout({ phase: 'idle' });
+              }}
+            >
+              返回
+            </button>
+          </div>
+        ) : null}
+
+        {/* 收银台（订单级 15 分钟倒计时 + 渠道差异化展示 + 取消支付）。 */}
         {checkout.phase === 'paying' ? (
           <div className="subscription-checkout" data-testid="subscription-checkout">
-            <h2 className="subscription-checkout-title">扫码支付</h2>
+            <h2 className="subscription-checkout-title">
+              {checkout.order.channel === 'wechat' ? '微信扫码支付' : '支付宝支付'}
+            </h2>
             <p className="subscription-checkout-amount">
               {formatAmountCents(checkout.order.amountCents)}
             </p>
-            {checkout.order.payQrUrl ? (
-              <img
-                className="subscription-checkout-qr"
-                src={checkout.order.payQrUrl}
-                alt="支付二维码（微信 / 支付宝扫码）"
-                width={200}
-                height={200}
-              />
+            {checkout.order.channel === 'wechat' ? (
+              <WechatQrCode content={checkout.order.payQrUrl} />
             ) : null}
             <p className="subscription-checkout-hint">
-              使用微信或支付宝扫码支付；支付完成本页会自动刷新
+              {checkout.order.channel === 'wechat'
+                ? '请使用微信「扫一扫」扫描上方二维码；支付完成本页会自动刷新'
+                : '点击下方按钮跳转支付宝官方收银台完成支付；支付后返回本页自动刷新'}
             </p>
             {countdownSeconds(checkout.order.expiresAt, nowMs) !== null ? (
               <p className="subscription-checkout-countdown" data-testid="checkout-countdown">
@@ -465,14 +526,14 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
               </p>
             ) : null}
             <div className="subscription-checkout-actions">
-              {checkout.order.payUrl ? (
+              {checkout.order.channel === 'alipay' && checkout.order.payUrl ? (
                 <a
-                  className="auth-ghost-cta"
+                  className="auth-cta"
                   href={checkout.order.payUrl}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  打开支付页面
+                  打开支付宝收银台
                 </a>
               ) : null}
               <button
@@ -486,6 +547,9 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                 {isCancelingOrder ? '取消中…' : '取消支付'}
               </button>
             </div>
+            <p className="subscription-checkout-channel">
+              支付渠道：{channelLabel(checkout.order.channel)}
+            </p>
           </div>
         ) : null}
 
@@ -499,6 +563,60 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
       </section>
       <Toast message={toastMessage} />
     </main>
+  );
+}
+
+// 微信 Native 支付的 code_url（weixin://wxpay/…）不是图片地址，二维码
+// 由前端本地渲染：qrcode 库生成内联 SVG（无 canvas 依赖，Node/jsdom 与
+// 浏览器行为一致），密钥/网关内容不经过任何第三方图片服务。
+function WechatQrCode({ content }: { content: string | null }) {
+  const [svg, setSvg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (content === null || content === '') {
+      setSvg(null);
+      return () => {
+        active = false;
+      };
+    }
+    QRCode.toString(content, {
+      type: 'svg',
+      margin: 1,
+      width: 200,
+      errorCorrectionLevel: 'M'
+    })
+      .then((rendered) => {
+        if (active) {
+          setSvg(rendered);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setSvg(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [content]);
+
+  if (content === null || content === '') {
+    return null;
+  }
+  if (svg === null) {
+    return (
+      <div className="subscription-checkout-qr subscription-checkout-qr-skeleton" aria-hidden="true" />
+    );
+  }
+  return (
+    <div
+      className="subscription-checkout-qr"
+      role="img"
+      aria-label="微信支付二维码"
+      data-testid="wechat-qr"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   );
 }
 
