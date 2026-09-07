@@ -2,12 +2,26 @@ import logging
 from pathlib import Path
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 from app.auth import ensure_super_account
 from app.books import DEFAULT_BOOK_ID, ensure_default_book
 from app.scheduling_migration import migrate_cards_sm2
 from app.user_isolation_migration import migrate_user_isolation
+
+# 2026-09-07 线上事故修复（database is locked，触 DB 端点 502/500 约 1h）：
+# 旧实现在每个 connect() 里跑 migrate()（executescript(schema.sql) + 一串
+# 写语句），读路径的连接也要抢写锁；叠加 prepare_book_words 的巨型单事务
+# （事务内逐词做 Oxford HTTP 拉取，写锁被持有分钟级），5s busy timeout 被
+# 耗尽后所有连接抛 OperationalError。修复三件套：
+#   1) busy_timeout 显式 ≥5s（覆盖读连接），migrate() 时切 WAL 读写不互斥；
+#   2) migrate() 每进程每个 DB 文件只跑一次（服务重启/新进程仍会执行）；
+#   3) enrichment 批量写入分批提交（见 services.prepare_book_words）。
+BUSY_TIMEOUT_MS = 5000
+
+_migrate_lock = threading.Lock()
+_migrated_paths: set[Path] = set()
 
 
 def _utc_now_iso() -> str:
@@ -24,14 +38,49 @@ def db_path() -> Path:
 def connect() -> sqlite3.Connection:
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    # timeout= 与下面的 PRAGMA busy_timeout 等价（毫秒粒度显式化）：读
+    # 连接在写方持锁期间排队等待，而不是立刻抛 database is locked。
+    connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
-    migrate(connection)
+    connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    _migrate_once(connection, path)
     return connection
 
 
+def _migrate_once(connection: sqlite3.Connection, path: Path) -> None:
+    """migrate() 对同一个 DB 文件在本进程内只跑一次。
+
+    旧实现每次 connect() 都执行 executescript(schema.sql) + 若干写语句
+    （UPDATE book_words 回填 / settings 写入 / 超级账号 provisioning），意味
+    着每条读路径（login、/api/books、/api/auth/me…）的连接都要抢写锁——
+    正是 2026-09-07 事故中读端点被 enrichment 长事务饿死的机制。迁移本身
+    幂等：服务重启（新进程）后首个连接会再次执行；同进程内换库（测试按
+    VOCAB_DB_PATH 切换 tmp 文件）按解析后的路径分别执行。
+    """
+    key = path.resolve()
+    with _migrate_lock:
+        if key in _migrated_paths:
+            return
+        migrate(connection)
+        _migrated_paths.add(key)
+
+
+def warm_up() -> None:
+    """应用启动钩子（main._lifespan 调用）：提前完成建库/迁移 + WAL 切换。
+
+    真正的保证在 connect() 的 per-path 一次性 migrate——即使启动路径没调
+    到这里（脚本 / 测试直接 connect()），第一个连接也会完成迁移。
+    """
+    with connect() as connection:  # noqa: SIM117
+        connection.execute("select 1").fetchone()
+
+
 def migrate(connection: sqlite3.Connection) -> None:
+    # WAL：读写不互斥，后台批量写进行时读连接不再被阻塞；写写之间仍串
+    # 行，由 busy_timeout 排队。journal_mode 持久化在 DB 文件里，对已是
+    # WAL 的库此语句是幂等 no-op。
+    connection.execute("PRAGMA journal_mode=WAL")
     schema_path = Path(__file__).with_name("schema.sql")
     connection.executescript(schema_path.read_text(encoding="utf-8"))
 

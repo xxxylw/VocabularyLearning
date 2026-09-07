@@ -142,9 +142,12 @@ def test_legacy_mock_rows_retired_with_remark(cloud_env, email_spy):
         # 重置一次性迁移守卫，模拟下一次 connect 触发迁移。
         connection.execute("delete from settings where key = 'v3_mock_cleanup_done'")
 
-    from app.db import connect
+    from app.db import connect, migrate
 
+    # migrate 自 2026-09-07 修复后每进程每库只跑一次（见 app/db.py）。
+    # 显式调用 migrate 模拟「服务重启后首个连接」触发的迁移。
     with connect() as connection:
+        migrate(connection)
         rows = connection.execute(
             "select status, remark from subscriptions where source = 'mock'"
         ).fetchall()

@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import emailing
+from app import db as db_module
 from app.routes import health, router
 from app.routes_auth import router as auth_router
 from app.routes_subscription import router as subscription_router
@@ -18,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # 2026-09-07 事故修复：启动时完成 schema 迁移 + WAL 切换（connect() 里
+    # 的 per-path 一次性 migrate，见 app/db.py），确保进入服务态后读路径
+    # 连接不再为迁移抢写锁。失败则让启动直接失败——DB 不可用时服务无法
+    # 提供任何功能，与其带病 502 不如让 systemd 状态一目了然。
+    db_module.warm_up()
+
     # Startup self-check (P0 follow-up): Brevo answers 201 even when the
     # sender is not validated and then silently drops the email, so the
     # app itself must surface the misconfiguration at boot. The check

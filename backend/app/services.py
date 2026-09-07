@@ -191,6 +191,16 @@ def prepare_book_words(
     today = date.today().isoformat()
     provider = _create_enrichment_provider()
 
+    # 2026-09-07 事故修复（database is locked）：旧实现把整批词包在**一个**
+    # 事务里（单条 connect() 的 with 块），且 Oxford HTTP 拉取发生在事务内
+    # ——首个写语句后写锁被持有到整批结束（词多 + 每词一次网络往返可达
+    # 分钟级），期间其他连接的 migrate/读路径全部排队超时。现在：
+    #   * 读阶段（选词）单独一个连接，只读不持锁；
+    #   * enrichment HTTP 调用发生在任何事务之外（先读连接判断共享词条
+    #     是否已存在，不存在才拉取）——慢网络只拖慢单词时延，不再持锁；
+    #   * 每词一个短事务（词/词条/例句/卡片/状态一起提交），锁持有时间
+    #     从「整批」降到「毫秒级每词」；中途失败时已完成的词保持 ready
+    #     （幂等可重入），prepare_jobs 行仍只在全部处理后写入。
     with connect() as connection:
         if request.bookId:
             # PRD ch.10: batch jobs target a specific book without touching
@@ -231,13 +241,35 @@ def prepare_book_words(
             (book_id, user_id, count),
         ).fetchall()
 
-        job_id = str(uuid4())
-        ready_cards = 0
-        processed_words = 0
+    job_id = str(uuid4())
+    ready_cards = 0
+    processed_words = 0
 
-        for book_word in book_words:
-            word_text = book_word["word_text"]
-            normalized_text = book_word["normalized_text"] or normalize_word(word_text)
+    for book_word in book_words:
+        word_text = book_word["word_text"]
+        normalized_text = book_word["normalized_text"] or normalize_word(word_text)
+
+        # 共享词条是否已存在：读连接即可判断（WAL 下读不持锁、也不被写
+        # 方阻塞）。overwriteExisting 会删除词条（见下），因此总是重新
+        # 拉取。HTTP 拉取发生在下面写事务开启之前。
+        if request.overwriteExisting:
+            needs_prepare = True
+        else:
+            with connect() as connection:
+                shared_entries = connection.execute(
+                    """
+                    select 1
+                    from entries
+                    join words on words.id = entries.word_id
+                    where words.normalized_text = ?
+                    limit 1
+                    """,
+                    (normalized_text,),
+                ).fetchone()
+            needs_prepare = shared_entries is None
+        senses = provider.prepare(word_text, max_senses) if needs_prepare else None
+
+        with connect() as connection:
             word_id = _upsert_word(
                 connection=connection,
                 word_text=word_text,
@@ -269,7 +301,11 @@ def prepare_book_words(
             ).fetchall()
 
             if not entry_rows:
-                senses = provider.prepare(word_text, max_senses)
+                # 正常路径 senses 已在事务外拉取；None 只会出现在与并发
+                # prepare 的窗口竞态里（词条在检查之后才消失），保持原
+                # 语义回退到 provider。
+                if senses is None:
+                    senses = provider.prepare(word_text, max_senses)
                 for sense_order, sense in enumerate(senses, start=1):
                     entry_id = str(uuid4())
                     connection.execute(
@@ -376,6 +412,7 @@ def prepare_book_words(
             )
             processed_words += 1
 
+    with connect() as connection:
         connection.execute(
             """
             insert into prepare_jobs (
@@ -405,7 +442,6 @@ def prepare_book_words(
                 now,
             ),
         )
-
     return PrepareJobResponse(
         jobId=job_id,
         status="completed",

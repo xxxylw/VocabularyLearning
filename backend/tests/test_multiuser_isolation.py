@@ -355,9 +355,12 @@ def test_second_user_reuses_shared_entries_without_new_provider_calls(
         )
         for index, word in enumerate(("charge", "decline"), start=1):
             connection.execute(
-                "insert into book_words (id, source_id, sequence_index, word_text,"
+                # migrate 自 2026-09-07 修复后每进程每库只跑一次（见
+                # app/db.py），测试内播种的行必须直接带 book_id，不能
+                # 再依赖下一次 connect 的迁移回填。
+                "insert into book_words (id, book_id, source_id, sequence_index, word_text,"
                 " normalized_text, import_status, created_at, updated_at)"
-                " values (?, 'source-1', ?, ?, ?, 'pending',"
+                " values (?, 'default-book', 'source-1', ?, ?, ?, 'pending',"
                 " '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (f"bw-{index}", index, word, word),
             )
@@ -385,9 +388,12 @@ def test_due_queue_and_review_state_are_isolated(two_users):
         )
         for index, word in enumerate(("charge", "decline"), start=1):
             connection.execute(
-                "insert into book_words (id, source_id, sequence_index, word_text,"
+                # migrate 自 2026-09-07 修复后每进程每库只跑一次（见
+                # app/db.py），测试内播种的行必须直接带 book_id，不能
+                # 再依赖下一次 connect 的迁移回填。
+                "insert into book_words (id, book_id, source_id, sequence_index, word_text,"
                 " normalized_text, import_status, created_at, updated_at)"
-                " values (?, 'source-1', ?, ?, ?, 'pending',"
+                " values (?, 'default-book', 'source-1', ?, ?, ?, 'pending',"
                 " '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (f"bw-{index}", index, word, word),
             )
@@ -435,9 +441,12 @@ def test_user_cannot_review_anothers_card(two_users):
         )
         for index, word in enumerate(("charge", "decline"), start=1):
             connection.execute(
-                "insert into book_words (id, source_id, sequence_index, word_text,"
+                # migrate 自 2026-09-07 修复后每进程每库只跑一次（见
+                # app/db.py），测试内播种的行必须直接带 book_id，不能
+                # 再依赖下一次 connect 的迁移回填。
+                "insert into book_words (id, book_id, source_id, sequence_index, word_text,"
                 " normalized_text, import_status, created_at, updated_at)"
-                " values (?, 'source-1', ?, ?, ?, 'pending',"
+                " values (?, 'default-book', 'source-1', ?, ?, ?, 'pending',"
                 " '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (f"bw-{index}", index, word, word),
             )
@@ -472,9 +481,12 @@ def test_regular_user_cannot_overwrite_existing(two_users):
         )
         for index, word in enumerate(("charge", "decline"), start=1):
             connection.execute(
-                "insert into book_words (id, source_id, sequence_index, word_text,"
+                # migrate 自 2026-09-07 修复后每进程每库只跑一次（见
+                # app/db.py），测试内播种的行必须直接带 book_id，不能
+                # 再依赖下一次 connect 的迁移回填。
+                "insert into book_words (id, book_id, source_id, sequence_index, word_text,"
                 " normalized_text, import_status, created_at, updated_at)"
-                " values (?, 'source-1', ?, ?, ?, 'pending',"
+                " values (?, 'default-book', 'source-1', ?, ?, ?, 'pending',"
                 " '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (f"bw-{index}", index, word, word),
             )
@@ -497,9 +509,12 @@ def test_progress_statistics_are_per_user(two_users):
         )
         for index, word in enumerate(("charge", "decline"), start=1):
             connection.execute(
-                "insert into book_words (id, source_id, sequence_index, word_text,"
+                # migrate 自 2026-09-07 修复后每进程每库只跑一次（见
+                # app/db.py），测试内播种的行必须直接带 book_id，不能
+                # 再依赖下一次 connect 的迁移回填。
+                "insert into book_words (id, book_id, source_id, sequence_index, word_text,"
                 " normalized_text, import_status, created_at, updated_at)"
-                " values (?, 'source-1', ?, ?, ?, 'pending',"
+                " values (?, 'default-book', 'source-1', ?, ?, ?, 'pending',"
                 " '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (f"bw-{index}", index, word, word),
             )
@@ -571,9 +586,12 @@ def test_today_queue_snapshot_is_per_user(two_users):
         )
         for index, word in enumerate(("charge", "decline"), start=1):
             connection.execute(
-                "insert into book_words (id, source_id, sequence_index, word_text,"
+                # migrate 自 2026-09-07 修复后每进程每库只跑一次（见
+                # app/db.py），测试内播种的行必须直接带 book_id，不能
+                # 再依赖下一次 connect 的迁移回填。
+                "insert into book_words (id, book_id, source_id, sequence_index, word_text,"
                 " normalized_text, import_status, created_at, updated_at)"
-                " values (?, 'source-1', ?, ?, ?, 'pending',"
+                " values (?, 'default-book', 'source-1', ?, ?, ?, 'pending',"
                 " '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
                 (f"bw-{index}", index, word, word),
             )
