@@ -10,7 +10,9 @@ import { setSessionToken } from './session';
 // App is mocked away — its own integration tests render it directly.
 
 vi.mock('./App', () => ({
-  App: () => <div data-testid="study-app" />
+  App: (props: { userEmail?: string | null }) => (
+    <div data-testid="study-app" data-user-email={props.userEmail ?? ''} />
+  )
 }));
 
 function ok(body: unknown, status = 200) {
@@ -117,14 +119,17 @@ describe('VocabApp subscription routing (batch 3)', () => {
     });
   });
 
-  it('renders the study app for authed users on study routes', async () => {
+  it('renders the study app for authed users on study routes and passes the login email through to App', async () => {
     setSessionToken('token-1');
     window.location.hash = '#/';
     vi.stubGlobal('fetch', stubSessionFetch(ACTIVE));
 
     render(<VocabApp />);
 
-    expect(await screen.findByTestId('study-app')).toBeInTheDocument();
+    const app = await screen.findByTestId('study-app');
+    expect(app).toBeInTheDocument();
+    // V3 P2: session.user.email 从 /api/auth/me 贯通到 App（Today 首行邮箱）。
+    expect(app).toHaveAttribute('data-user-email', 'user@example.com');
   });
 
   it('redirects a guest on /subscription to the login page with next', async () => {

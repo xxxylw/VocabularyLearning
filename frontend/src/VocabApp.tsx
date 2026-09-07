@@ -265,6 +265,7 @@ export function VocabApp() {
         </aside>
       ) : null}
       <App
+        userEmail={session.user.email}
         readOnly={session.subscription?.readOnly === true}
         onGoSubscribe={() => navigate('/subscription')}
       />

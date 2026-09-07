@@ -16,6 +16,9 @@ type TodayViewProps = {
   // current book request is in flight or the backend predates ch.9.
   bookTotalWords?: number | null;
   bookLearnedWords?: number | null;
+  // V3 P2: 登录账号邮箱（Today 首行右侧只读展示）。未登录/缺失时
+  // 不渲染该元素，eyebrow 行布局自动回落为现状。
+  userEmail?: string | null;
   onOpenBookShelf?: () => void;
   // V3-01 只读模式：订阅到期后学习动作锁定（书架/进度/统计仍可看）。
   readOnly?: boolean;
@@ -34,6 +37,7 @@ export function TodayView({
   bookTitle,
   bookTotalWords,
   bookLearnedWords,
+  userEmail,
   onOpenBookShelf,
   readOnly = false,
   onGoSubscribe
@@ -64,7 +68,16 @@ export function TodayView({
   return (
     <section className="today-view" aria-labelledby="today-title">
       <div className="today-copy">
-        <p className="eyebrow">Today</p>
+        <p className="today-eyebrow-row">
+          <span className="eyebrow">Today</span>
+          {userEmail ? (
+            // V3 P2 首页 UI：登录邮箱只读展示（12px 灰阶、超长省略、
+            // title 保留完整地址）。未登录时整个 span 不渲染。
+            <span className="today-user-email" data-testid="today-user-email" title={userEmail}>
+              {userEmail}
+            </span>
+          ) : null}
+        </p>
         {bookTitle ? (
           <p className="book-title" data-testid="current-book-title">
             单词书：{bookTitle}
@@ -74,6 +87,7 @@ export function TodayView({
         <p className="today-note">
           A quiet desk, a short queue, and a focused pass through the words waiting for you.
         </p>
+        <p className="today-motto">背下的每个词，都是去看世界的路</p>
         {bookTitle && onOpenBookShelf ? (
           // PRD ch.9: programmatic cover card (pure CSS spine style) —
           // 书名 > 总词数 > 学习进度读数. The whole card is the entry to

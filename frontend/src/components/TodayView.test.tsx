@@ -9,6 +9,35 @@ describe('TodayView', () => {
     vi.useRealTimers();
   });
 
+  it('shows the signed-in email in the eyebrow row when userEmail is provided', () => {
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        userEmail="qirui.huang@flexiv.com"
+      />
+    );
+
+    const email = screen.getByTestId('today-user-email');
+    expect(email).toHaveTextContent('qirui.huang@flexiv.com');
+    // Full address stays available via the title attribute when truncated.
+    expect(email).toHaveAttribute('title', 'qirui.huang@flexiv.com');
+  });
+
+  it('does not render the email element when userEmail is missing', () => {
+    render(<TodayView onStart={vi.fn()} isLoading={false} newWordTarget={20} onNewWordTargetChange={vi.fn()} />);
+
+    expect(screen.queryByTestId('today-user-email')).not.toBeInTheDocument();
+  });
+
+  it('renders the "go see the world" motto below the note', () => {
+    render(<TodayView onStart={vi.fn()} isLoading={false} newWordTarget={20} onNewWordTargetChange={vi.fn()} />);
+
+    expect(screen.getByText('背下的每个词，都是去看世界的路')).toBeInTheDocument();
+  });
+
   it('renders Start today cards and calls onStart when clicked', async () => {
     const user = userEvent.setup();
     const onStart = vi.fn();

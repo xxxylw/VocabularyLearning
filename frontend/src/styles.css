@@ -83,6 +83,37 @@ a {
   text-transform: uppercase;
 }
 
+/* V3 P2 首页 UI：eyebrow 行两端对齐 — 左「Today」，右登录邮箱。 */
+.today-eyebrow-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 12px;
+}
+
+.today-eyebrow-row .eyebrow {
+  margin: 0;
+}
+
+.today-user-email {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  color: #6a6257;
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* V3 P2 首页 UI：「去看世界」鼓励语 — today-note 下方、比其略重一档。 */
+.today-motto {
+  margin: 10px 0 0;
+  color: #4a443c;
+  font-size: 0.875rem;
+}
+
 .book-title {
   margin: 0 0 12px;
   color: #4a3b52;
