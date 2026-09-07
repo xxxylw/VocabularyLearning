@@ -63,6 +63,33 @@ const EXPIRED = {
   renewReminder: true
 };
 
+// P2 #1（设计定稿 2026-09-07）字段口径异常态：只读徽章 + 未来 expires_at
+// （v2 mock 清退遗留行的形状，走查账号线上实测），需降级为不带日期文案。
+const EXPIRED_FUTURE_DATE = {
+  ...EXPIRED,
+  plan: 'monthly',
+  source: 'mock',
+  expiresAt: '2026-10-06T00:00:00+00:00',
+  renewEligible: false,
+  renewDeadline: null
+};
+
+// P2 #1：expires_at 不可得（空视图/清退遗留无日期）同样降级。
+const EXPIRED_NO_DATE = {
+  ...EXPIRED,
+  expiresAt: null,
+  renewEligible: false,
+  renewDeadline: null
+};
+
+// 本地时区无关的期望日期（与组件 formatExpiredLine 同一口径）。
+function localDatestamp(iso: string): string {
+  const date = new Date(iso);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 const SUPER_VIEW = {
   subscribed: true,
   plan: null,
@@ -304,14 +331,47 @@ describe('SubscriptionView', () => {
     expect(screen.getByTestId('channel-alipay')).toBeDisabled();
   });
 
-  it('expired read-only state: badge + renewal CTA + skip link copy', async () => {
+  it('expired read-only state: badge + past-tense dated line + renewal CTA + skip link copy', async () => {
     vi.stubGlobal('fetch', stubFetch(PLANS, EXPIRED));
 
     render(<SubscriptionView />);
 
     expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('已到期 · 只读模式');
+    // P2 #1（设计定稿 2026-09-07）：到期主行 = 过去时「已于 X 到期」，
+    // 日期与状态之间有分隔，不再出现「有效期至 X到期」无分隔拼接。
+    expect(screen.getByTestId('subscription-expiry')).toHaveTextContent(
+      `已于 ${localDatestamp(EXPIRED.expiresAt)} 到期 · 书架、进度与统计仍可浏览`
+    );
+    expect(screen.getByTestId('subscription-expiry').textContent).not.toContain('有效期至');
     expect(screen.getByRole('button', { name: '续费' })).toBeInTheDocument();
     expect(screen.getByText('返回浏览（只读模式）')).toBeInTheDocument();
+  });
+
+  it('P2 #1: anomalous future expires_at degrades to the dateless line (never a future date)', async () => {
+    // 走查账号实测形状：只读徽章 + 未来 2026-10-06。钉死系统时间，
+    // 保证「未来日期」判定与真实走查口径一致。
+    vi.setSystemTime(new Date('2026-09-07T04:00:00+00:00'));
+    vi.stubGlobal('fetch', stubFetch(PLANS, EXPIRED_FUTURE_DATE));
+
+    render(<SubscriptionView />);
+
+    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('已到期 · 只读模式');
+    const line = screen.getByTestId('subscription-expiry');
+    expect(line).toHaveTextContent('订阅已到期 · 书架、进度与统计仍可浏览');
+    expect(line.textContent).not.toContain('2026-10-06');
+    expect(line.textContent).not.toContain('有效期至');
+    expect(line.textContent).not.toContain('已于');
+  });
+
+  it('P2 #1: missing expires_at renders the dateless degraded line', async () => {
+    vi.stubGlobal('fetch', stubFetch(PLANS, EXPIRED_NO_DATE));
+
+    render(<SubscriptionView />);
+
+    expect(await screen.findByTestId('subscription-expiry')).toHaveTextContent(
+      '订阅已到期 · 书架、进度与统计仍可浏览'
+    );
+    expect(screen.getByTestId('subscription-badge')).toHaveTextContent('已到期 · 只读模式');
   });
 
   it('active state: expiry + renew-reminder toggle wired to PUT', async () => {

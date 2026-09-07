@@ -22,9 +22,12 @@ import { Spinner, Toast, useFlash } from './shared';
 // v3 P0 订阅页（V3-01/V3-02/V3-03）。整页数据驱动：
 // - 四档价格全部来自 GET /api/subscription/plans（配置化，改价不发版），
 //   通过 formatPrice() 渲染，文案不出现任何硬编码金额；
-// - 状态卡按 trialing / active / expired 三态展示（PM 附则 2026-09-06）：
+// - 状态卡按 trialing / active / expired 三态展示（PM 附则 2026-09-06；
+//   expired 主行文案按设计定稿 2026-09-07 P2 #1 修订）：
 //   trialing 显「试用剩余 X 天」；active 显「有效期至 X」+（续费窗口内）
-//   2.99 优惠倒计时只读展示；expired 显「已到期 · 只读模式」+ 续费 CTA；
+//   2.99 优惠倒计时只读展示；expired 显「已于 X 到期 · 书架、进度与
+//   统计仍可浏览」（过去时；expires_at 不可得或未来日期时降级为
+//   「订阅已到期」不展示日期）+ 续费 CTA；
 // - 收银台：选档 → 选渠道（微信扫码 / 支付宝跳转官方收银台）→ 下单 →
 //   微信展示本地渲染的二维码（code_url → SVG）或支付宝跳转链接 +
 //   15 分钟倒计时 + 「取消支付」（订单级），
@@ -91,6 +94,25 @@ function formatExpiryDate(expiresAt: string | null): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `有效期至 ${year}-${month}-${day}`;
+}
+
+// P2 #1（设计定稿 2026-09-07）：到期只读态主行统一过去时「已于 X 到期」。
+// expires_at 不可得（null / 非法日期）或取到未来日期（字段口径异常，如
+// v2 mock 清退遗留的行带着未来 expires_at）时降级为不带日期的
+// 「订阅已到期」。铁律：已到期状态绝不出现未来日期；日期与状态文案
+// 之间必须有分隔（禁止「有效期至 2026-10-06到期」这类无分隔拼接）。
+function formatExpiredLine(expiresAt: string | null): string {
+  const suffix = ' · 书架、进度与统计仍可浏览';
+  if (expiresAt !== null) {
+    const date = new Date(expiresAt);
+    if (!Number.isNaN(date.getTime()) && date.getTime() <= Date.now()) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `已于 ${year}-${month}-${day} 到期${suffix}`;
+    }
+  }
+  return `订阅已到期${suffix}`;
 }
 
 function formatAmountCents(amountCents: number): string {
@@ -365,8 +387,8 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                 <span className="subscription-badge subscription-badge-expired" data-testid="subscription-badge">
                   已到期 · 只读模式
                 </span>
-                <p className="subscription-expiry">
-                  {formatExpiryDate(status.expiresAt)}到期 · 书架、进度与统计仍可浏览
+                <p className="subscription-expiry" data-testid="subscription-expiry">
+                  {formatExpiredLine(status.expiresAt)}
                 </p>
                 {status.renewEligible && status.renewDeadline !== null ? (
                   <p className="subscription-renew-window">
