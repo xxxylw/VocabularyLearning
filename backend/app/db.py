@@ -123,6 +123,25 @@ def migrate(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_reviews_card ON reviews (card_id)"
     )
 
+    # 2026-09-07 today/start 慢查询修复（QA 第三轮：gaokao /
+    # kaoyan-shanguo 稳定 502 @ ~5.04s，与书架同源）。today/start 链路
+    # （prepare_today_review / due 队列 / 进度聚合）里每张到期卡都要对
+    # book_words 做 EXISTS 探测和 min(sequence_index) 标量子查询，而
+    # 现有索引 idx_book_words_book_sequence(book_id, sequence_index) 对
+    # normalized_text 无约束 —— EXPLAIN 显示每个探测都是对该书全部
+    # 词行（3k~8.7k 行）的范围扫，用户卡越多乘数越大。补两个索引：
+    #   * idx_book_words_book_normalized —— 覆盖索引，EXISTS / min()
+    #     双双退化为点查；
+    #   * idx_reviews_user_card —— reviews 侧 user 维度检索（_count_
+    #     new_words_studied_on 等按用户聚合的查询）不再全表扫。
+    #     注意它依赖 reviews.user_id 列，而旧库该列由下面的
+    #     migrate_user_isolation 才补上，所以这条索引建在函数尾
+    #     （migrate_cards_sm2 之后），不能搬到这里。
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_book_words_book_normalized"
+        " ON book_words (book_id, normalized_text, sequence_index)"
+    )
+
     # Verify/reset token table comment (C-05): 1h expiry, single use
     # (used_at), stored hashed like sessions.
     # C-01a (2026-09-05): the table now carries 6-digit email codes —
@@ -204,4 +223,12 @@ def migrate(connection: sqlite3.Connection) -> None:
     # after the first successful run (settings flag), idempotent and
     # chunked so an interrupted run resumes from its cursor.
     migrate_cards_sm2(connection)
+
+    # 放在两个数据迁移之后：reviews.user_id 列在旧库上由
+    # migrate_user_isolation 补建（schema.sql 的 CREATE TABLE IF NOT
+    # EXISTS 对已存在的旧表是 no-op），索引建早了会报 no such column。
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reviews_user_card"
+        " ON reviews (user_id, card_id)"
+    )
     connection.commit()

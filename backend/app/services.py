@@ -346,11 +346,20 @@ def prepare_book_words(
                     -- card of it. import_status is a shared enrichment
                     -- flag: once one user prepared a word, everyone else
                     -- still gets their own cards from the shared entries.
+                    -- CROSS JOIN 钉死 words→entries→cards 的索引驱动顺序
+                    -- （normalized 唯一索引点查 → (word_id, sense_order)
+                    -- 点查 → (user_id, entry_id) 唯一点查）。旧写法让优化
+                    -- 器以 cards(user_id=?) 为驱动整范围扫该用户所有卡，
+                    -- 每个 book_words 词行重复一次：重书（~6500 词 ×
+                    -- 3 万卡）实测 105s，today/start 的 merge 路径和
+                    -- prepare 端点都会被网关 5s 超时掐断。
                     select 1
-                    from entries
-                    join words on words.id = entries.word_id
-                    join cards on cards.entry_id = entries.id
+                    from words
+                    cross join entries
+                    cross join cards
                     where words.normalized_text = book_words.normalized_text
+                      and entries.word_id = words.id
+                      and cards.entry_id = entries.id
                       and cards.user_id = ?
                 )
               )
@@ -662,6 +671,20 @@ def _merge_new_cards_into_today_queue(
                 (user_id, book_id, study_date.isoformat()),
             ).fetchall()
         }
+        # 已入队的卡（无论 review / new 类型）都不能再作为 fresh 新卡
+        # 追加：一个多义词可能以 review 类型入队、其主卡又是未复习的
+        # 新卡，只按 new 类型过滤会把同一 (user, book, date, card_id)
+        # 再插一次，撞 idx_today_queue_card 唯一索引（2026-09-07 生产
+        # 日志 IntegrityError 的单线程可复现根因；快照路径的
+        # review_card_ids 过滤一直是对的，这里对齐它）。
+        queued_any_card_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                "select card_id from today_queue"
+                " where user_id = ? and book_id = ? and study_date = ?",
+                (user_id, book_id, study_date.isoformat()),
+            ).fetchall()
+        }
         reviewed_queued_new = connection.execute(
             """
             select count(*) as total
@@ -693,8 +716,25 @@ def _merge_new_cards_into_today_queue(
     candidates = _get_due_new_cards(
         study_date, remaining + len(queued_new_card_ids), user_id
     )
+    # 跨池新词抵扣：多义词的 new 侧主卡在快照创建时被按词去重、以
+    # review 类型入队（见 _create_today_queue_snapshot 的 review_card_ids
+    # 过滤）。它们当日首次复习即计入新词学习（_count_new_words_studied_on
+    # 的口径），与 new 类型入队卡同样消耗当日配额。旧公式漏抵扣这批卡，
+    # merge 会误判「额度未满、池子已耗尽」，进而同步跑
+    # prepare_book_words —— prepare 选词对重书是百秒级查询，直接把
+    # today/start 拖过网关 5s 超时（2026-09-07 基准 kaoyan-shanguo：
+    # merge 路径 106s，其中 prepare 105s）。
+    cross_pool_queued = sum(
+        1
+        for card in candidates
+        if card.cardId in queued_any_card_ids
+        and card.cardId not in queued_new_card_ids
+    )
+    remaining -= cross_pool_queued
+    if remaining <= 0:
+        return
     fresh_cards = [
-        card for card in candidates if card.cardId not in queued_new_card_ids
+        card for card in candidates if card.cardId not in queued_any_card_ids
     ]
     if len(fresh_cards) < remaining:
         # The quota grew mid-day but the pool has no ready new cards left:
@@ -712,7 +752,7 @@ def _merge_new_cards_into_today_queue(
             study_date, remaining + len(queued_new_card_ids), user_id
         )
         fresh_cards = [
-            card for card in candidates if card.cardId not in queued_new_card_ids
+            card for card in candidates if card.cardId not in queued_any_card_ids
         ]
     fresh_cards = fresh_cards[:remaining]
     if not fresh_cards:
@@ -740,6 +780,20 @@ def _append_today_queue_rows(
 
     with connect() as connection:
         book_id = get_current_book_id(connection, user_id)
+        # 前面 get_current_book_id 链路（ensure_default_book /
+        # set_current_book_pointer）的 DML 在 Python sqlite3 默认
+        # isolation_level 下可能已隐式开启事务；先把它们提交掉，避免
+        # 显式 BEGIN IMMEDIATE 撞 "cannot start a transaction within a
+        # transaction"（review_card 的 BEGIN IMMEDIATE 是 with 块第一条
+        # 语句所以无此问题）。
+        if connection.in_transaction:
+            connection.commit()
+        # BEGIN IMMEDIATE：读 max(position) 到写完的整段在一个写事务里
+        # 原子完成。旧实现读位置时不持写锁，两个并发 today/start（网关
+        # 超时后前端重试是常见来源）会各自算出相同的起始 position，
+        # 后提交方撞 (user, book, date, position) 或
+        # (user, book, date, card_id) 唯一索引直接 500。
+        connection.execute("BEGIN IMMEDIATE")
         if create_snapshot:
             connection.execute(
                 "insert or ignore into today_queue_snapshots"
@@ -754,9 +808,12 @@ def _append_today_queue_rows(
         ).fetchone()
         position = row["next_position"] + 1
         for card, queue_type in entries:
+            # insert or ignore：同一卡在重试/并发下重复追加时静默跳过
+            # （唯一索引 idx_today_queue_card 兜底幂等），而不是让整个
+            # today/start 500。
             connection.execute(
                 """
-                insert into today_queue (
+                insert or ignore into today_queue (
                     id, user_id, book_id, study_date, position, card_id,
                     queue_type, created_at
                 ) values (?, ?, ?, ?, ?, ?, ?, ?)
@@ -844,15 +901,20 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
                     cards.id as card_id,
                     cards.last_reviewed_at,
                     words.normalized_text
-                from cards
-                join entries on entries.id = cards.entry_id
-                join words on words.id = entries.word_id
-                where cards.due_at <= ?
+                from words
+                cross join entries
+                cross join cards
+                -- CROSS JOIN 钉死 words→entries→cards 的索引驱动顺序；
+                -- due_at / status 作为索引后过滤条件（见
+                -- _study_cards_from_rows 的同型注释）。
+                where words.normalized_text in ({word_placeholders})
+                  and entries.word_id = words.id
+                  and cards.entry_id = entries.id
+                  and cards.due_at <= ?
                   and cards.user_id = ?
                   and cards.status in ('new', 'learning', 'mastered')
-                  and words.normalized_text in ({word_placeholders})
                 """,
-                (study_date.isoformat(), user_id, *pending_words),
+                (*pending_words, study_date.isoformat(), user_id),
             ).fetchall()
             study_cards = _study_cards_from_rows(connection, due_rows, user_id)
             cards_by_id = {card.cardId: card for card in study_cards}
@@ -1166,18 +1228,35 @@ def _count_new_words_studied_on(user_id: str, study_date: date) -> int:
                         and book_words.book_id = ?
                   )
                   and not exists (
+                    -- CROSS JOIN 钉死 entries→cards→reviews 的索引驱动
+                    -- 顺序（idx_entries_word_sense_order → idx_cards_entry
+                    -- → idx_reviews_user_card，全部点查）。旧写法把
+                    -- previous_reviews 放在驱动位、以 user_id 过滤，SQLite
+                    -- 为其建 AUTOMATIC INDEX 后每个外层行仍要全量扫该
+                    -- 用户的全部复习记录 —— 用户复习越多该查询越慢，是
+                    -- today/start 慢查询的组成部分之一。
                     select 1
-                    from reviews previous_reviews
-                    join cards previous_cards on previous_cards.id = previous_reviews.card_id
-                    join entries previous_entries on previous_entries.id = previous_cards.entry_id
-                    where previous_reviews.user_id = ?
-                      and previous_entries.word_id = entries.word_id
+                    from entries previous_entries
+                    cross join cards previous_cards
+                    cross join reviews previous_reviews
+                    where previous_entries.word_id = entries.word_id
+                      and previous_cards.entry_id = previous_entries.id
+                      and previous_cards.user_id = ?
+                      and previous_reviews.card_id = previous_cards.id
+                      and previous_reviews.user_id = ?
                       and substr(previous_reviews.reviewed_at, 1, 10) < ?
                   )
                 group by words.normalized_text
             )
             """,
-            (user_id, study_date.isoformat(), book_id, user_id, study_date.isoformat()),
+            (
+                user_id,
+                study_date.isoformat(),
+                book_id,
+                user_id,
+                user_id,
+                study_date.isoformat(),
+            ),
         ).fetchone()
 
     return row["total"]
@@ -1220,10 +1299,17 @@ def _study_cards_from_rows(
                 where book_words.normalized_text = words.normalized_text
                   and book_words.book_id = ?
             ) as book_sequence_index
-        from cards
-        join entries on entries.id = cards.entry_id
-        join words on words.id = entries.word_id
+        from words
+        cross join entries
+        cross join cards
+        -- CROSS JOIN 钉死 words→entries→cards 的索引驱动顺序（normalized
+        -- 唯一索引 → idx_entries_word_sense_order → idx_cards_entry）。
+        -- 旧写法让优化器自由选择连接顺序，实际计划以 cards(user_id=?) 为
+        -- 驱动全量扫该用户所有卡，再对每行做 normalized_text IN 过滤——
+        -- 队列响应构建（today/start 主链路）随用户卡总量线性变慢。
         where words.normalized_text in ({normalized_placeholders})
+          and entries.word_id = words.id
+          and cards.entry_id = entries.id
           and cards.user_id = ?
           and cards.status in ('new', 'learning', 'mastered')
         order by

@@ -181,13 +181,18 @@ def lookup_oxford(
     try:
         result = lookup_oxford_word(word)
     except ValueError as error:
+        # café / résumé 这类带重音字符的 400 是明示的字符集设计约束，
+        # 客户端本地 fallback（QA 第三轮确认不改）。
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except OSError as error:
-        raise HTTPException(status_code=502, detail="Oxford lookup is temporarily unavailable") from error
+    except OSError:
+        # 兜底：lookup_oxford_word 已把上游 OSError 归一为空数据；若
+        # 未来调用路径变化再抛 OSError，这里仍按 B2 诚实降级返回
+        # 200 + 空数据，而不是 5xx。
+        result = OxfordLookupResponse(word=word, sourceUrl="", senses=[])
 
-    if not result.senses:
-        raise HTTPException(status_code=404, detail=f"No Oxford definitions found for '{word}'")
-
+    # B2 诚实降级：查不到释义 = 200 + 空 senses，不再 404（QA 第三轮：
+    # abeyance 404、aboveboard 等词 502）。客户端只区分「400 字符集
+    # 不支持」与「200 空/有数据」两种形态。
     return result
 
 

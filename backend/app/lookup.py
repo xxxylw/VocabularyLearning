@@ -30,7 +30,16 @@ def lookup_oxford_word(word: str) -> OxfordLookupResponse:
         return last_result
 
     if last_error is not None:
-        raise last_error
+        # B2 诚实降级：Oxford 上游不可用（超时 / 网络错误 / 被反爬拦截）
+        # = 200 + 空数据，不再把 OSError 抛给路由层变成 5xx。客户端把
+        # 空 senses 视为「查不到」，上游故障不暴露成服务端故障（QA
+        # 第三轮：aboveboard / abash / abnegate / e-mail / human being
+        # 等合法词 502）。
+        return OxfordLookupResponse(
+            word=normalized_word,
+            sourceUrl=oxford_definition_url(normalized_word),
+            senses=[],
+        )
 
     return OxfordLookupResponse(
         word=normalized_word,
@@ -51,7 +60,9 @@ def fetch_oxford_word(word: str) -> OxfordLookupResponse:
         },
     )
 
-    with urlopen(request, timeout=12) as response:
+    # 3s：前置网关 5s 超时掐断 —— 12s 的单候选超时意味着任何上游变慢
+    # 都稳定 502；3s 让常规单候选词在网关限额内完成并按 B2 降级。
+    with urlopen(request, timeout=3) as response:
         html = response.read().decode("utf-8", errors="replace")
 
     return parse_oxford_lookup_html(word, html)
