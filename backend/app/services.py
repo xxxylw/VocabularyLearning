@@ -55,13 +55,18 @@ def _book_progress_aggregates(
         from book_words
         where book_words.book_id = ?
           and exists (
+            -- CROSS JOIN 钉死 words→entries→cards→reviews 的索引驱动
+            -- 顺序（原因见 _all_books_progress_aggregates）。
             select 1
-            from reviews
-            join cards on cards.id = reviews.card_id
-            join entries on entries.id = cards.entry_id
-            join words on words.id = entries.word_id
+            from words
+            cross join entries
+            cross join cards
+            cross join reviews
             where words.normalized_text = book_words.normalized_text
+              and entries.word_id = words.id
+              and cards.entry_id = entries.id
               and cards.user_id = ?
+              and reviews.card_id = cards.id
           )
         """,
         (book_id, user_id),
@@ -75,18 +80,22 @@ def _book_progress_aggregates(
             where book_words.book_id = ?
               and exists (
                 select 1
-                from entries
-                join words on words.id = entries.word_id
-                join cards on cards.entry_id = entries.id
+                from words
+                cross join entries
+                cross join cards
                 where words.normalized_text = book_words.normalized_text
+                  and entries.word_id = words.id
+                  and cards.entry_id = entries.id
                   and cards.user_id = ?
               )
               and not exists (
                 select 1
-                from entries
-                join words on words.id = entries.word_id
-                join cards on cards.entry_id = entries.id
+                from words
+                cross join entries
+                cross join cards
                 where words.normalized_text = book_words.normalized_text
+                  and entries.word_id = words.id
+                  and cards.entry_id = entries.id
                   and cards.user_id = ?
                   and cards.status <> 'mastered'
               )
@@ -128,6 +137,102 @@ def get_current_book(user_id: str) -> BookSummaryResponse:
         return _book_summary_response(connection, book_row, user_id, notice)
 
 
+def _all_books_progress_aggregates(
+    connection, user_id: str
+) -> dict[str, tuple[int, int, int]]:
+    """Per-book progress aggregates for every book in one batched pass.
+
+    Same semantics as _book_progress_aggregates (per book: total words;
+    learned = 该用户的卡片至少有一条 review；mastered = 该用户在该词的
+    全部卡片 mastered 且至少有一张卡), computed with three GROUP BY
+    queries over the whole table instead of three correlated queries per
+    book. 2026-09-07 修复：旧的逐书聚合（8 书 = 25 条 SQL，每条对
+    book_words 逐行做跨 reviews/cards/entries/words 的相关子查询探测）
+    在线上量级（8 书 ~41k 词）把 GET /api/books 推到 ~7s，撞前置网关
+    5s 超时后表现为 502——书架在公网路径上完全不可用。
+    """
+    totals: dict[str, int] = {
+        str(row["book_id"]): row["total"]
+        for row in connection.execute(
+            "select book_id, count(*) as total from book_words"
+            " where book_id is not null group by book_id"
+        )
+    }
+    learned: dict[str, int] = {
+        str(row["book_id"]): row["total"]
+        for row in connection.execute(
+            """
+            select bw.book_id as book_id,
+                   count(distinct bw.normalized_text) as total
+            from book_words bw
+            where bw.book_id is not null
+              and exists (
+                -- CROSS JOIN 钉死 w→e→c→r 的驱动顺序：SQLite 的贪心
+                -- 连接排序会退化为「每行按 user_id 扫全量 cards」（线上
+                -- 量级 = 40k 行 × 6k 卡 ≈ 2.4 亿次探测），此处每段都有
+                -- 索引（words.normalized_text 唯一索引 / idx_entries_word /
+                -- idx_cards_entry_user / idx_reviews_card）。
+                select 1
+                from words w
+                cross join entries e
+                cross join cards c
+                cross join reviews r
+                where w.normalized_text = bw.normalized_text
+                  and e.word_id = w.id
+                  and c.entry_id = e.id
+                  and c.user_id = ?
+                  and r.card_id = c.id
+              )
+            group by bw.book_id
+            """,
+            (user_id,),
+        )
+    }
+    mastered: dict[str, int] = {
+        str(row["book_id"]): row["total"]
+        for row in connection.execute(
+            """
+            select bw.book_id as book_id,
+                   count(distinct bw.normalized_text) as total
+            from book_words bw
+            where bw.book_id is not null
+              and exists (
+                select 1
+                from words w
+                cross join entries e
+                cross join cards c
+                where w.normalized_text = bw.normalized_text
+                  and e.word_id = w.id
+                  and c.entry_id = e.id
+                  and c.user_id = ?
+              )
+              and not exists (
+                select 1
+                from words w
+                cross join entries e
+                cross join cards c
+                where w.normalized_text = bw.normalized_text
+                  and e.word_id = w.id
+                  and c.entry_id = e.id
+                  and c.user_id = ?
+                  and c.status <> 'mastered'
+              )
+            group by bw.book_id
+            """,
+            (user_id, user_id),
+        )
+    }
+    book_ids = set(totals) | set(learned) | set(mastered)
+    return {
+        book_id: (
+            totals.get(book_id, 0),
+            learned.get(book_id, 0),
+            mastered.get(book_id, 0),
+        )
+        for book_id in book_ids
+    }
+
+
 def list_books(user_id: str) -> BookListResponse:
     with connect() as connection:
         current_book_row, _fallback = resolve_current_book(connection, user_id)
@@ -135,14 +240,28 @@ def list_books(user_id: str) -> BookListResponse:
         book_rows = connection.execute(
             "select * from vocabulary_books order by created_at, id"
         ).fetchall()
-        books = [
-            BookListItemResponse(
-                **_book_summary_response(connection, row, user_id).model_dump(),
-                isCurrent=str(row["id"]) == current_book_id,
+        aggregates = _all_books_progress_aggregates(connection, user_id)
+        books = []
+        for row in book_rows:
+            total, learned, mastered = aggregates.get(
+                str(row["id"]), (0, 0, 0)
             )
-            for row in book_rows
-        ]
-    return BookListResponse(books=books)
+            books.append(
+                BookListItemResponse(
+                    id=row["id"],
+                    title=row["title"],
+                    description=row["description"],
+                    source=row["source"],
+                    createdAt=row["created_at"],
+                    updatedAt=row["updated_at"],
+                    totalWords=total,
+                    learnedWords=learned,
+                    masteredWords=mastered,
+                    fallbackNotice=None,
+                    isCurrent=str(row["id"]) == current_book_id,
+                )
+            )
+        return BookListResponse(books=books)
 
 
 def switch_current_book(user_id: str, book_id: str) -> BookSummaryResponse:

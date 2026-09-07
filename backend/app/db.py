@@ -111,6 +111,18 @@ def migrate(connection: sqlite3.Connection) -> None:
         """
     )
 
+    # 2026-09-07 书架聚合性能（GET /api/books 线上 ~7s，撞前置网关 5s
+    # 超时后公网路径 502）。learned/mastered 聚合的探测链路是
+    # words.normalized_text → entries.word_id → cards.entry_id →
+    # reviews.card_id：前三段分别由 words.normalized_text 唯一索引、
+    # idx_entries_word_sense_order、idx_cards_entry 覆盖，唯独
+    # reviews.card_id 无索引（每次探测全表扫 reviews）。聚合 SQL 本体
+    # 同步改为全书一次批量聚合并用 CROSS JOIN 钉死驱动顺序（见
+    # services._all_books_progress_aggregates）。
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reviews_card ON reviews (card_id)"
+    )
+
     # Verify/reset token table comment (C-05): 1h expiry, single use
     # (used_at), stored hashed like sessions.
     # C-01a (2026-09-05): the table now carries 6-digit email codes —

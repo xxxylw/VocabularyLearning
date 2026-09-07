@@ -334,3 +334,88 @@ def test_books_list_marks_switched_book_current(tmp_path, monkeypatch):
     by_id = {book["id"]: book for book in books}
     assert by_id["default-book"]["isCurrent"] is False
     assert by_id["book-b"]["isCurrent"] is True
+
+
+
+def test_books_list_aggregates_multi_book_and_users(tmp_path, monkeypatch):
+    """书架聚合（2026-09-07 性能修复的语义保护网）.
+
+    list_books 改为全书一次批量聚合后，语义必须与逐书聚合一致：
+    - 共享词（同一 normalized_text 出现在两本书）：在 A 书学过即两本书
+      都算 learned / mastered（卡片按用户归属，不按书）；
+    - 其他用户的复习/卡片不影响本用户聚合；
+    - learned 需要 ≥1 条 review；mastered 只看卡片状态（无需 review）。
+    """
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    monkeypatch.setenv("VOCAB_ENRICHMENT_SOURCE", "fallback")
+    today = date.today()
+    client = TestClient(create_app())
+    # default-book: alpha, beta, gamma, delta；book-b: beta（共享）, epsilon
+    _import_words(client, ["alpha", "beta", "gamma", "delta"])
+    _add_book("book-b", "托福核心词汇", ["beta", "epsilon"])
+    _switch(client, "default-book")
+
+    session = _start(client, today, 4)
+    # alpha + beta: reviewed → learned; gamma: all cards forced mastered → mastered
+    for card in session["cards"]:
+        if card["word"] in ("alpha", "beta"):
+            _review(client, card, today)
+    with connect() as connection:
+        connection.execute(
+            """
+            update cards set status = 'mastered'
+            where id in (
+                select cards.id from cards
+                join entries on entries.id = cards.entry_id
+                join words on words.id = entries.word_id
+                where words.normalized_text = 'gamma'
+            )
+            """
+        )
+
+    # Another user studies delta — must stay invisible to the super user.
+    with connect() as connection:
+        other_id = str(uuid4())
+        connection.execute(
+            "insert into users (id, email, password_hash, email_verified,"
+            " is_super, created_at, updated_at)"
+            " values (?, ?, ?, 1, 0, ?, ?)",
+            (other_id, f"other-{uuid4().hex[:6]}@t.local", "x" * 60, today.isoformat(), today.isoformat()),
+        )
+        delta_entries = connection.execute(
+            """
+            select e.id as entry_id from entries e
+            join words w on w.id = e.word_id
+            where w.normalized_text = 'delta'
+            """
+        ).fetchall()
+        for row in delta_entries:
+            card_id = str(uuid4())
+            connection.execute(
+                "insert into cards (id, user_id, entry_id, status, stage,"
+                " due_at, created_on, ef, interval_days)"
+                " values (?, ?, ?, 'mastered', 3, ?, ?, 2.5, 10)",
+                (card_id, other_id, row["entry_id"], today.isoformat(), today.isoformat()),
+            )
+            connection.execute(
+                "insert into reviews (id, user_id, card_id, rating, reviewed_at,"
+                " previous_stage, next_stage, next_due_at)"
+                " values (?, ?, ?, 'known', ?, 0, 2, ?)",
+                (str(uuid4()), other_id, card_id, today.isoformat(), today.isoformat()),
+            )
+
+    books = {b["id"]: b for b in client.get("/api/books").json()["books"]}
+    assert set(books) == {"default-book", "book-b"}
+
+    default = books["default-book"]
+    assert default["totalWords"] == 4
+    assert default["learnedWords"] == 2  # alpha + beta（reviewed）
+    assert default["masteredWords"] == 1  # gamma（全卡 mastered，无需 review）
+
+    book_b = books["book-b"]
+    assert book_b["totalWords"] == 2
+    # beta 在 default-book 学过：卡片按用户归属，不按书 → book-b 也算 learned
+    assert book_b["learnedWords"] == 1
+    assert book_b["masteredWords"] == 0
+    # delta 只有 other 用户的卡片，对 super 完全不可见
+    assert default["learnedWords"] == 2 and default["masteredWords"] == 1
