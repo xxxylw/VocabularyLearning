@@ -13,8 +13,10 @@ from app.models import (
     BookListResponse,
     BookProgressResponse,
     BookSummaryResponse,
+    CheckInsResponse,
     DueReviewsResponse,
     ImportBookWordsResponse,
+    MergeCheckInsRequest,
     OxfordLookupResponse,
     PronunciationResponse,
     PrepareJobRequest,
@@ -29,10 +31,12 @@ from app.models import (
 from app.repositories import get_book_progress, import_book_words_csv
 from app.services import (
     ReviewConflictError,
+    get_check_ins,
     get_current_book,
     get_due_reviews,
     get_today_summary,
     list_books,
+    merge_check_ins,
     prepare_book_words,
     review_card,
     start_today_session,
@@ -186,6 +190,29 @@ def reviews_due(
     context: Annotated[AuthContext, Depends(require_user)],
 ) -> DueReviewsResponse:
     return get_due_reviews(context.user_id, date)
+
+
+# P1 2026-09-08 打卡热点图服务端化：打卡记录改为从 reviews 按 study_date
+# 聚合派生（方案一：零新增表）。与 /study/today/summary 一样属观察性数据，
+# 不挂 study-entitlement gate —— 到期锁定态也能看到自己的打卡历史。
+@router.get("/check-ins")
+def check_ins_list(
+    context: Annotated[AuthContext, Depends(require_user)],
+) -> CheckInsResponse:
+    return get_check_ins(context.user_id)
+
+
+# 首次启动把浏览器 localStorage 的历史打卡一次性上报合并；返回合并后
+# 的完整列表（与 GET 同形）。
+@router.post("/check-ins/merge")
+def check_ins_merge(
+    request: MergeCheckInsRequest,
+    context: Annotated[AuthContext, Depends(require_user)],
+) -> CheckInsResponse:
+    try:
+        return merge_check_ins(context.user_id, request)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.get("/lookup/oxford")

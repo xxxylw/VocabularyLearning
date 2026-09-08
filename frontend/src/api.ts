@@ -1,4 +1,5 @@
 import { getSessionToken } from './session';
+import type { CheckInRecord } from './checkins';
 
 export type DefinitionSource =
   | 'manual'
@@ -320,6 +321,26 @@ export function reviewCard(cardId: string, rating: ReviewRating): Promise<unknow
     reviewedAt: reviewedAt.toISOString(),
     reviewedDate: localDateString(reviewedAt)
   });
+}
+
+// ---------------------------------------------------------------------------
+// P1 2026-09-08 打卡热点图服务端化：打卡记录从服务端派生（reviews 按
+// study_date 聚合），localStorage 只作离线回退与一次性历史上报源。
+// ---------------------------------------------------------------------------
+
+export type CheckInsResponse = {
+  checkIns: CheckInRecord[];
+};
+
+// 服务端是打卡数据的唯一权威（覆盖一切完成路径），跨设备一致。
+export function fetchCheckIns(): Promise<CheckInsResponse> {
+  return getJson<CheckInsResponse>('/api/check-ins');
+}
+
+// 首次启动把浏览器 localStorage 的历史打卡一次性上报合并，返回合并后
+// 的完整列表（与 GET 同形），客户端直接整表替换。
+export function mergeCheckIns(records: CheckInRecord[]): Promise<CheckInsResponse> {
+  return postJson<CheckInsResponse>('/api/check-ins/merge', { checkIns: records });
 }
 
 // ---------------------------------------------------------------------------

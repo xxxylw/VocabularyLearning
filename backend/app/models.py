@@ -318,6 +318,33 @@ class ReviewCardResponse(BaseModel):
     status: str
 
 
+# ---------------------------------------------------------------------------
+# P1 2026-09-08 打卡热点图服务端化（task 7683154325467565322）。
+# 打卡记录原先只存浏览器 localStorage（key=vocabulary-learning-check-ins），
+# 跨设备不同步、且只覆盖前端完成回调路径。现改为从 reviews 按
+# study_date 聚合派生（服务端是「完成判定」的唯一权威），本地历史
+# 记录通过 merge 端点一次性上报。
+# ---------------------------------------------------------------------------
+
+# 单日打卡记录：与前端 checkins.ts 的 CheckInRecord 同形。
+class CheckInDayPayload(BaseModel):
+    date: Date
+    completedCards: int = Field(default=0, ge=0)
+    newCards: int = Field(default=0, ge=0)
+    reviewCards: int = Field(default=0, ge=0)
+    # 该日最后一次完成时刻（ISO 字符串），派生记录取 max(reviewed_at)。
+    completedAt: str = ""
+
+
+class CheckInsResponse(BaseModel):
+    checkIns: list[CheckInDayPayload] = Field(default_factory=list)
+
+
+# 首次启动时浏览器把 localStorage 里的历史打卡一次性上报合并。
+class MergeCheckInsRequest(BaseModel):
+    checkIns: list[CheckInDayPayload] = Field(default_factory=list)
+
+
 class DueReviewsResponse(BaseModel):
     date: Date
     total: int

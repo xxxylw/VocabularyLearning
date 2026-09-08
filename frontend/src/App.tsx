@@ -1,18 +1,26 @@
 import { useEffect, useState } from 'react';
 import {
   ApiError,
+  fetchCheckIns,
   fetchTodaySummary,
   getBookProgress,
   getCurrentBook,
   listBooks,
   lookupOxfordWord,
   lookupPronunciation,
+  mergeCheckIns,
   reviewCard,
   startTodaySession,
   switchBook
 } from './api';
 import type { BookListItem, ReviewRating, StudyCard, TodaySummary } from './api';
-import { buildCheckInRecord, loadCheckIns, saveCheckIn } from './checkins';
+import {
+  buildCheckInRecord,
+  loadCheckIns,
+  markCheckInsMerged,
+  mergedCheckInsFor,
+  saveCheckIn
+} from './checkins';
 import { BookShelfView } from './components/BookShelfView';
 import { SpellingSession } from './components/SpellingSession';
 import { StudySession } from './components/StudySession';
@@ -67,12 +75,48 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
       // Summary 是 best-effort：拉取失败时退回到未完成态（仍显示
       // Start today cards），让用户至少能继续学习。
     });
+    // P1 2026-09-08 打卡热点图服务端化：打卡记录以服务端为准
+    // （跨设备一致），localStorage 只作离线回退。本地有历史且未对
+    // 当前账号上报过时，先一次性 merge 上报。
+    hydrateCheckIns().catch(() => {
+      // 服务端不可用时保持 localStorage 快照（初始 state）。
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function refreshTodaySummary() {
     const summary = await fetchTodaySummary();
     setTodaySummary(summary);
+  }
+
+  // P1 2026-09-08 打卡服务端化：服务端优先，localStorage 离线回退。
+  // - 本地有记录且当前账号未上报过 → POST /api/check-ins/merge 一次
+  //   （返回的合并列表直接整表替换），并记录 merge 标记（按账号）；
+  // - 否则 GET /api/check-ins 覆盖初始的 localStorage 快照；
+  // - 两条路径都失败 → 保留 localStorage 快照，页面照常可用。
+  async function hydrateCheckIns() {
+    const localRecords = loadCheckIns();
+    const account = userEmail ?? 'anonymous';
+    if (localRecords.length > 0 && !mergedCheckInsFor(account)) {
+      try {
+        const { checkIns } = await mergeCheckIns(localRecords);
+        markCheckInsMerged(account);
+        if (Array.isArray(checkIns)) {
+          setCheckIns(checkIns);
+        }
+        return;
+      } catch {
+        // merge 失败（离线/服务端异常）→ 落到纯 GET 重试。
+      }
+    }
+    await refreshCheckIns();
+  }
+
+  async function refreshCheckIns() {
+    const { checkIns } = await fetchCheckIns();
+    if (Array.isArray(checkIns)) {
+      setCheckIns(checkIns);
+    }
   }
 
   async function refreshCurrentBook() {
@@ -182,12 +226,16 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
 
   function handleSessionComplete(completedCards: StudyCard[]) {
     setLastCompletedCards(completedCards);
+    // P1 2026-09-08 打卡服务端化：localStorage 仍写入（离线快照 +
+    // 首次上报源），先乐观更新；随后 best-effort 拉服务端派生列表
+    // 整表替换（服务端是唯一权威，review 已落库，跨设备立即一致）。
     const updatedCheckIns = saveCheckIn(buildCheckInRecord(completedCards));
     setCheckIns(updatedCheckIns);
     // P0 2026-09-08：本地 lastCompletedCards 解决不了跨设备恢复，
     // 这里把服务端 summary 重新拉一次 — 完成后 dayCompleted 变 true，
     // 切到「再来一组 / 练习拼写」按钮组。
     void refreshTodaySummary().catch(() => undefined);
+    void refreshCheckIns().catch(() => undefined);
   }
 
   // 拼写练习入口：优先用服务端 summary.completedCards（与当日队列

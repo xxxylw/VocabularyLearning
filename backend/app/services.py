@@ -19,7 +19,10 @@ from app.models import (
     BookListItemResponse,
     BookListResponse,
     BookSummaryResponse,
+    CheckInDayPayload,
+    CheckInsResponse,
     DueReviewsResponse,
+    MergeCheckInsRequest,
     PrepareJobRequest,
     PrepareJobResponse,
     ReviewCardRequest,
@@ -1105,6 +1108,180 @@ def get_today_summary(
 def get_due_reviews(user_id: str, due_date: date) -> DueReviewsResponse:
     cards = _get_due_study_cards(due_date, None, user_id)
     return DueReviewsResponse(date=due_date, total=len(cards), cards=cards)
+
+
+# ---------------------------------------------------------------------------
+# P1 2026-09-08 打卡热点图服务端化（task 7683154325467565322）。
+# ---------------------------------------------------------------------------
+
+# 「新词」判定口径：该卡的**首次** review 落在这一 study_date。该口径
+# 只依赖 reviews 表本身，天然覆盖所有完成路径（bug 存活期间的会话、
+# API 层面完成、跨书共享词），对 today_queue 快照缺失的历史数据也成立。
+_CHECK_IN_NEW_WORDS_SQL = """
+select study_date, count(*) as new_cards from (
+    select card_id, min(study_date) as study_date
+    from reviews
+    where user_id = ?
+    group by card_id
+)
+group by study_date
+"""
+
+# 本地历史打卡的上传承载：只存「服务端当天没有 reviews」的日期（本地
+# 独有历史，如旧本地版应用迁移过来的记录）。派生数据（reviews 聚合）
+# 永远优先于该 override —— reviews 是完成判定的唯一权威。
+CHECK_IN_OVERRIDES_KEY = "check_in_overrides"
+
+# merge 端点单次上报的日期条数上限：真实 localStorage 记录按日去重，
+# 个人学习数年内量级 ≤ 数千；超出视为异常请求直接 400。
+MAX_MERGE_RECORDS = 2000
+
+
+def _load_check_in_overrides(connection, user_id: str) -> dict[str, dict]:
+    """读取某用户的本地历史上传承载（user_settings JSON）。"""
+    row = connection.execute(
+        "select value from user_settings where user_id = ? and key = ?",
+        (user_id, CHECK_IN_OVERRIDES_KEY),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        parsed = json.loads(row["value"])
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    overrides: dict[str, dict] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        try:
+            date.fromisoformat(key)
+        except ValueError:
+            continue
+        overrides[key] = {
+            "completedCards": max(0, int(value.get("completedCards", 0))),
+            "newCards": max(0, int(value.get("newCards", 0))),
+            "reviewCards": max(0, int(value.get("reviewCards", 0))),
+            "completedAt": str(value.get("completedAt", "")),
+        }
+    return overrides
+
+
+def _derived_check_in_days(connection, user_id: str) -> list[CheckInDayPayload]:
+    """从 reviews 按 study_date 聚合派生每日打卡记录。
+
+    - completedCards = 当日 distinct card_id 数（服务端同一卡同日只允许
+      一条 review，distinct 兜底未来口径变化）；
+    - newCards = 首次 review 落在该日的卡数；
+    - reviewCards = completedCards - newCards；
+    - completedAt = 当日 max(reviewed_at)（ISO 字符串）。
+    """
+    derived_rows = connection.execute(
+        """
+        select study_date,
+               count(distinct card_id) as completed_cards,
+               max(reviewed_at) as completed_at
+        from reviews
+        where user_id = ?
+        group by study_date
+        """,
+        (user_id,),
+    ).fetchall()
+    new_card_rows = connection.execute(
+        _CHECK_IN_NEW_WORDS_SQL, (user_id,)
+    ).fetchall()
+    new_cards_by_date = {
+        row["study_date"]: int(row["new_cards"]) for row in new_card_rows
+    }
+
+    records: list[CheckInDayPayload] = []
+    for row in derived_rows:
+        study_date = row["study_date"]
+        completed = int(row["completed_cards"])
+        new_cards = int(new_cards_by_date.get(study_date, 0))
+        records.append(
+            CheckInDayPayload(
+                date=study_date,
+                completedCards=completed,
+                newCards=new_cards,
+                reviewCards=max(0, completed - new_cards),
+                completedAt=row["completed_at"] or "",
+            )
+        )
+    return records
+
+
+def get_check_ins(user_id: str) -> CheckInsResponse:
+    """GET /api/check-ins 的服务端派生：reviews 聚合 + 本地历史 override。"""
+    with connect() as connection:
+        records = _derived_check_in_days(connection, user_id)
+        derived_dates = {record.date.isoformat() for record in records}
+        for study_date, override in _load_check_in_overrides(
+            connection, user_id
+        ).items():
+            # 服务端当天已有 reviews 时派生值优先，丢弃该 override。
+            if study_date in derived_dates:
+                continue
+            records.append(CheckInDayPayload(date=study_date, **override))
+    records.sort(key=lambda record: record.date.isoformat())
+    return CheckInsResponse(checkIns=records)
+
+
+def merge_check_ins(user_id: str, request: MergeCheckInsRequest) -> CheckInsResponse:
+    """POST /api/check-ins/merge：一次性合并浏览器本地的历史打卡。
+
+    合并口径（逐日）：
+    1. 当天服务端已有 reviews → 本地记录直接忽略（派生数据是唯一
+       权威，覆盖一切完成路径，数值上 ≥ 本地记录）；
+    2. 当天服务端没有 reviews（本地独有历史，如旧本地版数据）→ 存入
+       user_settings 的 check_in_overrides 承载，与已有 override 按
+       字段取 max（completedAt 取字典序最大），重复上报幂等。
+    返回合并后的完整列表（与 GET 同形），客户端可直接整表替换。
+    """
+    if len(request.checkIns) > MAX_MERGE_RECORDS:
+        raise ValueError(
+            f"Too many check-in records: {len(request.checkIns)} > {MAX_MERGE_RECORDS}"
+        )
+
+    with connect() as connection:
+        derived_dates = {
+            row["study_date"]
+            for row in connection.execute(
+                "select distinct study_date from reviews where user_id = ?",
+                (user_id,),
+            ).fetchall()
+        }
+        overrides = _load_check_in_overrides(connection, user_id)
+        for record in request.checkIns:
+            study_date = record.date.isoformat()
+            if study_date in derived_dates:
+                continue
+            existing = overrides.get(study_date)
+            if existing is None:
+                overrides[study_date] = {
+                    "completedCards": record.completedCards,
+                    "newCards": record.newCards,
+                    "reviewCards": record.reviewCards,
+                    "completedAt": record.completedAt,
+                }
+            else:
+                overrides[study_date] = {
+                    "completedCards": max(
+                        existing["completedCards"], record.completedCards
+                    ),
+                    "newCards": max(existing["newCards"], record.newCards),
+                    "reviewCards": max(existing["reviewCards"], record.reviewCards),
+                    "completedAt": max(existing["completedAt"], record.completedAt),
+                }
+        connection.execute(
+            "insert or replace into user_settings (user_id, key, value)"
+            " values (?, ?, ?)",
+            (user_id, CHECK_IN_OVERRIDES_KEY, json.dumps(overrides, sort_keys=True)),
+        )
+
+    return get_check_ins(user_id)
 
 
 def review_card(

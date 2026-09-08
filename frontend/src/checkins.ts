@@ -9,6 +9,24 @@ export type CheckInRecord = {
 };
 
 const CHECK_IN_STORAGE_KEY = 'vocabulary-learning-check-ins';
+// P1 2026-09-08 打卡服务端化：记录「本地历史已上报给哪个账号」。值为
+// 账号标识（邮箱）；换账号登录时值不匹配 → 重新触发一次性上报。
+const CHECK_IN_MERGED_FLAG_KEY = 'vocabulary-learning-check-ins-merged-for';
+
+// 该账号的本地历史是否已上报合并过。
+export function mergedCheckInsFor(
+  account: string,
+  storage: Storage = window.localStorage
+): boolean {
+  return storage.getItem(CHECK_IN_MERGED_FLAG_KEY) === account;
+}
+
+export function markCheckInsMerged(
+  account: string,
+  storage: Storage = window.localStorage
+): void {
+  storage.setItem(CHECK_IN_MERGED_FLAG_KEY, account);
+}
 
 export function localDateString(date: Date): string {
   const year = date.getFullYear();

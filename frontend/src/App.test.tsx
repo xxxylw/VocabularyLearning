@@ -6,6 +6,10 @@ import { App } from './App';
 describe('App', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // P1 2026-09-08 打卡服务端化：handleSessionComplete 会写 localStorage，
+    // 不清理会串测试（下一个用例 mount 会触发 merge 上报、多消费一条
+    // fetch 队列）。
+    window.localStorage.clear();
   });
 
   it('shows an import-needed empty state when today starts with no book words', async () => {
@@ -17,6 +21,8 @@ describe('App', () => {
       // so the Today page can render the correct button set on first
       // paint (no flicker, no cross-device state loss).
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 0, cards: [] }))
@@ -42,6 +48,8 @@ describe('App', () => {
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
@@ -53,6 +61,8 @@ describe('App', () => {
       })
       // handleSessionComplete fires a follow-up summary fetch
       .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -80,6 +90,8 @@ describe('App', () => {
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
@@ -90,6 +102,8 @@ describe('App', () => {
         text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
       })
       .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -118,6 +132,8 @@ describe('App', () => {
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
@@ -128,6 +144,8 @@ describe('App', () => {
         text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
       })
       .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -149,6 +167,8 @@ describe('App', () => {
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () =>
@@ -177,6 +197,8 @@ describe('App', () => {
       .mockResolvedValueOnce(currentBookResponse({ learnedWords: 120, masteredWords: 30 }))
       // initial summary on mount
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       // GET /api/books when the cover card opens the bookshelf
       .mockResolvedValueOnce({
         ok: true,
@@ -215,7 +237,9 @@ describe('App', () => {
         text: () => Promise.resolve(JSON.stringify(switchedBook))
       })
       // refreshTodaySummary fires after the switch
-      .mockResolvedValueOnce(emptyDaySummaryResponse());
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -262,6 +286,8 @@ describe('App', () => {
       .mockResolvedValueOnce(currentBookResponse())
       // mount-time summary fetch says day is complete (cross-device state)
       .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -282,6 +308,8 @@ describe('App', () => {
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       // start the day's first session
       .mockResolvedValueOnce({
         ok: true,
@@ -294,6 +322,8 @@ describe('App', () => {
       })
       // session-complete summary refresh flips dayCompleted to true
       .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -326,6 +356,8 @@ describe('App', () => {
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
       .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]))
+      // P1 2026-09-08 打卡服务端化：mount / 会话完成后拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       // POST /api/study/today/start with extraNewWords after 再来一组 click
       .mockResolvedValueOnce({
         ok: true,
@@ -374,6 +406,14 @@ function emptyDaySummaryResponse() {
           completedCards: []
         })
       )
+  };
+}
+
+// P1 2026-09-08 打卡服务端化：GET /api/check-ins 的响应桩。
+function checkInsResponse(records: unknown[]) {
+  return {
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify({ checkIns: records }))
   };
 }
 
