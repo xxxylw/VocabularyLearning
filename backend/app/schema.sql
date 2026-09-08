@@ -122,7 +122,13 @@ CREATE TABLE IF NOT EXISTS reviews (
     reviewed_at text not null,
     previous_stage integer not null,
     next_stage integer not null,
-    next_due_at text not null
+    next_due_at text not null,
+    -- P1 2026-09-08（task 7683097747100093410）跨书共享词 UTC 日界竞态
+    -- 修复：服务器本地日期（Asia/Shanghai），与 today_queue.study_date
+    -- 同口径；旧查询用 substr(reviewed_at,1,10) 取的是客户端 UTC 日期，
+    -- 北京 0-8 点复习会被错排到前一天，导致 reviewedCards 永远差 1。
+    -- 旧库由 reviews_study_date_migration 补列并按 reviewed_at 回填。
+    study_date text not null
 );
 
 CREATE TABLE IF NOT EXISTS settings (

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app.auth import ensure_super_account
 from app.books import DEFAULT_BOOK_ID, ensure_default_book
+from app.reviews_study_date_migration import migrate_reviews_study_date
 from app.scheduling_migration import migrate_cards_sm2
 from app.user_isolation_migration import migrate_user_isolation
 
@@ -231,4 +232,11 @@ def migrate(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_reviews_user_card"
         " ON reviews (user_id, card_id)"
     )
+
+    # P1 2026-09-08（task 7683097747100093410）UTC 日界竞态修复：reviews
+    # 表加 study_date 列（服务器本地日期），回填存量行，配套加
+    # (user_id, study_date) 索引支撑新的日聚合查询。该列补在
+    # user_id 索引之后（依赖 reviews.user_id 列存在性）。
+    migrate_reviews_study_date(connection)
+
     connection.commit()

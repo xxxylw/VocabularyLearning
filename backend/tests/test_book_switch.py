@@ -399,9 +399,9 @@ def test_books_list_aggregates_multi_book_and_users(tmp_path, monkeypatch):
             )
             connection.execute(
                 "insert into reviews (id, user_id, card_id, rating, reviewed_at,"
-                " previous_stage, next_stage, next_due_at)"
-                " values (?, ?, ?, 'known', ?, 0, 2, ?)",
-                (str(uuid4()), other_id, card_id, today.isoformat(), today.isoformat()),
+                " previous_stage, next_stage, next_due_at, study_date)"
+                " values (?, ?, ?, 'known', ?, 0, 2, ?, ?)",
+                (str(uuid4()), other_id, card_id, today.isoformat(), today.isoformat(), today.isoformat()),
             )
 
     books = {b["id"]: b for b in client.get("/api/books").json()["books"]}

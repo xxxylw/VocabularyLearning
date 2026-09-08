@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS reviews (
     reviewed_at text not null,
     previous_stage integer not null,
     next_stage integer not null,
-    next_due_at text not null
+    next_due_at text not null,
+    study_date text not null default ''
 );
 
 CREATE TABLE IF NOT EXISTS settings (

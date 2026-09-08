@@ -721,7 +721,9 @@ def _merge_new_cards_into_today_queue(
               and exists (
                 select 1 from reviews
                 where reviews.card_id = today_queue.card_id
-                  and substr(reviews.reviewed_at, 1, 10) = ?
+                  -- P1 2026-09-08：UTC 日界竞态修复——改用 study_date
+                  -- 列（服务器本地日期，与 today_queue.study_date 同口径）。
+                  and reviews.study_date = ?
               )
             """,
             (user_id, book_id, study_date.isoformat(), study_date.isoformat()),
@@ -896,7 +898,11 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
                 select distinct card_id
                 from reviews
                 where card_id in ({placeholders})
-                  and substr(reviewed_at, 1, 10) = ?
+                  -- P1 2026-09-08：UTC 日界竞态修复——见 services.py
+                  -- _resolve_study_date 注释；该列取代 substr
+                  -- (reviewed_at,1,10) 的 UTC 前缀，避免北京 0-8 点
+                  -- 复习被错排到前一天。
+                  and reviews.study_date = ?
                 """,
                 (*queue_card_ids, study_date.isoformat()),
             ).fetchall()
@@ -1015,7 +1021,9 @@ def get_today_summary(
                 select distinct card_id
                 from reviews
                 where card_id in ({placeholders})
-                  and substr(reviewed_at, 1, 10) = ?
+                  -- P1 2026-09-08：UTC 日界竞态修复——同 _read_today_queue_session
+                  -- 的 reviewed_ids：study_date 列取代 substr 前缀。
+                  and reviews.study_date = ?
                 """,
                 (*queue_card_ids, study_date.isoformat()),
             ).fetchall()
@@ -1102,7 +1110,16 @@ def get_due_reviews(user_id: str, due_date: date) -> DueReviewsResponse:
 def review_card(
     user_id: str, card_id: str, request: ReviewCardRequest
 ) -> ReviewCardResponse:
-    reviewed_on = request.reviewedDate or request.reviewedAt.date()
+    # P1 2026-09-08（task 7683097747100093410）UTC 日界竞态修复：
+    # 旧实现 reviewed_on = request.reviewedDate or request.reviewedAt.date()，
+    # 后者在 0-8 点窗口（UTC 日界）取的是前一天，与 today_queue.study_date
+    # 分裂，导致「跨书共享词」复习被错排到前一天 / 当日 reviewedCards
+    # 永远差 1 / 后续提交 409。统一为 _resolve_study_date：
+    # reviewedDate 优先（客户端本地日期，与队列口径一致），否则把
+    # reviewedAt（UTC ISO）转服务器本地日期。
+    reviewed_on = _resolve_study_date(
+        request.reviewedDate, request.reviewedAt
+    )
     reviewed_at = request.reviewedAt.isoformat()
 
     with connect() as connection:
@@ -1145,9 +1162,10 @@ def review_card(
                 reviewed_at,
                 previous_stage,
                 next_stage,
-                next_due_at
+                next_due_at,
+                study_date
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid4()),
@@ -1158,6 +1176,7 @@ def review_card(
                 previous_stage,
                 next_stage,
                 outcome.due_at.isoformat(),
+                reviewed_on.isoformat(),
             ),
         )
         connection.execute(
@@ -1378,7 +1397,10 @@ def _count_new_words_studied_on(user_id: str, study_date: date) -> int:
                 join entries on entries.id = cards.entry_id
                 join words on words.id = entries.word_id
                 where reviews.user_id = ?
-                  and substr(reviews.reviewed_at, 1, 10) = ?
+                  -- P1 2026-09-08：UTC 日界竞态修复——改用 study_date
+                  -- 列（服务器本地日期），同时 previous_reviews 的 < 比较
+                  -- 也切到该列。
+                  and reviews.study_date = ?
                   and exists (
                       -- PRD ch.9: the daily new-word quota is tracked per
                       -- book — a word of another book never consumes the
@@ -1405,7 +1427,7 @@ def _count_new_words_studied_on(user_id: str, study_date: date) -> int:
                       and previous_cards.user_id = ?
                       and previous_reviews.card_id = previous_cards.id
                       and previous_reviews.user_id = ?
-                      and substr(previous_reviews.reviewed_at, 1, 10) < ?
+                      and previous_reviews.study_date < ?
                   )
                 group by words.normalized_text
             )
@@ -1568,7 +1590,9 @@ def _review_exists_on_date(connection, card_id: str, reviewed_on: date) -> bool:
         select 1
         from reviews
         where card_id = ?
-          and substr(reviewed_at, 1, 10) = ?
+          -- P1 2026-09-08：UTC 日界竞态修复——同 _resolve_study_date
+          -- 口径，study_date 列与 reviewed_on 完全一致。
+          and study_date = ?
         limit 1
         """,
         (card_id, reviewed_on.isoformat()),
@@ -1578,6 +1602,31 @@ def _review_exists_on_date(connection, card_id: str, reviewed_on: date) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_study_date(
+    reviewed_date: date | None, reviewed_at: datetime
+) -> date:
+    """Return the server-local study date for a review submission.
+
+    Prefers the client-supplied ``reviewedDate`` (it always matches the
+    today_queue's local-date basis). Falls back to converting
+    ``reviewedAt`` (which the client always sends as a UTC ISO string
+    via ``Date.toISOString()``) into the server-local calendar date.
+    Naive datetimes are treated as UTC.
+
+    The returned date is the single source of truth for both
+    ``reviewed_on`` (used in the SM-2 due check and same-day
+    de-duplication) and the new ``reviews.study_date`` column; the
+    two previously diverged in the 00:00-08:00 Beijing window because
+    ``request.reviewedAt.date()`` is a UTC date.
+    """
+    if reviewed_date is not None:
+        return reviewed_date
+    normalized = reviewed_at
+    if normalized.tzinfo is None:
+        normalized = normalized.replace(tzinfo=timezone.utc)
+    return normalized.astimezone().date()
 
 
 def _create_enrichment_provider():

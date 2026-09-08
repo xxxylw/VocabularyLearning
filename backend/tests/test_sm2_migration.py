@@ -77,8 +77,8 @@ def _build_legacy_database(db_path: Path, card_count: int = 8) -> None:
             if index:
                 connection.execute(
                     "insert into reviews (id, card_id, rating, reviewed_at, previous_stage,"
-                    " next_stage, next_due_at) values (?, ?, 'known', '2026-01-02T09:00:00+00:00',"
-                    " ?, ?, '2026-01-03')",
+                    " next_stage, next_due_at, study_date) values (?, ?, 'known', '2026-01-02T09:00:00+00:00',"
+                    " ?, ?, '2026-01-03', '2026-01-02')",
                     (f"review-{index}", f"card-{index}", stage - 1, stage),
                 )
         connection.commit()

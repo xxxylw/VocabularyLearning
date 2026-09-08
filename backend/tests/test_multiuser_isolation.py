@@ -104,8 +104,8 @@ def legacy_db(tmp_path, monkeypatch) -> Path:
             )
             connection.execute(
                 "insert into reviews (id, card_id, rating, reviewed_at, previous_stage,"
-                " next_stage, next_due_at) values (?, ?, 'known',"
-                " '2025-01-01T10:00:00+00:00', 0, 1, '2025-01-02')",
+                " next_stage, next_due_at, study_date) values (?, ?, 'known',"
+                " '2025-01-01T10:00:00+00:00', 0, 1, '2025-01-02', '2025-01-01')",
                 (f"review-{index}", f"card-{index}"),
             )
         # legacy_schema.sql predates the Today queue (P0-3): build the
@@ -259,9 +259,9 @@ def test_reviews_require_existing_user(legacy_db):
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "insert into reviews (id, user_id, card_id, rating, reviewed_at,"
-                " previous_stage, next_stage, next_due_at)"
+                " previous_stage, next_stage, next_due_at, study_date)"
                 " values ('r-x', 'no-such-user', 'card-1', 'known',"
-                " '2026-01-01T00:00:00+00:00', 0, 1, '2026-01-02')"
+                " '2026-01-01T00:00:00+00:00', 0, 1, '2026-01-02', '2026-01-01')"
             )
             connection.commit()
 

@@ -469,9 +469,9 @@ def test_delete_user_cascades_across_all_user_tables(cloud_env, email_spy):
         )
         connection.execute(
             "insert into reviews (id, user_id, card_id, rating, reviewed_at,"
-            " previous_stage, next_stage, next_due_at)"
-            " values ('r1', ?, 'c1', 'known', ?, 0, 1, ?)",
-            (user_id, now, now),
+            " previous_stage, next_stage, next_due_at, study_date)"
+            " values ('r1', ?, 'c1', 'known', ?, 0, 1, ?, ?)",
+            (user_id, now, now, now[:10]),
         )
         connection.execute(
             "insert into today_queue (id, user_id, book_id, study_date, position,"
