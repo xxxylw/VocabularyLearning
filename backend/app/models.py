@@ -213,6 +213,10 @@ class PrepareJobResponse(BaseModel):
 class TodayStartRequest(BaseModel):
     date: Date | None = None
     dailyNewWordTarget: int = Field(default=20, gt=0)
+    # P0 2026-09-08 「再来一组」：当日队列背完后追加一组新卡加练的
+    # 数量，超出当日默认新词量。只作用于本次调用、不落库 — 跨日
+    # 的每日快照按各日复习记录重新计算配额，加练无跨日残留。
+    extraNewWords: int = Field(default=0, ge=0)
 
 
 class StudyExampleResponse(BaseModel):
@@ -280,6 +284,23 @@ class TodaySessionResponse(BaseModel):
     # the study date (PRD ch.8 rule 6: numerator offset for the progress
     # bar so it never restarts from 1 after re-entering Today).
     reviewedCards: int = 0
+
+
+# P0 2026-09-08 跨设备完成态恢复：read-only summary of today's queue so
+# the frontend can render the 「再来一组 / 练习拼写」buttons on page
+# load (and on cross-device refresh) without a stateful start call.
+# `dayCompleted` is the source of truth for swapping the Start button
+# out; `completedCards` is the spelled-practice card list, ordered by
+# the day's queue position so spelling keeps the same left-to-right
+# learning order as the card-mode session.
+class TodaySummaryResponse(BaseModel):
+    studyDate: Date
+    totalCards: int
+    reviewedCards: int
+    # 当日队列已生成且全部完成（totalCards > 0 且无待复习条目）。
+    dayCompleted: bool = False
+    # 当日队列中已复习的卡（队列顺序），供拼写练习跨设备恢复。
+    completedCards: list[StudyCardResponse] = Field(default_factory=list)
 
 
 class ReviewCardRequest(BaseModel):

@@ -24,12 +24,14 @@ from app.models import (
     SwitchBookRequest,
     TodaySessionResponse,
     TodayStartRequest,
+    TodaySummaryResponse,
 )
 from app.repositories import get_book_progress, import_book_words_csv
 from app.services import (
     ReviewConflictError,
     get_current_book,
     get_due_reviews,
+    get_today_summary,
     list_books,
     prepare_book_words,
     review_card,
@@ -146,6 +148,19 @@ def create_today_session(
 ) -> TodaySessionResponse:
     _require_study_entitlement(context)
     return start_today_session(context.user_id, request)
+
+
+# P0 2026-09-08 跨设备完成态恢复：read-only summary used to decide
+# whether the Today page should render 「再来一组 / 练习拼写」instead
+# of Start today cards. No study-entitlement gate — the data is
+# observational and stays available even in read-only / 锁定态 so the
+# user can still see what they finished today.
+@router.get("/study/today/summary")
+def get_today_summary_route(
+    context: Annotated[AuthContext, Depends(require_user)],
+    date: date | None = None,
+) -> TodaySummaryResponse:
+    return get_today_summary(context.user_id, date)
 
 
 @router.post("/cards/{card_id}/reviews")

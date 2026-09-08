@@ -16,10 +16,13 @@ describe('api', () => {
 
     await startTodaySession();
 
+    // P0 2026-09-08: extraNewWords is always present in the request
+    // body so the backend's merge path can decide whether to append a
+    // 加练 group. The default 0 keeps the existing single-pass flow.
     expect(fetchMock).toHaveBeenCalledWith('/api/study/today/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dailyNewWordTarget: 20 })
+      body: JSON.stringify({ dailyNewWordTarget: 20, extraNewWords: 0 })
     });
   });
 
@@ -35,7 +38,7 @@ describe('api', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/study/today/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dailyNewWordTarget: 12 })
+      body: JSON.stringify({ dailyNewWordTarget: 12, extraNewWords: 0 })
     });
   });
 

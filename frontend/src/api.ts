@@ -45,6 +45,17 @@ export type TodaySession = {
   reviewedCards: number;
 };
 
+// P0 2026-09-08 跨设备完成态恢复：只读 summary，用作 Today 页
+// 「Start today cards / 再来一组 + 练习拼写」按钮组切换的判定源。
+// 后端不挂 study-entitlement gate — 即便到期锁定也能读到。
+export type TodaySummary = {
+  studyDate: string;
+  totalCards: number;
+  reviewedCards: number;
+  dayCompleted: boolean;
+  completedCards: StudyCard[];
+};
+
 export type BookProgress = {
   totalWords: number;
   nextSequenceIndex: number | null;
@@ -254,10 +265,23 @@ function localDateString(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-export function startTodaySession(dailyNewWordTarget = 20): Promise<TodaySession> {
+export function startTodaySession(
+  dailyNewWordTarget = 20,
+  extraNewWords = 0
+): Promise<TodaySession> {
+  // P0 2026-09-08 「再来一组」：extraNewWords 是单次追加 delta
+  // （不与日常配额合并计算；只在该次调用的 merge 路径生效，
+  // 不落库，跨日不残留）。详见 backend/app/services.py
+  // _merge_new_cards_into_today_queue 的注释。
   return postJson<TodaySession>('/api/study/today/start', {
-    dailyNewWordTarget
+    dailyNewWordTarget,
+    extraNewWords
   });
+}
+
+export function fetchTodaySummary(date?: string): Promise<TodaySummary> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  return getJson<TodaySummary>(`/api/study/today/summary${query}`);
 }
 
 export function getBookProgress(): Promise<BookProgress> {

@@ -29,6 +29,7 @@ from app.models import (
     StudySenseResponse,
     TodaySessionResponse,
     TodayStartRequest,
+    TodaySummaryResponse,
 )
 from app.repositories import normalize_word
 from app.scheduling import DEFAULT_EF, schedule_review
@@ -583,6 +584,13 @@ def prepare_book_words(
 
 def start_today_session(user_id: str, request: TodayStartRequest) -> TodaySessionResponse:
     study_date = request.date or date.today()
+    # P0 2026-09-08 「再来一组」：extraNewWords is folded into the daily
+    # new-word allowance for this call only — the merge path appends
+    # fresh new cards up to the resulting remaining quota. We do NOT
+    # persist extra anywhere; each daily snapshot re-derives its
+    # allowance from the study date's review history, so 加练 has no
+    # cross-day residue.
+    extra_new_words = request.extraNewWords
 
     with connect() as connection:
         book_id = get_current_book_id(connection, user_id)
@@ -592,10 +600,14 @@ def start_today_session(user_id: str, request: TodayStartRequest) -> TodaySessio
 
     if not snapshot_exists:
         # 每日首次进入 Today：生成当天固定队列快照（复习卡在前 + 新卡在后）。
-        _create_today_queue_snapshot(user_id, study_date, request.dailyNewWordTarget)
+        _create_today_queue_snapshot(
+            user_id, study_date, request.dailyNewWordTarget, extra_new_words
+        )
     else:
         # 快照已存在：当日不重算，只把额度内新 prepare 就绪的新卡追加到队尾。
-        _merge_new_cards_into_today_queue(user_id, study_date, request.dailyNewWordTarget)
+        _merge_new_cards_into_today_queue(
+            user_id, study_date, request.dailyNewWordTarget, extra_new_words
+        )
 
     return _read_today_queue_session(user_id, study_date)
 
@@ -612,7 +624,10 @@ def _today_queue_snapshot_exists(
 
 
 def _create_today_queue_snapshot(
-    user_id: str, study_date: date, daily_new_word_target: int
+    user_id: str,
+    study_date: date,
+    daily_new_word_target: int,
+    extra_new_words: int = 0,
 ) -> None:
     review_cards = sorted(
         # PRD ch.8 rule 2: review cards by due_at ascending (overdue
@@ -622,8 +637,17 @@ def _create_today_queue_snapshot(
         key=lambda card: card.dueAt,
     )
 
+    # P0 2026-09-08 「再来一组」：extra is folded into the new-word
+    # allowance. On a fresh day (no reviews yet) this is simply
+    # target + extra, so the snapshot can size up the new-card pool to
+    # accommodate an extra group requested before the first
+    # start call completes. Quota bookkeeping still derives from the
+    # study date's review history (see _count_new_words_studied_on),
+    # so cross-day residue stays zero.
     new_word_target_remaining = max(
-        daily_new_word_target - _count_new_words_studied_on(user_id, study_date),
+        daily_new_word_target
+        + extra_new_words
+        - _count_new_words_studied_on(user_id, study_date),
         0,
     )
     new_cards = (
@@ -658,7 +682,10 @@ def _create_today_queue_snapshot(
 
 
 def _merge_new_cards_into_today_queue(
-    user_id: str, study_date: date, daily_new_word_target: int
+    user_id: str,
+    study_date: date,
+    daily_new_word_target: int,
+    extra_new_words: int = 0,
 ) -> None:
     with connect() as connection:
         book_id = get_current_book_id(connection, user_id)
@@ -704,17 +731,27 @@ def _merge_new_cards_into_today_queue(
     # queued new entries; a queued new entry already reviewed today is in
     # both sets, hence the subtraction below (PRD ch.8 rule 7).
     studied_new = _count_new_words_studied_on(user_id, study_date)
-    remaining = max(
+    # P0 2026-09-08 「再来一组」: extra is the *delta* the user wants to
+    # add right now (one click = one group's worth of fresh new cards,
+    # independent of the daily quota). The daily quota path stays
+    # untouched below; we simply fold the extra into the total budget
+    # before fetching candidates. Additivity across multiple clicks
+    # falls out naturally because each call passes a fresh delta —
+    # e.g. clicking 再来一组 twice with a group size of 2 expands the
+    # queue by 2 + 2 cards, with no per-day ceiling other than the
+    # remaining pool.
+    quota_remaining = max(
         daily_new_word_target
         - studied_new
         - (len(queued_new_card_ids) - reviewed_queued_new),
         0,
     )
-    if remaining <= 0:
+    total_to_add = quota_remaining + extra_new_words
+    if total_to_add <= 0:
         return
 
     candidates = _get_due_new_cards(
-        study_date, remaining + len(queued_new_card_ids), user_id
+        study_date, total_to_add + len(queued_new_card_ids), user_id
     )
     # 跨池新词抵扣：多义词的 new 侧主卡在快照创建时被按词去重、以
     # review 类型入队（见 _create_today_queue_snapshot 的 review_card_ids
@@ -730,31 +767,31 @@ def _merge_new_cards_into_today_queue(
         if card.cardId in queued_any_card_ids
         and card.cardId not in queued_new_card_ids
     )
-    remaining -= cross_pool_queued
-    if remaining <= 0:
+    total_to_add -= cross_pool_queued
+    if total_to_add <= 0:
         return
     fresh_cards = [
         card for card in candidates if card.cardId not in queued_any_card_ids
     ]
-    if len(fresh_cards) < remaining:
+    if len(fresh_cards) < total_to_add:
         # The quota grew mid-day but the pool has no ready new cards left:
         # prepare the missing words, mirroring the snapshot-creation path.
         prepare_book_words(
             user_id,
             PrepareJobRequest(
                 scope="next",
-                count=remaining - len(fresh_cards),
+                count=total_to_add - len(fresh_cards),
                 maxSensesPerWord=5,
                 overwriteExisting=False,
             ),
         )
         candidates = _get_due_new_cards(
-            study_date, remaining + len(queued_new_card_ids), user_id
+            study_date, total_to_add + len(queued_new_card_ids), user_id
         )
         fresh_cards = [
             card for card in candidates if card.cardId not in queued_any_card_ids
         ]
-    fresh_cards = fresh_cards[:remaining]
+    fresh_cards = fresh_cards[:total_to_add]
     if not fresh_cards:
         return
 
@@ -930,6 +967,130 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
             totalCards=total_cards,
             cards=cards,
             reviewedCards=reviewed_cards,
+        )
+
+
+def get_today_summary(
+    user_id: str, study_date: date | None = None
+) -> TodaySummaryResponse:
+    # P0 2026-09-08 跨设备完成态恢复：read-only twin of
+    # _read_today_queue_session. Where the session read filters to the
+    # pending subset (due_at <= study_date, status in new/learning/
+    # mastered) so card mode only sees unfinished work, the summary
+    # read returns the *completed* subset with no due filter — the
+    # reviewed cards have already moved their due_at into the future
+    # via SM-2 and must be fetched as-is so the spelling practice list
+    # can replay them on a freshly refreshed device.
+    study_date = study_date or date.today()
+    with connect() as connection:
+        book_id = get_current_book_id(connection, user_id)
+        queue_rows = connection.execute(
+            "select card_id, position, queue_type from today_queue"
+            " where user_id = ? and book_id = ? and study_date = ? order by position",
+            (user_id, book_id, study_date.isoformat()),
+        ).fetchall()
+
+        if not queue_rows:
+            return TodaySummaryResponse(
+                studyDate=study_date,
+                totalCards=0,
+                reviewedCards=0,
+                dayCompleted=False,
+                completedCards=[],
+            )
+
+        queue_card_ids = [row["card_id"] for row in queue_rows]
+        placeholders = ", ".join("?" for _ in queue_card_ids)
+        existing_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                f"select id as card_id from cards where id in ({placeholders})",
+                tuple(queue_card_ids),
+            ).fetchall()
+        }
+        reviewed_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                f"""
+                select distinct card_id
+                from reviews
+                where card_id in ({placeholders})
+                  and substr(reviewed_at, 1, 10) = ?
+                """,
+                (*queue_card_ids, study_date.isoformat()),
+            ).fetchall()
+        }
+
+        total_cards = sum(1 for card_id in queue_card_ids if card_id in existing_ids)
+        reviewed_cards = sum(
+            1
+            for card_id in queue_card_ids
+            if card_id in existing_ids and card_id in reviewed_ids
+        )
+        day_completed = total_cards > 0 and reviewed_cards >= total_cards
+
+        completed_rows = [
+            row
+            for row in queue_rows
+            if row["card_id"] in existing_ids and row["card_id"] in reviewed_ids
+        ]
+
+        completed_cards: list[StudyCardResponse] = []
+        if completed_rows:
+            completed_card_ids = [row["card_id"] for row in completed_rows]
+            completed_placeholders = ", ".join("?" for _ in completed_card_ids)
+            completed_words = [
+                row["normalized_text"]
+                for row in connection.execute(
+                    f"""
+                    select distinct words.normalized_text
+                    from cards
+                    join entries on entries.id = cards.entry_id
+                    join words on words.id = entries.word_id
+                    where cards.id in ({completed_placeholders})
+                    """,
+                    tuple(completed_card_ids),
+                ).fetchall()
+            ]
+            if completed_words:
+                word_placeholders = ", ".join("?" for _ in completed_words)
+                # No `cards.due_at <= ?` filter here — reviewed cards
+                # have already been rescheduled into the future. The
+                # status filter stays the same as the session read so
+                # we never surface an orphan card.
+                due_rows = connection.execute(
+                    f"""
+                    select
+                        cards.id as card_id,
+                        cards.last_reviewed_at,
+                        words.normalized_text
+                    from words
+                    cross join entries
+                    cross join cards
+                    where words.normalized_text in ({word_placeholders})
+                      and entries.word_id = words.id
+                      and cards.entry_id = entries.id
+                      and cards.user_id = ?
+                      and cards.status in ('new', 'learning', 'mastered')
+                    """,
+                    (*completed_words, user_id),
+                ).fetchall()
+                study_cards = _study_cards_from_rows(connection, due_rows, user_id)
+                cards_by_id = {card.cardId: card for card in study_cards}
+                for row in completed_rows:
+                    card = cards_by_id.get(row["card_id"])
+                    if card is None:
+                        continue
+                    card.queueType = row["queue_type"]
+                    card.queuePosition = row["position"]
+                    completed_cards.append(card)
+
+        return TodaySummaryResponse(
+            studyDate=study_date,
+            totalCards=total_cards,
+            reviewedCards=reviewed_cards,
+            dayCompleted=day_completed,
+            completedCards=completed_cards,
         )
 
 

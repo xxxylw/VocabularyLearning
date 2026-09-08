@@ -171,4 +171,69 @@ describe('TodayView', () => {
     await user.click(screen.getByTestId('book-cover-card'));
     expect(onOpenBookShelf).toHaveBeenCalled();
   });
+
+  it('renders 「再来一组 / 练习拼写」and hides Start when dayCompleted (P0 acceptance #1)', async () => {
+    const user = userEvent.setup();
+    const onStart = vi.fn();
+    const onAnotherGroup = vi.fn();
+    const onPracticeSpelling = vi.fn();
+
+    render(
+      <TodayView
+        onStart={onStart}
+        onAnotherGroup={onAnotherGroup}
+        onPracticeSpelling={onPracticeSpelling}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        dayCompleted
+        canPracticeSpelling
+      />
+    );
+
+    // The Start button is gone — replaced by the completion-set buttons.
+    expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('today-day-completed')).toHaveTextContent('今日卡片已背完');
+    expect(screen.getByTestId('another-group')).toBeInTheDocument();
+    expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('another-group'));
+    expect(onAnotherGroup).toHaveBeenCalledTimes(1);
+    expect(onStart).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId('practice-spelling-completed'));
+    expect(onPracticeSpelling).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the practice-spelling button when dayCompleted but canPracticeSpelling is false', () => {
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        dayCompleted
+        canPracticeSpelling={false}
+      />
+    );
+
+    expect(screen.getByTestId('another-group')).toBeInTheDocument();
+    expect(screen.queryByTestId('practice-spelling-completed')).not.toBeInTheDocument();
+  });
+
+  it('renders the Start today cards button when dayCompleted is false (existing behavior)', () => {
+    const onStart = vi.fn();
+    render(
+      <TodayView
+        onStart={onStart}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        dayCompleted={false}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: /start today cards/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('another-group')).not.toBeInTheDocument();
+  });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ApiError,
+  fetchTodaySummary,
   getBookProgress,
   getCurrentBook,
   listBooks,
@@ -10,7 +11,7 @@ import {
   startTodaySession,
   switchBook
 } from './api';
-import type { BookListItem, ReviewRating, StudyCard } from './api';
+import type { BookListItem, ReviewRating, StudyCard, TodaySummary } from './api';
 import { buildCheckInRecord, loadCheckIns, saveCheckIn } from './checkins';
 import { BookShelfView } from './components/BookShelfView';
 import { SpellingSession } from './components/SpellingSession';
@@ -41,6 +42,9 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
   const [emptyReason, setEmptyReason] = useState<EmptyReason>('no-cards');
   const [checkIns, setCheckIns] = useState(() => loadCheckIns());
   const [lastCompletedCards, setLastCompletedCards] = useState<StudyCard[]>([]);
+  // P0 2026-09-08 跨设备完成态：服务端是「今天是否完成」的唯一权威，
+  // 单纯靠 lastCompletedCards 拿不到刷新/换设备后的状态。
+  const [todaySummary, setTodaySummary] = useState<TodaySummary | null>(null);
   const [bookTitle, setBookTitle] = useState<string | null>(null);
   // PRD ch.9: cover card data + bookshelf state.
   const [bookTotalWords, setBookTotalWords] = useState<number | null>(null);
@@ -55,8 +59,21 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
       // Book title is informational; keep the page usable when the
       // endpoint is unavailable (e.g. backend still starting up).
     });
+    // P0 2026-09-08 跨设备完成态：mount 时拉一次今日 summary，
+    // 决定 Today 页应显示「Start today cards」还是
+    // 「再来一组 / 练习拼写」。后端 summary 不挂 study-entitlement
+    // gate — 订阅到期时也能读，锁定态下也能看到「今天已完成」。
+    refreshTodaySummary().catch(() => {
+      // Summary 是 best-effort：拉取失败时退回到未完成态（仍显示
+      // Start today cards），让用户至少能继续学习。
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function refreshTodaySummary() {
+    const summary = await fetchTodaySummary();
+    setTodaySummary(summary);
+  }
 
   async function refreshCurrentBook() {
     const book = await getCurrentBook();
@@ -86,10 +103,15 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
       // the cover card data and return to Today with a clean slate (the
       // in-progress session ended; graded reviews stay persisted).
       await refreshCurrentBook();
+      // 切书后当日 summary 不可信（换书的 completedCards 队列
+      // 属于旧书），重置到未完成态，等 useEffect / 下一轮 mount
+      // 重新拉新书的 summary。
+      setTodaySummary(null);
       setCards([]);
       setDayProgress(null);
       setLastCompletedCards([]);
       setScreen('today');
+      void refreshTodaySummary().catch(() => undefined);
     } catch {
       setBookshelfError('Switching the book failed. Please try again.');
     } finally {
@@ -97,12 +119,12 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     }
   }
 
-  async function handleStart(target: number) {
+  async function handleStart(target: number, extraNewWords = 0) {
     setIsLoading(true);
     setError(null);
 
     try {
-      const session = await startTodaySession(target);
+      const session = await startTodaySession(target, extraNewWords);
       setCards(session.cards);
       setDayProgress({
         totalCards: session.totalCards,
@@ -133,6 +155,26 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     }
   }
 
+  // P0 2026-09-08 「再来一组」: 当日队列背完后追加一组新卡加练。
+  // 实现口径：
+  //   - 数量 = 当前 newWordTarget 状态（不与 default quota 合并），
+  //     用户在 Today 视图改的「New word target」输入框就是单组大小。
+  //   - 一次点击 = 一次 extraNewWords delta，服务端 merge 路径按
+  //     「quota_remaining + extra」计算当日队列追加量；多次点击
+  //     累加（每次都是新 delta，无单日上限，限制仅剩词池余量）。
+  //   - 跨日无残留：extra 不落库，次日新快照按复习记录重算配额。
+  //   - 仅在 dayCompleted 时按钮可点；加练完成后回到 study 流程。
+  async function handleAnotherGroup() {
+    if (!todaySummary?.dayCompleted) {
+      return;
+    }
+    await handleStart(newWordTarget, newWordTarget);
+    // 后端 start 成功后服务端 summary 自动反映新增的 totalCards，
+    // 但当天内是同一队列继续，不重置 dayCompleted；为保持 summary
+    // 视图与服务端一致，start 之后再拉一次（best-effort）。
+    void refreshTodaySummary().catch(() => undefined);
+  }
+
   async function reviewWordCard(card: StudyCard, rating: ReviewRating) {
     const cardIds = card.cardIds.length > 0 ? card.cardIds : [card.cardId];
     await Promise.all(cardIds.map((cardId) => reviewCard(cardId, rating)));
@@ -142,11 +184,20 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     setLastCompletedCards(completedCards);
     const updatedCheckIns = saveCheckIn(buildCheckInRecord(completedCards));
     setCheckIns(updatedCheckIns);
+    // P0 2026-09-08：本地 lastCompletedCards 解决不了跨设备恢复，
+    // 这里把服务端 summary 重新拉一次 — 完成后 dayCompleted 变 true，
+    // 切到「再来一组 / 练习拼写」按钮组。
+    void refreshTodaySummary().catch(() => undefined);
   }
 
+  // 拼写练习入口：优先用服务端 summary.completedCards（与当日队列
+  // 顺序一致，跨设备可用），回退到 lastCompletedCards。
   function startSpellingPractice(spellingCards: StudyCard[]) {
-    setCards(spellingCards);
-    setLastCompletedCards(spellingCards);
+    const cards = todaySummary?.completedCards?.length
+      ? todaySummary.completedCards
+      : spellingCards;
+    setCards(cards);
+    setLastCompletedCards(cards);
     setScreen('spelling');
   }
 
@@ -206,10 +257,15 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     <main className="app-shell">
       <TodayView
         onStart={(target) => void handleStart(target)}
+        onAnotherGroup={() => void handleAnotherGroup()}
         isLoading={isLoading}
         newWordTarget={newWordTarget}
         onNewWordTargetChange={setNewWordTarget}
-        canPracticeSpelling={lastCompletedCards.length > 0}
+        dayCompleted={todaySummary?.dayCompleted ?? false}
+        canPracticeSpelling={
+          (todaySummary?.completedCards?.length ?? 0) > 0 ||
+          lastCompletedCards.length > 0
+        }
         onPracticeSpelling={() => startSpellingPractice(lastCompletedCards)}
         checkIns={checkIns}
         error={error}

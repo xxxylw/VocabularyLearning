@@ -4,11 +4,16 @@ import { CheckInGrid } from './CheckInGrid';
 
 type TodayViewProps = {
   onStart: (newWordTarget: number) => void;
+  // P0 2026-09-08 「再来一组」: 当日队列完成后追加一组新卡加练。
+  onAnotherGroup?: () => void;
   isLoading: boolean;
   newWordTarget: number;
   onNewWordTargetChange: (newWordTarget: number) => void;
   onPracticeSpelling?: () => void;
   canPracticeSpelling?: boolean;
+  // P0 2026-09-08 跨设备完成态：服务端是「今天是否完成」的唯一权威。
+  // 当 true 时不再显示 Start today cards，改为「再来一组 + 练习拼写」。
+  dayCompleted?: boolean;
   checkIns?: CheckInRecord[];
   error?: string | null;
   bookTitle?: string | null;
@@ -27,11 +32,13 @@ type TodayViewProps = {
 
 export function TodayView({
   onStart,
+  onAnotherGroup,
   isLoading,
   newWordTarget,
   onNewWordTargetChange,
   onPracticeSpelling,
   canPracticeSpelling = false,
+  dayCompleted = false,
   checkIns = [],
   error,
   bookTitle,
@@ -133,6 +140,36 @@ export function TodayView({
               学习功能已锁定
             </strong>
           </div>
+        ) : dayCompleted ? (
+          // P0 2026-09-08 完成态：服务端 summary 是唯一权威，
+          // 跨设备刷新后仍正确显示。把 Start today cards 换成
+          // 「再来一组」追加一组新卡、「练习拼写」进入拼写视图。
+          <>
+            <div className="stat-row" data-testid="today-day-completed">
+              <span>Today</span>
+              <strong>今日卡片已背完 🎉</strong>
+            </div>
+            <button
+              className="primary-action"
+              type="button"
+              onClick={onAnotherGroup}
+              disabled={isLoading || !onAnotherGroup}
+              data-testid="another-group"
+            >
+              {isLoading ? 'Preparing cards' : '再来一组'}
+            </button>
+            {canPracticeSpelling && onPracticeSpelling ? (
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={onPracticeSpelling}
+                disabled={isLoading}
+                data-testid="practice-spelling-completed"
+              >
+                练习拼写
+              </button>
+            ) : null}
+          </>
         ) : (
           <div className="stat-row">
             <label htmlFor="new-word-target">New word target</label>
@@ -161,12 +198,12 @@ export function TodayView({
           >
             续费解锁学习
           </button>
-        ) : (
+        ) : dayCompleted ? null : (
           <button className="primary-action" type="button" onClick={handleStart} disabled={isLoading}>
             {isLoading ? 'Preparing cards' : 'Start today cards'}
           </button>
         )}
-        {canPracticeSpelling && onPracticeSpelling && !readOnly ? (
+        {!dayCompleted && canPracticeSpelling && onPracticeSpelling && !readOnly ? (
           <button className="secondary-action" type="button" onClick={onPracticeSpelling} disabled={isLoading}>
             Practice spelling
           </button>
