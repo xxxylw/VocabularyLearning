@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CheckInRecord } from '../checkins';
+import { estimateFinishDays, formatFinishEstimate } from '../estimate';
 import { CheckInGrid } from './CheckInGrid';
 
 type TodayViewProps = {
@@ -72,6 +73,16 @@ export function TodayView({
     onStart(Number.isNaN(nextTarget) ? newWordTarget : Math.min(200, Math.max(1, nextTarget)));
   }
 
+  // 需求 A「背完时间预估」：主位在当前书封面卡进度行下方（DP-A3）。
+  // 数据全部来自已有状态（bookTotalWords / bookLearnedWords / checkIns /
+  // newWordTarget），目标改动后这里即时重算；速度不足 3 天样本回退目标值。
+  const finishEstimate =
+    typeof bookTotalWords === 'number' && typeof bookLearnedWords === 'number'
+      ? estimateFinishDays(bookTotalWords, bookLearnedWords, checkIns, newWordTarget)
+      : { kind: 'unavailable' as const };
+  const finishEstimateText =
+    finishEstimate.kind === 'unavailable' ? '' : formatFinishEstimate(finishEstimate);
+
   return (
     <section className="today-view" aria-labelledby="today-title">
       <div className="today-copy">
@@ -120,6 +131,11 @@ export function TodayView({
                   ? `已学 ${bookLearnedWords} / ${bookTotalWords}`
                   : null}
               </span>
+              {finishEstimateText ? (
+                <span className="book-cover-estimate" data-testid="book-cover-estimate">
+                  {finishEstimateText}
+                </span>
+              ) : null}
             </span>
           </button>
         ) : null}

@@ -399,11 +399,12 @@ a {
 }
 
 .spelling-card {
+  /* 2026-09-08 拼写重设计（DP-B1）：单列居中，废除左右分栏（F-08 失衡根源）。 */
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(320px, 1.08fr);
+  grid-template-columns: minmax(0, 1fr);
   align-self: center;
-  gap: clamp(20px, 4vw, 42px);
-  width: min(980px, 100%);
+  gap: clamp(20px, 4vw, 32px);
+  width: min(720px, 100%);
   margin: 24px auto;
   border: 1px solid rgba(110, 91, 68, 0.14);
   border-radius: 8px;
@@ -415,16 +416,15 @@ a {
 .spelling-prompt {
   display: grid;
   align-content: start;
-  gap: 14px;
-  border-right: 1px solid rgba(110, 91, 68, 0.12);
-  padding-right: clamp(18px, 3vw, 34px);
+  gap: 12px;
 }
 
-.spelling-prompt h1 {
+/* 主提示为安全首句、h2 级字号（约 24–28px），不再用 h1（DP-B1 / F-08）。 */
+.spelling-prompt h2 {
   margin: 0;
   color: #2f2a24;
-  font-size: clamp(2rem, 5vw, 4.2rem);
-  line-height: 1.05;
+  font-size: clamp(1.5rem, 2.6vw, 1.75rem);
+  line-height: 1.25;
   letter-spacing: 0;
 }
 
@@ -499,6 +499,55 @@ a {
   background: rgba(72, 111, 131, 0.12);
   color: #3d5f70;
 }
+
+/* 2026-09-08 拼写重设计：揭示后的完整释义 + 完成态汇总/错词列表。 */
+.spelling-full-definition {
+  margin: 0;
+  color: #5d554b;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.spelling-summary-line {
+  margin: 12px 0 0;
+  color: #4b463f;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.spelling-wrong-list {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0 0 0 18px;
+  color: #6a6257;
+}
+
+.spelling-wrong-list strong {
+  color: #87453f;
+}
+
+.completion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+/* 需求 A「背完时间预估」：封面卡进度行下方的主位 + 书架辅位单行。 */
+.book-cover-estimate {
+  color: #7a6a52;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.bookshelf-item-estimate {
+  color: #7a6a52;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 
 .queue-pill {
   justify-self: start;
@@ -1026,6 +1075,28 @@ a {
 
   .completion-stats {
     grid-template-columns: 1fr;
+  }
+
+  /* 2026-09-08 拼写重设计：≤760px 视口输入与按钮全宽、上下排列。 */
+  .spelling-shell {
+    padding: 16px;
+  }
+
+  .spelling-card {
+    padding: 20px;
+  }
+
+  .spelling-input {
+    min-height: 48px;
+    font-size: 1.15rem;
+  }
+
+  .spelling-actions {
+    flex-direction: column;
+  }
+
+  .spelling-actions .primary-action {
+    width: 100%;
   }
 }
 

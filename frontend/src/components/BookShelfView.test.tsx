@@ -152,4 +152,33 @@ describe('BookShelfView', () => {
 
     expect(screen.getByTestId('bookshelf-notice')).toHaveTextContent('已回退默认书');
   });
+
+  it('shows a single-day estimate line per book using the user\'s median speed', () => {
+    const bookA = makeBook({ id: 'book-a', title: '雅思词汇真经', totalWords: 100, learnedWords: 60, masteredWords: 0 });
+    const bookB = makeBook({ id: 'book-b', title: '考研红宝书', totalWords: 200, learnedWords: 0, masteredWords: 0 });
+
+    render(
+      <BookShelfView
+        books={[bookA, bookB]}
+        onBack={vi.fn()}
+        onSwitch={vi.fn()}
+        checkIns={[
+          { date: '2026-09-06', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' },
+          { date: '2026-09-07', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' },
+          { date: '2026-09-08', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' }
+        ]}
+        newWordTarget={20}
+      />
+    );
+
+    // 速度 10 词/天：A 剩 40 → 4 天；B 剩 200 → 20 天。
+    expect(screen.getByTestId('bookshelf-estimate-book-a')).toHaveTextContent('预计还需 4 天背完');
+    expect(screen.getByTestId('bookshelf-estimate-book-b')).toHaveTextContent('预计还需 20 天背完');
+  });
+
+  it('renders 新词已学完 for a finished book on the shelf', () => {
+    const book = makeBook({ id: 'book-a', title: '雅思词汇真经', totalWords: 100, learnedWords: 100, masteredWords: 0 });
+    render(<BookShelfView books={[book]} onBack={vi.fn()} onSwitch={vi.fn()} />);
+    expect(screen.getByTestId('bookshelf-estimate-book-a')).toHaveTextContent('新词已学完');
+  });
 });

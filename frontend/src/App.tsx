@@ -248,6 +248,8 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
           isSwitching={isSwitching}
           error={bookshelfError}
           notice={bookFallbackNotice}
+          checkIns={checkIns}
+          newWordTarget={newWordTarget}
         />
       </main>
     );

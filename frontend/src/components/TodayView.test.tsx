@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -235,5 +235,82 @@ describe('TodayView', () => {
 
     expect(screen.getByRole('button', { name: /start today cards/i })).toBeInTheDocument();
     expect(screen.queryByTestId('another-group')).not.toBeInTheDocument();
+  });
+
+  it('renders the finish estimate on the book cover card using the median 14-day new-word speed', () => {
+    const checkIns = [
+      { date: '2026-08-26', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' },
+      { date: '2026-09-06', completedCards: 20, newCards: 20, reviewCards: 0, completedAt: '' },
+      { date: '2026-09-07', completedCards: 20, newCards: 20, reviewCards: 0, completedAt: '' },
+      { date: '2026-09-08', completedCards: 20, newCards: 20, reviewCards: 0, completedAt: '' }
+    ];
+
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        bookTitle="词书"
+        bookTotalWords={220}
+        bookLearnedWords={20}
+        checkIns={checkIns}
+        onOpenBookShelf={vi.fn()}
+      />
+    );
+
+    // 中位速度 20 词/天、剩余 200 词 → 10 天；10 ≤ 30，附完成日期。
+    const estimate = screen.getByTestId('book-cover-estimate');
+    expect(estimate.textContent).toMatch(/按每天 20 词的节奏，预计还需 10 天背完/);
+  });
+
+  it('shows the new-words-done copy on the cover card when the book is finished', () => {
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        bookTitle="词书"
+        bookTotalWords={100}
+        bookLearnedWords={100}
+        onOpenBookShelf={vi.fn()}
+      />
+    );
+
+    expect(screen.getByTestId('book-cover-estimate')).toHaveTextContent('新词已学完');
+  });
+
+  it('recomputes the estimate when the new-word target changes', () => {
+    function Harness() {
+      const [target, setTarget] = useState(20);
+      return (
+        <TodayView
+          onStart={vi.fn()}
+          isLoading={false}
+          newWordTarget={target}
+          onNewWordTargetChange={setTarget}
+          bookTitle="词书"
+          bookTotalWords={200}
+          bookLearnedWords={0}
+          onOpenBookShelf={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    // 无打卡样本（< 3 天）→ 速度回退目标值，目标 20 → 10 天。
+    expect(screen.getByTestId('book-cover-estimate').textContent).toMatch(/预计还需 10 天/);
+
+    const input = screen.getByRole('spinbutton', { name: /new word target/i });
+    input.setAttribute('value', '40');
+    // userEvent.type to drive React onChange so the parent state updates.
+    // We use fireEvent for simplicity on a controlled input where the parent
+    // owns the value, and rely on the rendered estimate updating on re-render.
+    fireEvent.change(input, { target: { value: '40' } });
+
+    // 速度回退为新目标 40 → 200/40 = 5 天。
+    expect(screen.getByTestId('book-cover-estimate').textContent).toMatch(/预计还需 5 天/);
   });
 });

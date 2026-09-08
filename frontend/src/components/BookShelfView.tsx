@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { BookListItem } from '../api';
+import type { CheckInRecord } from '../checkins';
+import { estimateFinishDays } from '../estimate';
 
 // PRD ch.10: the second built-in book gets a red programmatic cover so the
 // two shelf entries are visually distinct (纯 CSS，无图片，零版权风险).
@@ -17,6 +19,11 @@ type BookShelfViewProps = {
   // Fallback notice from GET /api/books/current when the pointer
   // referenced a missing book and the default book took over.
   notice?: string | null;
+  // 需求 A「背完时间预估」辅位（DP-A3）：每本书 meta 行追加同一口径的
+  // 预估天数（用该书自身 totalWords / learnedWords，速度沿用当前用户口径），
+  // 只显示单行天数、不加日期。
+  checkIns?: CheckInRecord[];
+  newWordTarget?: number;
 };
 
 export function BookShelfView({
@@ -25,9 +32,25 @@ export function BookShelfView({
   onSwitch,
   isSwitching = false,
   error,
-  notice
+  notice,
+  checkIns = [],
+  newWordTarget = 20
 }: BookShelfViewProps) {
   const [confirmTarget, setConfirmTarget] = useState<BookListItem | null>(null);
+
+  function bookEstimateText(book: BookListItem): string {
+    if (book.totalWords === 0) {
+      return '';
+    }
+    const estimate = estimateFinishDays(book.totalWords, book.learnedWords ?? 0, checkIns, newWordTarget);
+    if (estimate.kind === 'done') {
+      return '新词已学完';
+    }
+    if (estimate.kind === 'estimate') {
+      return `预计还需 ${estimate.days} 天背完`;
+    }
+    return '';
+  }
 
   function handleBookClick(book: BookListItem) {
     if (book.isCurrent || book.totalWords === 0) {
@@ -101,6 +124,11 @@ export function BookShelfView({
                 <span className="bookshelf-item-stats">
                   {book.totalWords} 词 · 已学 {book.learnedWords ?? 0} · 已掌握 {book.masteredWords ?? 0}
                 </span>
+                {bookEstimateText(book) ? (
+                  <span className="bookshelf-item-estimate" data-testid={`bookshelf-estimate-${book.id}`}>
+                    {bookEstimateText(book)}
+                  </span>
+                ) : null}
                 {book.totalWords === 0 ? (
                   <span className="bookshelf-item-hint">数据未就绪，暂不可选</span>
                 ) : null}
