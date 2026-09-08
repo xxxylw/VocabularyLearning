@@ -9,7 +9,7 @@ describe('TodayView', () => {
     vi.useRealTimers();
   });
 
-  it('shows the signed-in email in the eyebrow row when userEmail is provided', () => {
+  it('shows "@email " as the prefix of the today-note sentence when userEmail is provided', () => {
     render(
       <TodayView
         onStart={vi.fn()}
@@ -21,21 +21,30 @@ describe('TodayView', () => {
     );
 
     const email = screen.getByTestId('today-user-email');
-    expect(email).toHaveTextContent('qirui.huang@flexiv.com');
-    // Full address stays available via the title attribute when truncated.
+    expect(email).toHaveTextContent('@qirui.huang@flexiv.com');
+    // Full address stays available via the title attribute.
     expect(email).toHaveAttribute('title', 'qirui.huang@flexiv.com');
+    // The @email prefix and the note sentence share one paragraph, email first.
+    const note = email.closest('p');
+    expect(note).toHaveTextContent(
+      '@qirui.huang@flexiv.com A quiet desk, a short queue, and a focused pass through the words waiting for you.'
+    );
   });
 
   it('does not render the email element when userEmail is missing', () => {
     render(<TodayView onStart={vi.fn()} isLoading={false} newWordTarget={20} onNewWordTargetChange={vi.fn()} />);
 
     expect(screen.queryByTestId('today-user-email')).not.toBeInTheDocument();
+    // The note sentence still renders on its own.
+    expect(
+      screen.getByText('A quiet desk, a short queue, and a focused pass through the words waiting for you.')
+    ).toBeInTheDocument();
   });
 
-  it('renders the "go see the world" motto below the note', () => {
+  it('no longer renders the "go see the world" Chinese motto', () => {
     render(<TodayView onStart={vi.fn()} isLoading={false} newWordTarget={20} onNewWordTargetChange={vi.fn()} />);
 
-    expect(screen.getByText('背下的每个词，都是去看世界的路')).toBeInTheDocument();
+    expect(screen.queryByText('背下的每个词，都是去看世界的路')).not.toBeInTheDocument();
   });
 
   it('renders Start today cards and calls onStart when clicked', async () => {
