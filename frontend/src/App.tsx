@@ -13,7 +13,7 @@ import {
   startTodaySession,
   switchBook
 } from './api';
-import type { BookListItem, ReviewRating, StudyCard, TodaySummary } from './api';
+import type { BookInfo, BookListItem, ReviewRating, StudyCard, TodaySummary } from './api';
 import {
   buildCheckInRecord,
   loadCheckIns,
@@ -120,7 +120,23 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
   }
 
   async function refreshCurrentBook() {
-    const book = await getCurrentBook();
+    // P1 2026-09-09 Today 封面卡主位缺失：/api/books/current 瞬时失败
+    // （超时/5xx，线上部署窗口期出现过）时，若直接抛错，bookTitle/
+    // totalWords/learnedWords 保持 null，Today 封面卡（含背完时间预估
+    // 主位）整体不渲染。回退到书架列表端点 /api/books——列表项与
+    // current 同形（含 totalWords/learnedWords）且带 isCurrent 标记，
+    // QA 走查时书架辅位正常即证明该端点可用。
+    let book: BookInfo;
+    try {
+      book = await getCurrentBook();
+    } catch {
+      const list = await listBooks();
+      const current = list.books.find((item) => item.isCurrent);
+      if (!current) {
+        throw new Error('current book missing in book list');
+      }
+      book = current;
+    }
     setBookTitle(book.title);
     setBookTotalWords(book.totalWords);
     setBookLearnedWords(book.learnedWords ?? null);
