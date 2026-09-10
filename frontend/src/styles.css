@@ -98,12 +98,7 @@ a {
   font-weight: 600;
 }
 
-.book-title {
-  margin: 0 0 12px;
-  color: #4a3b52;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
+/* .book-title（「单词书：xxx」中文标签行）已随 DP-A6 删除（2026-09-11）。 */
 
 .desk-panel,
 .empty-state,
@@ -534,12 +529,31 @@ a {
   margin-top: 26px;
 }
 
-/* 需求 A「背完时间预估」：封面卡进度行下方的主位 + 书架辅位单行。 */
+/* 需求 A「背完时间预估」：封面卡进度行下方的主位 + 书架辅位单行。
+   2026-09-11 设计稿（任务 7683946482969349077）：预估行整行英文，
+   且原 #7a6a52 压绿封面对比度仅约 3.0:1（不达 WCAG AA），
+   改为 rgba(251,246,237,.92)（约 8.6:1）。 */
 .book-cover-estimate {
-  color: #7a6a52;
+  color: rgba(251, 246, 237, 0.92);
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.5;
+}
+
+/* DP-A4：天数数字用 Markdown 行内 code 风格 pill（GitHub 风）：
+   等宽字体 + 半透白底 + 1px 描边 + 6px 圆角，数字本身不换行拆开。
+   色值取自设计稿截图实测（2x 缩放取样）。 */
+.book-cover-days {
+  padding: 0 6px;
+  border: 1px solid rgba(251, 246, 237, 0.45);
+  border-radius: 6px;
+  background: rgba(251, 246, 237, 0.15);
+  color: rgba(251, 246, 237, 0.95);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .bookshelf-item-estimate {

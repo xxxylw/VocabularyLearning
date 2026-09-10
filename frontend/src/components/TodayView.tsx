@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CheckInRecord } from '../checkins';
-import { estimateFinishDays, formatFinishEstimate } from '../estimate';
+import { estimateFinishDays, finishEstimateParts } from '../estimate';
 import { CheckInGrid } from './CheckInGrid';
 
 type TodayViewProps = {
@@ -76,12 +76,12 @@ export function TodayView({
   // 需求 A「背完时间预估」：主位在当前书封面卡进度行下方（DP-A3）。
   // 数据全部来自已有状态（bookTotalWords / bookLearnedWords / checkIns /
   // newWordTarget），目标改动后这里即时重算；速度不足 3 天样本回退目标值。
+  // 2026-09-11 DP-A4：预估整行英文，天数数字用行内 code pill 单独渲染。
   const finishEstimate =
     typeof bookTotalWords === 'number' && typeof bookLearnedWords === 'number'
       ? estimateFinishDays(bookTotalWords, bookLearnedWords, checkIns, newWordTarget)
       : { kind: 'unavailable' as const };
-  const finishEstimateText =
-    finishEstimate.kind === 'unavailable' ? '' : formatFinishEstimate(finishEstimate);
+  const estimateParts = finishEstimateParts(finishEstimate);
 
   return (
     <section className="today-view" aria-labelledby="today-title">
@@ -89,11 +89,8 @@ export function TodayView({
         <p className="today-eyebrow-row">
           <span className="eyebrow">Today</span>
         </p>
-        {bookTitle ? (
-          <p className="book-title" data-testid="current-book-title">
-            单词书：{bookTitle}
-          </p>
-        ) : null}
+        {/* 2026-09-11 DP-A6：删除封面卡上方「单词书：xxx」中文标签行——
+            书名仍保留在封面卡内作为数据，Today 首页封面卡区域不再出现中文。 */}
         <h1 id="today-title">Ready for today&apos;s cards</h1>
         <p className="today-note">
           {/* 2026-09-08 需求：@邮箱前缀 + 英文句同行展示；中文释义句已移除。
@@ -116,7 +113,7 @@ export function TodayView({
             className="book-cover-card"
             data-testid="book-cover-card"
             onClick={onOpenBookShelf}
-            aria-label={`查看单词书书架，当前书《${bookTitle}》`}
+            aria-label={`Open the bookshelf, current book: ${bookTitle}`}
           >
             <span className="book-cover-spine" aria-hidden="true" />
             <span className="book-cover-body">
@@ -124,16 +121,29 @@ export function TodayView({
                 {bookTitle}
               </span>
               <span className="book-cover-meta">
-                {typeof bookTotalWords === 'number' ? `${bookTotalWords} 词` : null}
+                {typeof bookTotalWords === 'number'
+                  ? `${bookTotalWords.toLocaleString('en-US')} words`
+                  : null}
               </span>
               <span className="book-cover-progress">
                 {typeof bookLearnedWords === 'number' && typeof bookTotalWords === 'number'
-                  ? `已学 ${bookLearnedWords} / ${bookTotalWords}`
+                  ? `${bookLearnedWords.toLocaleString('en-US')} / ${bookTotalWords.toLocaleString('en-US')} learned`
                   : null}
               </span>
-              {finishEstimateText ? (
+              {estimateParts.kind === 'estimate' ? (
                 <span className="book-cover-estimate" data-testid="book-cover-estimate">
-                  {finishEstimateText}
+                  {estimateParts.lead}
+                  <code className="book-cover-days" data-testid="book-cover-estimate-days">
+                    {estimateParts.days}
+                  </code>
+                  {estimateParts.mid}
+                  {estimateParts.speed}
+                  {estimateParts.tail}
+                  {estimateParts.dateSuffix}
+                </span>
+              ) : estimateParts.kind === 'done' ? (
+                <span className="book-cover-estimate" data-testid="book-cover-estimate">
+                  {estimateParts.text}
                 </span>
               ) : null}
             </span>

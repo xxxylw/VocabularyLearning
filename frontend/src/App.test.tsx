@@ -34,7 +34,8 @@ describe('App', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
-    expect(await screen.findByText('单词书：雅思词汇真经')).toBeInTheDocument();
+    // DP-A6：中文标签行已删除；书名保留在封面卡内。
+    expect(await screen.findByTestId('book-cover-card')).toHaveTextContent('雅思词汇真经');
     await user.click(screen.getByRole('button', { name: /start today cards/i }));
 
     expect(await screen.findByText('No book words imported yet.')).toBeInTheDocument();
@@ -246,7 +247,7 @@ describe('App', () => {
 
     // Cover card shows the current book's aggregates from the initial
     // GET /api/books/current response.
-    expect(await screen.findByText('已学 120 / 3383')).toBeInTheDocument();
+    expect(await screen.findByText('120 / 3,383 learned')).toBeInTheDocument();
     await user.click(screen.getByTestId('book-cover-card'));
 
     // Bookshelf: list + current badge + confirm dialog before switching.

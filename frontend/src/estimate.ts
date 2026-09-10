@@ -82,25 +82,75 @@ export function estimateFinishDays(
   };
 }
 
-// 常规文案：「按每天 X 词的节奏，预计还需 N 天背完」；
-// N ≤ 30 时追加（约 M 月 D 日），> 30 只显示天数（DP-A4）；
-// R = 0：「新词已学完，复习继续巩固中」。
-export function formatFinishEstimate(estimate: FinishEstimate, today: Date = new Date()): string {
+// 2026-09-11 DP-A4 定稿（PM 规格）：预估整行英文——
+// 「Estimated N days to finish at X words/day」，N ≤ 30 天时追加
+// (by MMM D)（跨年带年份 (by Jan 5, 2027)），> 30 只显示天数；
+// R = 0：「All new words learned — keep reviewing.」。
+// 天数 N 由 TodayView 用行内 code 样式（等宽 + pill 包裹）单独渲染，
+// 因此提供结构化的 finishEstimateParts；本函数是它的纯字符串拼接形态。
+const MONTHS_ABBR = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+
+export type FinishEstimateParts =
+  | { kind: 'unavailable' }
+  | { kind: 'done'; text: string }
+  | {
+      kind: 'estimate';
+      lead: string;
+      days: number;
+      mid: string;
+      speed: number;
+      tail: string;
+      dateSuffix: string;
+    };
+
+export function finishEstimateParts(
+  estimate: FinishEstimate,
+  today: Date = new Date()
+): FinishEstimateParts {
   if (estimate.kind === 'unavailable') {
-    return '';
+    return { kind: 'unavailable' };
   }
   if (estimate.kind === 'done') {
-    return '新词已学完，复习继续巩固中';
+    return { kind: 'done', text: 'All new words learned — keep reviewing.' };
   }
 
-  const base = `按每天 ${estimate.speed} 词的节奏，预计还需 ${estimate.days} 天背完`;
+  const dayWord = estimate.days === 1 ? 'day' : 'days';
+  let dateSuffix = '';
 
   if (estimate.days <= 30) {
     const finishDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + estimate.days);
-    return `${base}（约 ${finishDate.getMonth() + 1} 月 ${finishDate.getDate()} 日）`;
+    const sameYear = finishDate.getFullYear() === today.getFullYear();
+    const dateLabel = sameYear
+      ? `${MONTHS_ABBR[finishDate.getMonth()]} ${finishDate.getDate()}`
+      : `${MONTHS_ABBR[finishDate.getMonth()]} ${finishDate.getDate()}, ${finishDate.getFullYear()}`;
+    dateSuffix = ` (by ${dateLabel})`;
   }
 
-  return base;
+  return {
+    kind: 'estimate',
+    lead: 'Estimated ',
+    days: estimate.days,
+    mid: ` ${dayWord} to finish at `,
+    speed: estimate.speed,
+    tail: ' words/day',
+    dateSuffix
+  };
+}
+
+export function formatFinishEstimate(estimate: FinishEstimate, today: Date = new Date()): string {
+  const parts = finishEstimateParts(estimate, today);
+
+  if (parts.kind === 'unavailable') {
+    return '';
+  }
+  if (parts.kind === 'done') {
+    return parts.text;
+  }
+
+  return `${parts.lead}${parts.days}${parts.mid}${parts.speed}${parts.tail}${parts.dateSuffix}`;
 }
 
 function medianOf(values: number[]): number {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CheckInRecord } from './checkins';
-import { estimateFinishDays, formatFinishEstimate, recentDailyNewWordSpeed } from './estimate';
+import { estimateFinishDays, finishEstimateParts, formatFinishEstimate, recentDailyNewWordSpeed } from './estimate';
 
 const TODAY = new Date(2026, 8, 8); // 2026-09-08 本地时区
 
@@ -116,24 +116,54 @@ describe('estimateFinishDays', () => {
 });
 
 describe('formatFinishEstimate', () => {
-  it('appends the finish date when days <= 30', () => {
+  it('appends the English finish date when days <= 30', () => {
     const estimate = estimateFinishDays(100, 80, [], 20, TODAY);
-    // 剩 20 词、目标 20 → 1 天 → 明天（9 月 9 日）。
+    // 剩 20 词、目标 20 → 1 天 → 明天（9 月 9 日）；单数用 day。
     expect(formatFinishEstimate(estimate, TODAY)).toBe(
-      '按每天 20 词的节奏，预计还需 1 天背完（约 9 月 9 日）'
+      'Estimated 1 day to finish at 20 words/day (by Sep 9)'
     );
   });
 
   it('only shows the day count when days > 30', () => {
     const estimate = estimateFinishDays(1000, 0, [], 20, TODAY);
-    expect(formatFinishEstimate(estimate, TODAY)).toBe('按每天 20 词的节奏，预计还需 50 天背完');
+    expect(formatFinishEstimate(estimate, TODAY)).toBe(
+      'Estimated 50 days to finish at 20 words/day'
+    );
   });
 
-  it('renders the completion copy when nothing remains', () => {
-    expect(formatFinishEstimate({ kind: 'done' }, TODAY)).toBe('新词已学完，复习继续巩固中');
+  it('appends the year when the finish date crosses into the next year', () => {
+    const estimate = estimateFinishDays(40, 0, [], 20, new Date(2026, 11, 30));
+    // 2026-12-30 + 2 天 → 2027-01-01，跨年带年份。
+    expect(formatFinishEstimate(estimate, new Date(2026, 11, 30))).toBe(
+      'Estimated 2 days to finish at 20 words/day (by Jan 1, 2027)'
+    );
+  });
+
+  it('renders the English completion copy when nothing remains', () => {
+    expect(formatFinishEstimate({ kind: 'done' }, TODAY)).toBe(
+      'All new words learned — keep reviewing.'
+    );
   });
 
   it('renders nothing when the estimate is unavailable', () => {
     expect(formatFinishEstimate({ kind: 'unavailable' }, TODAY)).toBe('');
+  });
+});
+
+describe('finishEstimateParts', () => {
+  it('exposes the day count separately so TodayView can wrap it in a code pill', () => {
+    const estimate = estimateFinishDays(220, 20, [], 20, TODAY);
+    const parts = finishEstimateParts(estimate, TODAY);
+    expect(parts).toMatchObject({
+      kind: 'estimate',
+      lead: 'Estimated ',
+      days: 10,
+      mid: ' days to finish at ',
+      speed: 20,
+      tail: ' words/day'
+    });
+    if (parts.kind === 'estimate') {
+      expect(parts.dateSuffix).toMatch(/^ \(by \w{3} \d{1,2}\)$/);
+    }
   });
 });

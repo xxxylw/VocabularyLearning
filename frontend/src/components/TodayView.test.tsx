@@ -128,10 +128,29 @@ describe('TodayView', () => {
 
     const cover = screen.getByTestId('book-cover-card');
     expect(cover).toHaveTextContent('雅思词汇真经');
-    expect(cover).toHaveTextContent('3383 词');
-    expect(cover).toHaveTextContent('已学 120 / 3383');
+    expect(cover).toHaveTextContent('3,383 words');
+    expect(cover).toHaveTextContent('120 / 3,383 learned');
     // Full title stays available via the title attribute when truncated.
     expect(cover.querySelector('.book-cover-title')).toHaveAttribute('title', '雅思词汇真经');
+  });
+
+  it('drops the Chinese book-title label above the cover card (DP-A6, 2026-09-11)', () => {
+    render(
+      <TodayView
+        onStart={vi.fn()}
+        isLoading={false}
+        newWordTarget={20}
+        onNewWordTargetChange={vi.fn()}
+        bookTitle="雅思词汇真经"
+        bookTotalWords={3383}
+        bookLearnedWords={120}
+        onOpenBookShelf={vi.fn()}
+      />
+    );
+
+    // 旧中文标签行「单词书：xxx」已删除，Today 首页封面卡区域不再出现中文。
+    expect(screen.queryByTestId('current-book-title')).not.toBeInTheDocument();
+    expect(screen.queryByText(/单词书/)).not.toBeInTheDocument();
   });
 
   it('keeps the cover card accessible when aggregates are not loaded yet', () => {
@@ -148,7 +167,7 @@ describe('TodayView', () => {
 
     const cover = screen.getByTestId('book-cover-card');
     expect(cover).toHaveTextContent('雅思词汇真经');
-    expect(cover.textContent).not.toContain('已学');
+    expect(cover.textContent).not.toContain('learned');
   });
 
   it('opens the bookshelf when the cover card is clicked', async () => {
@@ -259,9 +278,13 @@ describe('TodayView', () => {
       />
     );
 
-    // 中位速度 20 词/天、剩余 200 词 → 10 天；10 ≤ 30，附完成日期。
+    // 中位速度 20 词/天、剩余 200 词 → 10 天；10 ≤ 30，附英文完成日期。
     const estimate = screen.getByTestId('book-cover-estimate');
-    expect(estimate.textContent).toMatch(/按每天 20 词的节奏，预计还需 10 天背完/);
+    expect(estimate.textContent).toMatch(/Estimated 10 days to finish at 20 words\/day/);
+    // DP-A4：天数数字用行内 code pill 单独渲染。
+    const daysPill = screen.getByTestId('book-cover-estimate-days');
+    expect(daysPill).toHaveTextContent('10');
+    expect(daysPill.tagName).toBe('CODE');
   });
 
   it('shows the new-words-done copy on the cover card when the book is finished', () => {
@@ -278,7 +301,9 @@ describe('TodayView', () => {
       />
     );
 
-    expect(screen.getByTestId('book-cover-estimate')).toHaveTextContent('新词已学完');
+    expect(screen.getByTestId('book-cover-estimate')).toHaveTextContent(
+      'All new words learned — keep reviewing.'
+    );
   });
 
   it('recomputes the estimate when the new-word target changes', () => {
@@ -301,7 +326,7 @@ describe('TodayView', () => {
     render(<Harness />);
 
     // 无打卡样本（< 3 天）→ 速度回退目标值，目标 20 → 10 天。
-    expect(screen.getByTestId('book-cover-estimate').textContent).toMatch(/预计还需 10 天/);
+    expect(screen.getByTestId('book-cover-estimate').textContent).toMatch(/Estimated 10 days/);
 
     const input = screen.getByRole('spinbutton', { name: /new word target/i });
     input.setAttribute('value', '40');
@@ -311,6 +336,6 @@ describe('TodayView', () => {
     fireEvent.change(input, { target: { value: '40' } });
 
     // 速度回退为新目标 40 → 200/40 = 5 天。
-    expect(screen.getByTestId('book-cover-estimate').textContent).toMatch(/预计还需 5 天/);
+    expect(screen.getByTestId('book-cover-estimate').textContent).toMatch(/Estimated 5 days/);
   });
 });
