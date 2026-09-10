@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubscriptionView } from './SubscriptionView';
@@ -109,8 +109,8 @@ const PLANS = {
   plans: [
     { plan: 'monthly', label: '单月', priceCents: 500, currency: 'CNY', durationDays: 30 },
     { plan: 'renew', label: '续费优惠', priceCents: 299, currency: 'CNY', durationDays: 30 },
-    { plan: 'halfyear', label: '半年卡', priceCents: 1700, currency: 'CNY', durationDays: 180 },
-    { plan: 'yearly', label: '年卡', priceCents: 3400, currency: 'CNY', durationDays: 360 }
+    { plan: 'halfyear', label: '半年卡', priceCents: 2100, currency: 'CNY', durationDays: 180 },
+    { plan: 'yearly', label: '年卡', priceCents: 3000, currency: 'CNY', durationDays: 360 }
   ],
   currency: 'CNY',
   trialDays: 7,
@@ -193,6 +193,15 @@ describe('SubscriptionView', () => {
     expect(screen.getByTestId('subscription-tier-yearly')).toBeInTheDocument();
     expect(screen.getAllByText('¥')).toHaveLength(3);
     expect(screen.queryByTestId('subscription-tier-renew')).toBeNull();
+    // 2026-09-10 定价调整：半年卡 21 元（原价 30，7折）、年卡 30 元
+    // （原价 60，5折）——折扣标签为精确折扣，不再出现「约 5.7 折」。
+    const halfyearCard = screen.getByTestId('subscription-tier-halfyear');
+    expect(within(halfyearCard).getByText('7折')).toBeInTheDocument();
+    expect(within(halfyearCard).getByText('21')).toBeInTheDocument();
+    const yearlyCard = screen.getByTestId('subscription-tier-yearly');
+    expect(within(yearlyCard).getByText('5折')).toBeInTheDocument();
+    expect(within(yearlyCard).getByText('30')).toBeInTheDocument();
+    expect(screen.queryByText('约 5.7 折')).toBeNull();
     // 状态卡（试用中）+ 试用剩余天数常显。
     expect(screen.getByText(/试用剩余 5 天/)).toBeInTheDocument();
   });

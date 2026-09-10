@@ -632,7 +632,7 @@ def test_wechat_duplicate_notify_is_idempotent(cloud_env, email_spy, fake_gatewa
     token = _register_and_verify(client, "a@test.local", "pass-1234", email_spy)
     order = _place_order(client, token, "yearly", "wechat")
 
-    headers, body = _wechat_notify(cloud_env, order["outTradeNo"], 3400)
+    headers, body = _wechat_notify(cloud_env, order["outTradeNo"], 3000)
     first = client.post("/api/payment/notify/wechat", content=body, headers=headers)
     assert first.status_code == 200
     second = client.post("/api/payment/notify/wechat", content=body, headers=headers)
@@ -838,7 +838,7 @@ def test_reconcile_confirms_wechat_order_after_lost_callback(
     # 回调丢失：微信查询接口返回已支付。
     fake_gateway["wechat_query_results"][order["outTradeNo"]] = {
         "trade_state": "SUCCESS",
-        "amount_total": 1700,
+        "amount_total": 2100,
         "transaction_id": "wx-tx-reconcile",
     }
 
@@ -865,7 +865,7 @@ def test_reconcile_confirms_alipay_order_after_lost_callback(
 
     fake_gateway["alipay_query_results"][order["outTradeNo"]] = {
         "trade_status": "TRADE_SUCCESS",
-        "total_amount": "17.00",
+        "total_amount": "21.00",
         "trade_no": "ali-tx-reconcile",
     }
 
@@ -1028,7 +1028,7 @@ def test_accumulation_while_active(cloud_env, email_spy, fake_gateway):
 
     # 有效期内再买半年：从原 expires_at 累加 180 天。
     second = _place_order(client, token, "halfyear", "alipay")
-    _confirm_alipay(client, cloud_env, second["outTradeNo"], "17.00")
+    _confirm_alipay(client, cloud_env, second["outTradeNo"], "21.00")
     me2 = client.get("/api/subscription/me", headers=_headers(token)).json()
     second_expires = datetime.fromisoformat(me2["expiresAt"])
     assert abs((second_expires - first_expires).total_seconds() - timedelta(days=180).total_seconds()) < 5
@@ -1051,7 +1051,7 @@ def test_accumulation_after_expiry_starts_now(cloud_env, email_spy, fake_gateway
 
     before = datetime.now(timezone.utc)
     second = _place_order(client, token, "yearly", "alipay")
-    _confirm_alipay(client, cloud_env, second["outTradeNo"], "34.00")
+    _confirm_alipay(client, cloud_env, second["outTradeNo"], "30.00")
     me = client.get("/api/subscription/me", headers=_headers(token)).json()
     started = datetime.fromisoformat(me["startedAt"])
     expires = datetime.fromisoformat(me["expiresAt"])

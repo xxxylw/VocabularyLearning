@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import QRCode from 'qrcode';
 import {
   cancelOrder,
@@ -77,11 +78,13 @@ const BENEFITS = [
 ];
 
 // 四档标签（V3-02）。label 仅做档位命名，价格一律后端下发。
+// 折扣标签（2026-09-10 拍板）：精确折扣、不带「约」——半年卡 21/30=7折、
+// 年卡 30/60=5折；单月与 2.99 续费档不打折。
 const TIER_META: Record<string, { name: string; note: string | null; primary: boolean }> = {
   monthly: { name: '单月', note: null, primary: false },
   renew: { name: '续费优惠', note: '到期前或到期后 7 天内可享', primary: false },
-  halfyear: { name: '半年卡', note: '约 5.7 折', primary: false },
-  yearly: { name: '年卡', note: '约 5.7 折', primary: true }
+  halfyear: { name: '半年卡', note: '7折', primary: false },
+  yearly: { name: '年卡', note: '5折', primary: true }
 };
 
 function formatExpiryDate(expiresAt: string | null): string {
@@ -448,7 +451,14 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
               支付通道尚未开通：管理员还未配置支付网关密钥，暂时无法下单；书架与已有进度不受影响。
             </p>
           ) : null}
-          <div className="subscription-tier-grid" data-testid="subscription-tier-grid">
+          {/* 2026-09-10 对齐修复（设计师规格）：列数跟随实际渲染档位数注入
+              --tier-count（renewEligible 账号 4 档、普通 3 档），移动端
+              2 列布局由 CSS media query 覆盖，不写死。 */}
+          <div
+            className="subscription-tier-grid"
+            data-testid="subscription-tier-grid"
+            style={{ '--tier-count': visibleTiers.length } as CSSProperties}
+          >
             {visibleTiers.map((tier) => (
               <TierCard
                 key={tier.plan}

@@ -60,8 +60,8 @@ const ACTIVE = {
 const PLANS = {
   plans: [
     { plan: 'monthly', label: '单月', priceCents: 500, currency: 'CNY', durationDays: 30 },
-    { plan: 'halfyear', label: '半年卡', priceCents: 1700, currency: 'CNY', durationDays: 180 },
-    { plan: 'yearly', label: '年卡', priceCents: 3400, currency: 'CNY', durationDays: 360 }
+    { plan: 'halfyear', label: '半年卡', priceCents: 2100, currency: 'CNY', durationDays: 180 },
+    { plan: 'yearly', label: '年卡', priceCents: 3000, currency: 'CNY', durationDays: 360 }
   ],
   currency: 'CNY',
   trialDays: 7,

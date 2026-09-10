@@ -15,7 +15,8 @@ v3 decisions (spec 2026-09-06, all three 拍板 confirmed):
   expires_at (lazily expired on read);
 - four price tiers, all configuration-driven (V3-02):
   月付 5 元 / 续费优惠 2.99 元 (仅 30 天档, 有效期内或到期 7 天宽限内
-  手动续费, 逾期回标价) / 半年 17 元 (180 天) / 一年 34 元 (360 天);
+  手动续费, 逾期回标价) / 半年 21 元 (原价 30 元, 7 折, 180 天) /
+  一年 30 元 (原价 60 元, 5 折, 360 天);
 - renewal accumulation: paid-and-unexpired → new expires_at = 原
   expires_at + 所购档时长; otherwise 自支付成功时刻起算 (trial 不结转);
 - 手动续费模式：不存在「取消订阅」语义 — mock 下单/取消都降级为
@@ -126,13 +127,13 @@ def plans_config() -> dict[str, dict[str, object]]:
         PLAN_HALFYEAR: {
             "plan": PLAN_HALFYEAR,
             "label": "半年",
-            "priceCents": _read_int_env("VOCAB_PRICE_HALFYEAR_CENTS", 1700),
+            "priceCents": _read_int_env("VOCAB_PRICE_HALFYEAR_CENTS", 2100),
             "durationDays": _read_int_env("VOCAB_DURATION_HALFYEAR_DAYS", 180),
         },
         PLAN_YEARLY: {
             "plan": PLAN_YEARLY,
             "label": "一年",
-            "priceCents": _read_int_env("VOCAB_PRICE_YEARLY_CENTS", 3400),
+            "priceCents": _read_int_env("VOCAB_PRICE_YEARLY_CENTS", 3000),
             "durationDays": _read_int_env("VOCAB_DURATION_YEARLY_DAYS", 360),
         },
     }

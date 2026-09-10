@@ -5,7 +5,7 @@ subscription endpoints must never touch the email channel anyway
 (2026-09-04 拍板: 订阅全程仅 UI 展示).
 
 Covers the v3 read path and configuration surface:
-1. 四档定价配置化：默认 500/299/1700/3400 cents + 30/30/180/360 天；
+1. 四档定价配置化：默认 500/299/2100/3000 cents + 30/30/180/360 天；
    改环境变量即变（改价不发版）
 2. 注册即试用：/me 返回 trialing 视图（试用中用户订阅态）
 3. 到期惰性判过期（trialing 同样翻 expired）
@@ -184,9 +184,9 @@ def test_plans_defaults_four_tiers(cloud_env, email_spy):
     assert tiers["monthly"]["durationDays"] == 30
     assert tiers["renew"]["priceCents"] == 299
     assert tiers["renew"]["durationDays"] == 30
-    assert tiers["halfyear"]["priceCents"] == 1700
+    assert tiers["halfyear"]["priceCents"] == 2100
     assert tiers["halfyear"]["durationDays"] == 180
-    assert tiers["yearly"]["priceCents"] == 3400
+    assert tiers["yearly"]["priceCents"] == 3000
     assert tiers["yearly"]["durationDays"] == 360
     assert tiers["monthly"]["label"] == "单月"
     assert tiers["renew"]["label"] == "续费优惠"

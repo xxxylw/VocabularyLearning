@@ -30,8 +30,8 @@ const plansPayload = {
   plans: [
     { plan: 'monthly', label: '单月', priceCents: 500, currency: 'CNY', durationDays: 30 },
     { plan: 'renew', label: '续费优惠', priceCents: 299, currency: 'CNY', durationDays: 30 },
-    { plan: 'halfyear', label: '半年卡', priceCents: 1700, currency: 'CNY', durationDays: 180 },
-    { plan: 'yearly', label: '年卡', priceCents: 3400, currency: 'CNY', durationDays: 360 }
+    { plan: 'halfyear', label: '半年卡', priceCents: 2100, currency: 'CNY', durationDays: 180 },
+    { plan: 'yearly', label: '年卡', priceCents: 3000, currency: 'CNY', durationDays: 360 }
   ],
   currency: 'CNY',
   trialDays: 7,
@@ -186,8 +186,8 @@ describe('formatPrice', () => {
   });
 
   it('labels the halfyear and yearly tiers by duration', () => {
-    expect(formatPrice(1700, 'CNY', 180).periodLabel).toBe('/ 半年');
-    expect(formatPrice(3400, 'CNY', 360).periodLabel).toBe('/ 1 年');
+    expect(formatPrice(2100, 'CNY', 180).periodLabel).toBe('/ 半年');
+    expect(formatPrice(3000, 'CNY', 360).periodLabel).toBe('/ 1 年');
   });
 
   it('falls back to the raw currency code for unknown values', () => {

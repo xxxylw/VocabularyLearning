@@ -18,6 +18,11 @@
   background: rgba(255, 252, 246, 0.86);
   box-shadow: 0 24px 70px rgba(88, 63, 31, 0.14);
   display: grid;
+  /* 2026-09-10 对齐修复（设计师规格）：显式单列，禁止隐式轨道按
+     max-content 撑宽 —— 订阅页档位区内容宽 686px 曾把居中元素对齐
+     到隐式轨道中心而非卡片中心（右溢 224px）。登录/注册页内容窄，
+     无视觉副作用。 */
+  grid-template-columns: minmax(0, 100%);
   justify-items: center;
   text-align: center;
 }
@@ -468,7 +473,10 @@
 --------------------------------------------------------------------------- */
 
 .subscription-card {
-  width: min(520px, calc(100% - 24px));
+  /* 2026-09-10 对齐修复（设计师规格）：档位区从 4 列写死改为跟随实际
+     渲染档位数（见 .subscription-tier-grid），卡片加宽一档 —— 内容区
+     462px→582px，3 档卡各 ~187px。 */
+  width: min(640px, calc(100% - 24px));
 }
 
 .subscription-price {
@@ -757,7 +765,10 @@ desktop 4 列 / mobile 2 列；年卡主 CTA；全部复用既有 token。
 
 .subscription-tier-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 2026-09-10 对齐修复（设计师规格）：列数不再写死 repeat(4,1fr)
+     （renewEligible=false 只渲 3 档时第 4 列恒空），改由组件按实际
+     渲染档位数注入 --tier-count。 */
+  grid-template-columns: repeat(var(--tier-count, 4), minmax(0, 1fr));
   gap: 10px;
   margin: 0 0 18px;
 }
@@ -771,6 +782,43 @@ desktop 4 列 / mobile 2 列；年卡主 CTA；全部复用既有 token。
   border-radius: 12px;
   background: rgba(110, 91, 68, 0.04);
   border: 1px solid rgba(110, 91, 68, 0.1);
+  /* 2026-09-10 hover 微动效（设计师规格定稿口径）：位移 -2px、
+     .18s cubic-bezier；阴影比 book-cover 刻意小（档位卡间距仅 10px）。 */
+  transition:
+    transform 0.18s cubic-bezier(0.22, 0.61, 0.36, 1),
+    box-shadow 0.18s cubic-bezier(0.22, 0.61, 0.36, 1),
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+/* 桌面悬停微动效（设计师规格）：hover 只加位移+阴影；边框/底色加深仅
+   作用于 :not(.subscription-tier-primary)，不与年卡默认选中态的
+   2px 绿边冲突。整个交互包在 (hover:hover) and (pointer:fine) 里，
+   触屏零影响；reduced-motion 降级。 */
+@media (hover: hover) and (pointer: fine) {
+  .subscription-tier:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(88, 63, 31, 0.16);
+  }
+
+  .subscription-tier:not(.subscription-tier-primary):hover {
+    border-color: rgba(110, 91, 68, 0.3);
+    background: #6e5b4410;
+  }
+
+  .subscription-tier-primary:hover {
+    border-color: rgba(111, 139, 121, 0.7);
+  }
+
+  .subscription-tier:active {
+    transform: translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subscription-tier {
+    transition: none;
+  }
 }
 
 .subscription-tier-primary {
@@ -934,6 +982,12 @@ desktop 4 列 / mobile 2 列；年卡主 CTA；全部复用既有 token。
 
 @media (max-width: 760px) {
   .subscription-tier-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 2026-09-10 对齐修复（设计师规格）：奇数张时末卡跨双列居中，
+     消除右列空洞（renewEligible=false 的 3 档场景）。 */
+  .subscription-tier:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 }
