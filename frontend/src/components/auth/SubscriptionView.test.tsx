@@ -30,7 +30,8 @@ const TRIALING = {
   readOnly: false,
   renewEligible: false,
   renewDeadline: null,
-  renewReminder: true
+  renewReminder: true,
+  hasActivePaidSubscription: false
 };
 
 const ACTIVE = {
@@ -45,7 +46,20 @@ const ACTIVE = {
   readOnly: false,
   renewEligible: false,
   renewDeadline: null,
-  renewReminder: true
+  renewReminder: true,
+  hasActivePaidSubscription: false
+};
+
+// V3-09（2026-09-11 DP-1 拍板）：已充值灰态视图 — 有效付费订阅 +
+// 2.99 续费资格（服务端 plans.renewEligible / me.hasActivePaidSubscription
+// 均为服务端判定，前端只渲染）。当前持有档位 halfyear。
+const ACTIVE_PAID = {
+  ...ACTIVE,
+  plan: 'halfyear',
+  expiresAt: '2027-03-01T00:00:00+00:00',
+  renewEligible: true,
+  renewDeadline: '2027-03-08T00:00:00+00:00',
+  hasActivePaidSubscription: true
 };
 
 const EXPIRED = {
@@ -60,7 +74,8 @@ const EXPIRED = {
   readOnly: true,
   renewEligible: true,
   renewDeadline: '2026-09-08T00:00:00+00:00',
-  renewReminder: true
+  renewReminder: true,
+  hasActivePaidSubscription: false
 };
 
 // P2 #1（设计定稿 2026-09-07）字段口径异常态：只读徽章 + 未来 expires_at
@@ -102,7 +117,8 @@ const SUPER_VIEW = {
   readOnly: false,
   renewEligible: false,
   renewDeadline: null,
-  renewReminder: null
+  renewReminder: null,
+  hasActivePaidSubscription: false
 };
 
 const PLANS = {
@@ -400,6 +416,88 @@ describe('SubscriptionView', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url, init]) => url === '/api/subscription/reminder' && init?.method === 'PUT')).toBe(true);
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // V3-09（2026-09-11 DP-1/DP-2/DP-3 拍板）：已充值灰态
+  // -------------------------------------------------------------------------
+
+  it('gray state: paid active users see the three standard tiers grayed & disabled with ✓ copy; renew tier stays clickable', async () => {
+    const fetchMock = stubFetch({ ...PLANS, renewEligible: true }, ACTIVE_PAID);
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    render(<SubscriptionView />);
+
+    await screen.findByTestId('subscription-tier-grid');
+
+    const expectedCopy = `已订阅 · 有效期至 ${localDatestamp(ACTIVE_PAID.expiresAt)}`;
+    for (const plan of ['monthly', 'halfyear', 'yearly'] as const) {
+      const card = screen.getByTestId(`subscription-tier-${plan}`);
+      expect(card).toHaveClass('subscription-tier-grayed');
+      const cta = within(card).getByTestId(`tier-cta-${plan}`);
+      expect(cta).toBeDisabled();
+      expect(cta).toHaveAttribute('aria-disabled', 'true');
+      expect(cta).toHaveTextContent(expectedCopy);
+      // ✓ 图标（aria-hidden 装饰）在灰态按钮内。
+      expect(cta.querySelector('.subscription-tier-grayed-check')).not.toBeNull();
+    }
+
+    // 点击灰按钮不进入渠道选择、不发下单请求。
+    await user.click(screen.getByTestId('tier-cta-yearly'));
+    expect(screen.queryByTestId('subscription-channel-picker')).toBeNull();
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(true);
+
+    // ¥2.99 续费档保留可点（DP-2：已充值用户的合法再购入口）。
+    const renewCard = screen.getByTestId('subscription-tier-renew');
+    expect(renewCard).not.toHaveClass('subscription-tier-grayed');
+    expect(within(renewCard).getByTestId('tier-cta-renew')).toBeEnabled();
+    expect(within(renewCard).getByTestId('tier-cta-renew')).toHaveTextContent('立即支付');
+
+    // 「当前方案」角标仅挂当前持有档位（halfyear）那张卡（DP-2）。
+    expect(within(screen.getByTestId('subscription-tier-halfyear')).getByText('当前方案')).toBeInTheDocument();
+    expect(within(screen.getByTestId('subscription-tier-monthly')).queryByText('当前方案')).toBeNull();
+    expect(within(screen.getByTestId('subscription-tier-yearly')).queryByText('当前方案')).toBeNull();
+    expect(within(screen.getByTestId('subscription-tier-renew')).queryByText('当前方案')).toBeNull();
+
+    // 灰态四档齐渲（--tier-count=4）。
+    expect(screen.getByTestId('subscription-tier-grid')).toHaveStyle({ '--tier-count': '4' });
+  });
+
+  it('gray state recovers: trial users and super users never see grayed tiers (DP-1 / 拍板第 6 条)', async () => {
+    // 试用态：三档可点、无灰类（试用用户仍可首购）。
+    vi.stubGlobal('fetch', stubFetch(PLANS, TRIALING));
+    const { unmount } = render(<SubscriptionView />);
+    await screen.findByTestId('subscription-tier-grid');
+    for (const plan of ['monthly', 'halfyear', 'yearly'] as const) {
+      expect(screen.getByTestId(`subscription-tier-${plan}`)).not.toHaveClass('subscription-tier-grayed');
+      expect(screen.getByTestId(`tier-cta-${plan}`)).toBeEnabled();
+    }
+    unmount();
+
+    // super 态：无订阅行，默认可点（不显示灰态）。
+    vi.stubGlobal('fetch', stubFetch(PLANS, SUPER_VIEW));
+    render(<SubscriptionView />);
+    await screen.findByTestId('subscription-tier-grid');
+    for (const plan of ['monthly', 'halfyear', 'yearly'] as const) {
+      expect(screen.getByTestId(`subscription-tier-${plan}`)).not.toHaveClass('subscription-tier-grayed');
+      expect(screen.getByTestId(`tier-cta-${plan}`)).toBeEnabled();
+    }
+  });
+
+  it('gray state copy passes the compliance scan (no forbidden payment wording)', async () => {
+    vi.stubGlobal('fetch', stubFetch({ ...PLANS, renewEligible: true }, ACTIVE_PAID));
+
+    render(<SubscriptionView />);
+
+    await screen.findByTestId('subscription-tier-grid');
+    const html = document.body.innerHTML;
+    expect(html).toContain('已订阅 · 有效期至');
+    expect(html).not.toContain('自动续费');
+    expect(html).not.toContain('连续包月');
+    expect(html).not.toContain('自动扣款');
+    expect(html).not.toContain('已充值');
+    expect(html).not.toContain('已续费成功');
   });
 
   it('load failure: empty state with a working retry', async () => {

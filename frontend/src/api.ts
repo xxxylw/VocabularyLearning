@@ -536,6 +536,10 @@ export type SubscriptionStatus = {
   renewEligible: boolean;
   renewDeadline: string | null;
   renewReminder: boolean | null;
+  // V3-09 (2026-09-11 DP-1 拍板): 已充值灰态统一布尔位。服务端判定
+  // 「最新行 source ∈ 付费渠道 且 active 且未到期」；前端只渲染不推导
+  // —— 刷新 / 换设备 / 清缓存后灰态一致，me 响应是唯一来源。
+  hasActivePaidSubscription: boolean;
 };
 
 export type SubscriptionTier = {

@@ -70,10 +70,13 @@ const PLANS = {
   paymentEnabled: true
 };
 
-function stubSessionFetch(status: typeof NOT_SUBSCRIBED | typeof ACTIVE) {
+function stubSessionFetch(
+  status: typeof NOT_SUBSCRIBED | typeof ACTIVE,
+  user: typeof USER = USER
+) {
   return vi.fn().mockImplementation((url: string) => {
     if (url === '/api/auth/me') {
-      return Promise.resolve(ok(USER));
+      return Promise.resolve(ok(user));
     }
     if (url === '/api/subscription/me') {
       return Promise.resolve(ok(status));
@@ -185,5 +188,64 @@ describe('VocabApp subscription routing (batch 3)', () => {
     await user.click(screen.getByRole('button', { name: '账号' }));
 
     expect(screen.getByText('未订阅')).toBeInTheDocument();
+  });
+
+  // V3-09 (2026-09-11 DP-1/DP-4): 账号菜单常驻订阅入口三态文案。
+  // 未订阅 → 「开通订阅」；生效中 → 「订阅管理」；super → 「订阅 · Subscription」。
+  // 点击均进入 /subscription（super 可进充值界面，不灰态）。
+  it('shows 开通订阅 for a not-subscribed account and navigates to /subscription', async () => {
+    const user = userEvent.setup();
+    setSessionToken('token-1');
+    window.location.hash = '#/';
+    vi.stubGlobal('fetch', stubSessionFetch(NOT_SUBSCRIBED));
+
+    render(<VocabApp />);
+
+    await screen.findByTestId('study-app');
+    await user.click(screen.getByRole('button', { name: '账号' }));
+
+    const entry = screen.getByTestId('account-menu-subscription');
+    expect(entry).toHaveTextContent('开通订阅');
+    expect(entry).not.toHaveTextContent('订阅管理');
+
+    await user.click(entry);
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/subscription');
+    });
+  });
+
+  it('shows 订阅管理 for an active-subscription account', async () => {
+    const user = userEvent.setup();
+    setSessionToken('token-1');
+    window.location.hash = '#/';
+    vi.stubGlobal('fetch', stubSessionFetch(ACTIVE));
+
+    render(<VocabApp />);
+
+    await screen.findByTestId('study-app');
+    await user.click(screen.getByRole('button', { name: '账号' }));
+
+    expect(screen.getByTestId('account-menu-subscription')).toHaveTextContent('订阅管理');
+  });
+
+  it('shows 订阅 · Subscription for a super account regardless of status', async () => {
+    const superUser = { ...USER, isSuper: true };
+    const user = userEvent.setup();
+    setSessionToken('token-1');
+    window.location.hash = '#/';
+    vi.stubGlobal('fetch', stubSessionFetch(NOT_SUBSCRIBED, superUser));
+
+    render(<VocabApp />);
+
+    await screen.findByTestId('study-app');
+    await user.click(screen.getByRole('button', { name: '账号' }));
+
+    const entry = screen.getByTestId('account-menu-subscription');
+    expect(entry).toHaveTextContent('订阅 · Subscription');
+
+    await user.click(entry);
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/subscription');
+    });
   });
 });

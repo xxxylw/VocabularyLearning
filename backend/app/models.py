@@ -109,6 +109,10 @@ class SubscriptionStatusResponse(BaseModel):
     renewEligible: bool = False
     renewDeadline: str | None = None
     renewReminder: bool | None = None
+    # V3-09 (2026-09-11 DP-1 拍板): 已充值灰态统一布尔位 — 后端按
+    # 「最新行 source ∈ 付费渠道 且 active 且未到期」UTC 判定，前端只
+    # 渲染不推导；trialing / expired / canceled 恒 False，super 恒 False。
+    hasActivePaidSubscription: bool = False
 
 
 # v3 (V3-03): payment order models. amountCents is the snapshotted

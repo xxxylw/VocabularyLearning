@@ -361,6 +361,13 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
   const visibleTiers = plans.plans.filter(
     (tier) => tier.plan !== 'renew' || plans.renewEligible
   );
+  // V3-09（2026-09-11 DP-1/DP-2/DP-3 拍板）：已充值 = me 的
+  // hasActivePaidSubscription（服务端判定，前端只渲染不推导）。
+  // 有效期内标价三档整体灰·禁用（文案「已订阅 · 有效期至 X」），
+  // ¥2.99 续费档保留可点；「当前方案」角标仅挂当前持有档位那张卡。
+  // 到期后 me 翻 expired → 字段变 False，三档恢复可点（灰态非永久）。
+  const hasPaid = status.hasActivePaidSubscription === true;
+  const grayLabel = `已订阅 · ${formatExpiryDate(status.expiresAt)}`;
 
   return (
     <main className="auth-page">
@@ -466,6 +473,9 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                 currency={plans.currency}
                 disabled={!plans.paymentEnabled || checkout.phase !== 'idle'}
                 isPaying={checkout.phase === 'creating' && checkout.plan === tier.plan}
+                grayed={hasPaid && tier.plan !== 'renew'}
+                grayLabel={grayLabel}
+                currentPlan={hasPaid && status.plan === tier.plan}
                 onBuy={() => {
                   setCheckout({ phase: 'selecting', plan: tier.plan });
                 }}
@@ -657,21 +667,30 @@ function TierCard({
   currency,
   disabled,
   isPaying,
+  grayed,
+  grayLabel,
+  currentPlan,
   onBuy
 }: {
   tier: SubscriptionTier;
   currency: string;
   disabled: boolean;
   isPaying: boolean;
+  grayed: boolean;
+  grayLabel: string | null;
+  currentPlan: boolean;
   onBuy: () => void;
 }) {
   const meta = TIER_META[tier.plan] ?? { name: tier.plan, note: null, primary: false };
   const price = formatPrice(tier.priceCents, currency, tier.durationDays);
   return (
     <div
-      className={`subscription-tier${meta.primary ? ' subscription-tier-primary' : ''}`}
+      className={`subscription-tier${meta.primary ? ' subscription-tier-primary' : ''}${
+        grayed ? ' subscription-tier-grayed' : ''
+      }`}
       data-testid={`subscription-tier-${tier.plan}`}
     >
+      {currentPlan ? <p className="subscription-tier-current">当前方案</p> : null}
       <p className="subscription-tier-name">{meta.name}</p>
       <p className="subscription-price">
         <span className="subscription-price-currency">{price.currencySymbol}</span>
@@ -683,10 +702,34 @@ function TierCard({
       <button
         type="button"
         className={meta.primary ? 'auth-cta' : 'auth-ghost-cta'}
-        disabled={disabled || isPaying}
+        disabled={disabled || isPaying || grayed}
+        aria-disabled={grayed ? 'true' : undefined}
+        data-testid={`tier-cta-${tier.plan}`}
         onClick={onBuy}
       >
-        {isPaying ? (
+        {grayed ? (
+          <>
+            {/* V3-09 灰态（DP-2/DP-3 拍板）：✓ 图标 + 「已订阅 · 有效期至 X」，
+                不可点、不聚焦、不发下单请求；年卡绿边降灰边由 CSS 处理。 */}
+            <svg
+              className="subscription-tier-grayed-check"
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 7.5l3 3 6-6.5"
+                stroke="#5b5347"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            {grayLabel}
+          </>
+        ) : isPaying ? (
           <>
             <Spinner /> 下单中…
           </>

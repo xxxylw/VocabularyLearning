@@ -578,6 +578,87 @@ def test_explicit_super_password_does_not_warn(cloud_env, monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# 13: 已充值灰态判定 hasActivePaidSubscription（V3-09 / DP-1 拍板口径）
+# ---------------------------------------------------------------------------
+
+
+def test_has_active_paid_subscription_matrix(cloud_env, email_spy):
+    """DP-1：最新行 source ∈ (alipay, wechat, mock) 且 status=active 且
+    未到期才 True；trialing / expired（惰性翻）/ canceled / 过期恢复
+    一律 False。服务端 UTC 判定，前端只渲染不推导。"""
+
+    client = _client()
+    token = _register_and_verify(client, "a@test.local", "pass-1234", email_spy)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 试用行（trial / trialing）→ 不算已充值（试用用户仍可首购）。
+    assert (
+        client.get("/api/subscription/me", headers=headers).json()[
+            "hasActivePaidSubscription"
+        ]
+        is False
+    )
+
+    # paid active（alipay，未到期）→ 已充值。
+    _seed_paid_row(
+        "a@test.local", expires_at=datetime.now(timezone.utc) + timedelta(days=10)
+    )
+    assert (
+        client.get("/api/subscription/me", headers=headers).json()[
+            "hasActivePaidSubscription"
+        ]
+        is True
+    )
+
+    # mock 行同样计入（super 专属测试桩 → 灰态回归测试手段）。
+    _seed_paid_row(
+        "a@test.local",
+        source="mock",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    assert (
+        client.get("/api/subscription/me", headers=headers).json()[
+            "hasActivePaidSubscription"
+        ]
+        is True
+    )
+
+    # 过期恢复可点：paid active 但已过 expires_at → 惰性翻 expired，
+    # 灰态判定恢复 False（DP-1：有效期内灰，过期恢复可点）。
+    _seed_paid_row(
+        "a@test.local", expires_at=datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    me = client.get("/api/subscription/me", headers=headers).json()
+    assert me["status"] == "expired"
+    assert me["hasActivePaidSubscription"] is False
+
+    # canceled 行（v2 mock 清退遗留）→ 不算。
+    _seed_paid_row(
+        "a@test.local",
+        status="canceled",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert (
+        client.get("/api/subscription/me", headers=headers).json()[
+            "hasActivePaidSubscription"
+        ]
+        is False
+    )
+
+
+def test_super_me_has_no_gray_state(cloud_env, email_spy):
+    """拍板第 6 条：super 合成视图无订阅行，灰态恒 False（默认可点态），
+    充值入口常驻可进（V3-09 入口全员可见）。"""
+
+    client = _client()
+    headers = _super_headers(client)
+
+    me = client.get("/api/subscription/me", headers=headers).json()
+    assert me["subscribed"] is True
+    assert me["hasActivePaidSubscription"] is False
+
+
+# ---------------------------------------------------------------------------
 # 12: path 形式 /subscription 301 到 hash 形式
 # ---------------------------------------------------------------------------
 

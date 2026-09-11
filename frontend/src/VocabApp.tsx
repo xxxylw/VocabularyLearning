@@ -346,6 +346,29 @@ function AccountArea({
               <p className="account-menu-plan account-menu-plan-muted">未订阅</p>
             )
           ) : null}
+          {/* V3-09（2026-09-11 拍板第 5 条·入口常驻）：账号菜单「订阅」
+              菜单项 — 正常学习态（订阅生效中/试用中/super）此前无任何
+              常驻充值入口。文案：未订阅/试用/到期 →「开通订阅」、
+              生效中 →「订阅管理」、super →「订阅 · Subscription」；
+              样式同 account-menu-logout 族。 */}
+          <button
+            type="button"
+            className="account-menu-subscription"
+            role="menuitem"
+            data-testid="account-menu-subscription"
+            onClick={() => {
+              setOpen(false);
+              navigate('/subscription');
+            }}
+          >
+            {user.isSuper
+              ? '订阅 · Subscription'
+              : subscription !== undefined &&
+                subscription.subscribed &&
+                subscription.status === 'active'
+                ? '订阅管理'
+                : '开通订阅'}
+          </button>
           <button type="button" className="account-menu-logout" role="menuitem" onClick={onLogout}>
             退出登录
           </button>

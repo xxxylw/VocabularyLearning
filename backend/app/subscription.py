@@ -255,6 +255,27 @@ def _parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _has_active_paid_subscription(row) -> bool:
+    """已充值灰态判定 (2026-09-11 拍板 DP-1).
+
+    「充值过」= 最新行 source ∈ (alipay, wechat, mock) 且 status=active
+    且未到期，服务端 UTC 判定；trialing / expired / canceled / trial
+    行一律不算。mock 行计入（super 回归测试手段）。到期恢复可点由
+    读路径的 _lazy_expire + 本函数的 expires_at 双保险共同保证。
+    """
+
+    if row is None:
+        return False
+    if str(row["source"]) not in PAID_SOURCES:
+        return False
+    if str(row["status"]) != "active":
+        return False
+    try:
+        return _parse_iso(str(row["expires_at"])) > _now()
+    except (ValueError, TypeError):
+        return False
+
+
 def is_renew_eligible(connection, user_id: str, now: datetime | None = None) -> bool:
     """Backend 判定 2.99 续费优惠资格 (V3-02 交互规则 3).
 
@@ -309,6 +330,7 @@ def _row_to_view(
         "renewEligible": renew_eligible,
         "renewDeadline": None,
         "renewReminder": reminder,
+        "hasActivePaidSubscription": _has_active_paid_subscription(row),
     }
     if status == "trialing":
         remaining = _parse_iso(str(row["expires_at"])) - _now()
@@ -335,6 +357,7 @@ _EMPTY_VIEW: dict[str, object] = {
     "renewEligible": False,
     "renewDeadline": None,
     "renewReminder": True,
+    "hasActivePaidSubscription": False,
 }
 
 
@@ -349,6 +372,8 @@ def get_subscription_view(user: dict[str, object]) -> dict[str, object]:
     """
 
     if bool(user["is_super"]):
+        # super 合成视图：无订阅行，灰态判定恒 False（按钮保持可点态，
+        # 2026-09-11 拍板第 6 条），入口常驻可进充值界面。
         return {
             "subscribed": True,
             "plan": "super",
@@ -362,6 +387,7 @@ def get_subscription_view(user: dict[str, object]) -> dict[str, object]:
             "renewEligible": False,
             "renewDeadline": None,
             "renewReminder": None,
+            "hasActivePaidSubscription": False,
         }
 
     user_id = str(user["id"])
