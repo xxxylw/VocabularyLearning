@@ -392,6 +392,63 @@ describe('App', () => {
       });
     });
   });
+
+  // 当日重复池（task 7684082688076025051）：服务端注入的重复卡
+  // （isRepeat）评分走池端点 /api/study/today/repeat-pool/reviews，
+  // 不触碰 /api/cards/:id/reviews（409 / SM-2 零污染）。
+  it('routes repeat-card ratings to the pool endpoint and clears it with one Got it', async () => {
+    const user = userEvent.setup();
+    const repeatCard = { ...studyCard(), isRepeat: true };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
+      // start the day's session — the server-injected repeat card is first.
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(JSON.stringify({ totalCards: 1, reviewedCards: 0, cards: [repeatCard] }))
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse())
+      // 重复卡评分 → 池端点，返回 cleared。
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(JSON.stringify({ cardId: 'card-1', status: 'cleared', repeatCount: 1 }))
+      })
+      // session-complete summary refresh
+      .mockResolvedValueOnce(completedDaySummaryResponse([repeatCard]))
+      .mockResolvedValueOnce(checkInsResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: /start today cards/i }));
+
+    await user.click(await screen.findByRole('button', { name: /reveal/i }));
+    await user.click(screen.getByRole('button', { name: /got it/i }));
+
+    await waitFor(() => {
+      const poolCall = fetchMock.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0] === '/api/study/today/repeat-pool/reviews'
+      );
+      expect(poolCall).toBeDefined();
+      expect(JSON.parse(String((poolCall?.[1] as RequestInit).body))).toEqual({
+        cardId: 'card-1',
+        rating: 'known'
+      });
+    });
+    // Got it 一次移除：队列清空、会话完成。
+    expect(await screen.findByRole('button', { name: /back home/i })).toBeInTheDocument();
+    const cardReviewCall = fetchMock.mock.calls.find(
+      (call) =>
+        typeof call[0] === 'string' && /\/api\/cards\/.+\/reviews$/.test(call[0])
+    );
+    expect(cardReviewCall).toBeUndefined();
+  });
 });
 
 function emptyDaySummaryResponse() {

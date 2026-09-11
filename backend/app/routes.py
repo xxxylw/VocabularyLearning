@@ -21,6 +21,8 @@ from app.models import (
     PronunciationResponse,
     PrepareJobRequest,
     PrepareJobResponse,
+    RepeatPoolReviewRequest,
+    RepeatPoolReviewResponse,
     ReviewCardRequest,
     ReviewCardResponse,
     SwitchBookRequest,
@@ -39,6 +41,7 @@ from app.services import (
     merge_check_ins,
     prepare_book_words,
     review_card,
+    review_repeat_pool_card,
     start_today_session,
     switch_current_book,
 )
@@ -178,6 +181,25 @@ def create_card_review(
         return review_card(context.user_id, card_id, request)
     except ReviewConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+# 当日重复池（规格：会话层循环，Got it 一次才移除）。重复卡上的评分
+# 只更新池状态 —— 不写 reviews、不触碰 SM-2，因此不存在 409 同卡
+# 同日冲突；多义项以卡为粒度整卡操作，cardId 即卡 id。
+@router.post("/study/today/repeat-pool/reviews")
+def create_repeat_pool_review(
+    request: RepeatPoolReviewRequest,
+    context: Annotated[AuthContext, Depends(require_user)],
+) -> RepeatPoolReviewResponse:
+    _require_study_entitlement(context)
+    try:
+        return review_repeat_pool_card(
+            context.user_id, request.cardId, request.rating
+        )
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:

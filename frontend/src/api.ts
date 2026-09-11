@@ -34,6 +34,11 @@ export type StudyCard = {
   // PRD ch.8: 1-based position in the day's queue snapshot; used so the
   // progress bar resumes at the right place after re-entering Today.
   queuePosition?: number | null;
+  // 当日重复池（task 7684082688076025051）：当日队列 new 卡评 New 后
+  // 间隔 3 张重新出现的重复卡标记（服务端待学流注入 / 前端本地插入
+  // 的副本都带它）。isRepeat 卡的评分分流到池端点（只更新池状态，
+  // 不写 reviews、不改 SM-2）。
+  isRepeat?: boolean;
 };
 
 export type ReviewRating = 'known' | 'uncertain' | 'unknown';
@@ -321,6 +326,37 @@ export function reviewCard(cardId: string, rating: ReviewRating): Promise<unknow
     reviewedAt: reviewedAt.toISOString(),
     reviewedDate: localDateString(reviewedAt)
   });
+}
+
+// ---------------------------------------------------------------------------
+// 当日重复池（task 7684082688076025051）：重复卡（isRepeat）上的三按钮
+// 只更新池状态 —— known → cleared（Got it 一次才移出）、uncertain /
+// unknown → 仍 pending（间隔 3 张再次插入）、达 3 次上限 capped。不写
+// reviews、不改 SM-2。多义项兄弟卡可能不在池内（不在当日 new 队列），
+// 404 视为幂等跳过，不阻断词级评分。
+// ---------------------------------------------------------------------------
+
+export type RepeatPoolReviewResult = {
+  cardId: string;
+  status: 'pending' | 'cleared' | 'capped';
+  repeatCount: number;
+};
+
+export async function reviewRepeatPoolCard(
+  cardId: string,
+  rating: ReviewRating
+): Promise<RepeatPoolReviewResult | null> {
+  try {
+    return await postJson<RepeatPoolReviewResult>(
+      '/api/study/today/repeat-pool/reviews',
+      { cardId, rating }
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getBookProgress, lookupOxfordWord, reviewCard, startTodaySession } from './api';
+import { getBookProgress, lookupOxfordWord, reviewCard, reviewRepeatPoolCard, startTodaySession } from './api';
 
 describe('api', () => {
   afterEach(() => {
@@ -134,6 +134,55 @@ describe('api', () => {
 
     await expect(reviewCard('card-1', 'known')).rejects.toThrow(
       'POST /api/cards/card-1/reviews failed with 409 Conflict: Review already exists for this card today'
+    );
+  });
+
+  // 当日重复池（task 7684082688076025051）：重复卡评分走池端点，只更新
+  // 池状态、不写 reviews。
+  it('submits repeat-pool reviews to the pool endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () =>
+        Promise.resolve(JSON.stringify({ cardId: 'card-1', status: 'cleared', repeatCount: 1 }))
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(reviewRepeatPoolCard('card-1', 'known')).resolves.toEqual({
+      cardId: 'card-1',
+      status: 'cleared',
+      repeatCount: 1
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/study/today/repeat-pool/reviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardId: 'card-1', rating: 'known' })
+    });
+  });
+
+  it('treats a 404 from the pool endpoint as an idempotent skip for unpooled sibling cards', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: () => Promise.resolve(JSON.stringify({ detail: 'Repeat pool entry not found' }))
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(reviewRepeatPoolCard('card-9', 'known')).resolves.toBeNull();
+  });
+
+  it('rethrows non-404 pool endpoint failures', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: () => Promise.resolve('upstream unavailable')
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(reviewRepeatPoolCard('card-1', 'known')).rejects.toThrow(
+      'POST /api/study/today/repeat-pool/reviews failed with 500 Internal Server Error: upstream unavailable'
     );
   });
 

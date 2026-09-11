@@ -10,6 +10,7 @@ import {
   lookupPronunciation,
   mergeCheckIns,
   reviewCard,
+  reviewRepeatPoolCard,
   startTodaySession,
   switchBook
 } from './api';
@@ -235,9 +236,30 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     void refreshTodaySummary().catch(() => undefined);
   }
 
-  async function reviewWordCard(card: StudyCard, rating: ReviewRating) {
+  // 当日重复池（task 7684082688076025051）：重复卡（isRepeat）上的评分
+  // 分流到池端点 —— 只更新池状态，不写 reviews、不改 SM-2。词级聚合：
+  // cardIds 逐张提交，任一兄弟卡 pending 即整词仍 pending（重插一次）。
+  // 返回值供 StudySession 决定是否本地重插：{ status: 'pending' |
+  // 'cleared' | 'capped' }，普通队列卡返回 undefined。
+  async function reviewWordCard(
+    card: StudyCard,
+    rating: ReviewRating
+  ): Promise<{ status: 'pending' | 'cleared' | 'capped' } | undefined> {
     const cardIds = card.cardIds.length > 0 ? card.cardIds : [card.cardId];
+    if (card.isRepeat) {
+      const results = await Promise.all(
+        cardIds.map((cardId) => reviewRepeatPoolCard(cardId, rating))
+      );
+      const statuses = results.map((result) => result?.status ?? 'cleared');
+      const status = statuses.includes('pending')
+        ? 'pending'
+        : statuses.includes('capped')
+          ? 'capped'
+          : 'cleared';
+      return { status };
+    }
     await Promise.all(cardIds.map((cardId) => reviewCard(cardId, rating)));
+    return undefined;
   }
 
   function handleSessionComplete(completedCards: StudyCard[]) {

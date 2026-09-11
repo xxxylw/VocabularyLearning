@@ -6,6 +6,10 @@ import type { Pronunciation } from '../api';
 import { PronunciationPanel } from './PronunciationPanel';
 import { WordHeadline } from './WordHeadline';
 
+// 当日重复池（task 7684082688076025051，规格规则 2 / D2 拍板）：评 New
+// 的卡从当前位置后移 3 张重新出现（剩余不足 3 张时落队尾）。
+const REPEAT_INSERT_INTERVAL = 3;
+
 type StudySessionProps = {
   cards: StudyCard[];
   onReview: (card: StudyCard, rating: ReviewRating) => Promise<unknown> | unknown;
@@ -58,7 +62,6 @@ export function StudySession({
   totalCards,
   reviewedCards = 0
 }: StudySessionProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,18 +69,41 @@ export function StudySession({
   const [showAllDefinitions, setShowAllDefinitions] = useState(false);
   const submittingRef = useRef(false);
   const completedRef = useRef(false);
+  // 当日重复池（task 7684082688076025051）：会话内工作流。queue 是
+  // 「剩余待展示卡」—— 普通队列卡消费后 splice 移除、评 unknown 的
+  // new 卡 / 仍 pending 的重复卡在 3 张之后以 isRepeat 副本重新插回
+  // （规格规则 2：间隔 3 张）。服务端 today_repeat_pool 是持久权威，
+  // 这里的本地重插只保证同一会话内即时可见，重进由服务端确定性重算。
+  const [queue, setQueue] = useState<StudyCard[]>(cards);
+  // 规格规则 6：进度分子只计已完成卡 —— Got it / Maybe 的队列卡、
+  // 池内已 Got it（cleared）与达上限移出（capped）的卡；评 New 未清空
+  // 的卡不计入（停滞、不回退，清空 / 达上限时 +1）。复习卡评 New 不进
+  // 池（D1），照常计入。
+  const [repeatCompleted, setRepeatCompleted] = useState(0);
+  // 已展示张数（含重复卡重现）：currentPosition 的兜底计数。
+  const [shownCount, setShownCount] = useState(0);
 
-  const card = cards[currentIndex];
-  const completedCount = Math.min(currentIndex, cards.length);
+  useEffect(() => {
+    // cards prop 只在服务端重新拉会话时换引用（重进 Today / 再来一组 /
+    // ad-hoc 复习），同步工作流并复位会话内进度。
+    setQueue(cards);
+    setRepeatCompleted(0);
+    setShownCount(0);
+    completedRef.current = false;
+  }, [cards]);
+
+  const card = queue[0];
   // PRD ch.8: the progress bar is anchored to the day queue, not the
   // in-session list, so it never resets after re-entering Today.
   const denominator = totalCards ?? cards.length;
-  const dayCompletedCount = reviewedCards + completedCount;
+  const dayCompletedCount = reviewedCards + repeatCompleted;
   const completionPercent =
     denominator === 0 ? 0 : (dayCompletedCount / denominator) * 100;
   const currentPosition =
-    card?.queuePosition ?? reviewedCards + currentIndex + 1;
-  const isComplete = cards.length > 0 && currentIndex >= cards.length;
+    card?.queuePosition ?? reviewedCards + shownCount + 1;
+  // 消费即从工作流头移除，队列清空（含重复副本全部解决）才会话完成
+  // —— 与服务端「dayCompleted 追加池清空条件」同构（规格规则 5）。
+  const isComplete = cards.length > 0 && queue.length === 0;
   const newCardsCompleted = cards.filter((item) => item.queueType === 'new').length;
   const reviewCardsCompleted = cards.filter((item) => item.queueType === 'review').length;
   const reviewCards = cards.filter((item) => item.queueType === 'review');
@@ -93,8 +119,41 @@ export function StudySession({
       setError(null);
 
       try {
-        await onReview(card, rating);
-        setCurrentIndex((index) => index + 1);
+        const result = await onReview(card, rating);
+        // 池端点返回的词级状态（App.reviewWordCard 聚合）：pending =
+        // 仍在池内（重插）；cleared = Got it 移出；capped = 达 3 次
+        // 上限自动移出。普通队列卡返回 undefined。
+        const poolStatus = card.isRepeat
+          ? ((result as { status?: 'pending' | 'cleared' | 'capped' } | undefined)
+              ?.status ?? null)
+          : null;
+        const shouldReinsert = card.isRepeat
+          ? poolStatus === 'pending'
+          : rating === 'unknown' && card.queueType === 'new';
+        setQueue((prev) => {
+          const next = prev.slice();
+          next.splice(0, 1);
+          if (shouldReinsert) {
+            const repeatCopy: StudyCard = {
+              ...card,
+              isRepeat: true,
+              queuePosition: null,
+              queueType: 'new'
+            };
+            // 间隔 3 张：副本前有 3 张未学卡时重插（不足 3 张落队尾，
+            // 规格规则 2 边界态）。
+            const insertAt = Math.min(REPEAT_INSERT_INTERVAL, next.length);
+            next.splice(insertAt, 0, repeatCopy);
+          }
+          return next;
+        });
+        if (
+          (!card.isRepeat && (rating !== 'unknown' || card.queueType !== 'new')) ||
+          (card.isRepeat && (poolStatus === 'cleared' || poolStatus === 'capped'))
+        ) {
+          setRepeatCompleted((count) => count + 1);
+        }
+        setShownCount((count) => count + 1);
         setIsRevealed(false);
         setLookupState({ status: 'idle' });
         setShowAllDefinitions(false);

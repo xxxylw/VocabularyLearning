@@ -27,6 +27,8 @@ from app.models import (
     MergeCheckInsRequest,
     PrepareJobRequest,
     PrepareJobResponse,
+    RepeatPoolReviewRequest,
+    RepeatPoolReviewResponse,
     ReviewCardRequest,
     ReviewCardResponse,
     StudyCardResponse,
@@ -42,6 +44,193 @@ from app.scheduling import DEFAULT_EF, schedule_review
 
 class ReviewConflictError(ValueError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# 当日重复池（task 7684082688076025051）：当日不会的单词在今日后续卡片
+# 中重复，Got it 一次才移除。会话层循环，与跨天 SM-2 调度（数据层）
+# 彻底分离 —— 重复卡上的操作只更新池状态，不写 reviews、不改 EF /
+# 间隔 / due_at，与「同卡同日不可重复评分（409）」零冲突。
+# ---------------------------------------------------------------------------
+
+# D2 拍板：评 New 的卡从当前位置后移 3 张重新出现（间隔 3 张未学卡）。
+REPEAT_INSERT_INTERVAL = 3
+
+# D3 拍板：每卡当日最多重复 3 次（初次 + 3 次重复共 4 次接触），达上限
+# 自动移出、由 SM-2 次日重学兜底。
+MAX_REPEATS = 3
+
+
+def _decrement_repeat_pool_for_shown_card(
+    connection, user_id: str, shown_card_id: str, study_day: date
+) -> None:
+    """当日流里展示了一张卡（写了一条 review / 完成了一次池操作）：
+    其余仍在重复池 pending 的卡各前进一步（defer_remaining -1，下限
+    0）。作用域由「shown 卡在哪些书的当日队列里」决定 —— 队列外的
+    自由复习、拼写回放不推进该计数（其评分不对应当日队列展示）。
+    同词多义项例外：同一张学习卡（同词）的兄弟义项卡在同一次展示
+    中评分，不推进彼此的计数 —— 否则双义项卡会在间隔 2 张而非
+    3 张处重现（规格规则 2 的「间隔 3 张」按展示张数计）。"""
+    connection.execute(
+        """
+        update today_repeat_pool
+        set defer_remaining = max(defer_remaining - 1, 0),
+            updated_at = ?
+        where user_id = ?
+          and study_date = ?
+          and status = 'pending'
+          and card_id != ?
+          and card_id not in (
+              select sibling.id
+              from cards shown_card
+              join entries shown_entry on shown_entry.id = shown_card.entry_id
+              join entries sibling_entry on sibling_entry.word_id = shown_entry.word_id
+              join cards sibling on sibling.entry_id = sibling_entry.id
+              where shown_card.id = ?
+                and sibling.user_id = shown_card.user_id
+          )
+          and book_id in (
+              select book_id from today_queue
+              where user_id = ? and card_id = ? and study_date = ?
+          )
+        """,
+        (
+            _utc_now(),
+            user_id,
+            study_day.isoformat(),
+            shown_card_id,
+            shown_card_id,
+            user_id,
+            shown_card_id,
+            study_day.isoformat(),
+        ),
+    )
+
+
+def _enter_repeat_pool(
+    connection, user_id: str, card_id: str, study_day: date
+) -> None:
+    """D1 拍板：当日队列中的 new 卡评 New（unknown）即入当日重复池
+    （复习卡不进池）。insert ... select 限定 queue_type = 'new'，
+    队列外评分天然不进池；insert or ignore 幂等（唯一索引兜底，
+    多义项重复提交 / 并发下不炸）。defer_remaining = 间隔 3 张。"""
+    connection.execute(
+        """
+        insert or ignore into today_repeat_pool (
+            id, user_id, book_id, study_date, card_id,
+            repeat_count, defer_remaining, status, created_at, updated_at
+        )
+        select ?, ?, today_queue.book_id, today_queue.study_date,
+               today_queue.card_id, 0, ?, 'pending', ?, ?
+        from today_queue
+        where today_queue.user_id = ?
+          and today_queue.card_id = ?
+          and today_queue.study_date = ?
+          and today_queue.queue_type = 'new'
+        """,
+        (
+            str(uuid4()),
+            user_id,
+            REPEAT_INSERT_INTERVAL,
+            _utc_now(),
+            _utc_now(),
+            user_id,
+            card_id,
+            study_day.isoformat(),
+        ),
+    )
+
+
+def review_repeat_pool_card(
+    user_id: str, card_id: str, rating: str
+) -> RepeatPoolReviewResponse:
+    """重复卡上的三按钮（规格规则 3/4）：只更新当日池状态，不写
+    reviews、不改 SM-2。known → cleared（Got it 一次才移除）；
+    uncertain / unknown → repeat_count +1 且 defer 重置（按规则 2 再次
+    后移），达 MAX_REPEATS 上限置 capped 自动移出（D3）。本卡已被
+    展示：其余 pending 池卡各前进一步。多设备并发以先落库为准，
+    后到方对已终态（cleared/capped）的行幂等返回现状。"""
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            select book_id, study_date, repeat_count, status
+            from today_repeat_pool
+            where user_id = ? and card_id = ?
+            order by study_date desc, created_at desc
+            limit 1
+            """,
+            (user_id, card_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Repeat pool entry not found")
+
+        if row["status"] != "pending":
+            # 先落库优先：该卡当日已被 Got it / 达上限移出，幂等返回。
+            return RepeatPoolReviewResponse(
+                cardId=card_id,
+                status=row["status"],
+                repeatCount=int(row["repeat_count"]),
+            )
+
+        study_day = date.fromisoformat(row["study_date"])
+        now = _utc_now()
+        # 本卡已展示：推进同池其余 pending 卡的插入间隔计数。
+        _decrement_repeat_pool_for_shown_card(connection, user_id, card_id, study_day)
+
+        if rating == "known":
+            connection.execute(
+                """
+                update today_repeat_pool
+                set status = 'cleared', updated_at = ?
+                where user_id = ? and card_id = ? and study_date = ? and book_id = ?
+                """,
+                (now, user_id, card_id, study_day.isoformat(), row["book_id"]),
+            )
+            return RepeatPoolReviewResponse(
+                cardId=card_id, status="cleared", repeatCount=int(row["repeat_count"])
+            )
+
+        repeat_count = int(row["repeat_count"]) + 1
+        if repeat_count >= MAX_REPEATS:
+            connection.execute(
+                """
+                update today_repeat_pool
+                set status = 'capped', repeat_count = ?, updated_at = ?
+                where user_id = ? and card_id = ? and study_date = ? and book_id = ?
+                """,
+                (
+                    repeat_count,
+                    now,
+                    user_id,
+                    card_id,
+                    study_day.isoformat(),
+                    row["book_id"],
+                ),
+            )
+            return RepeatPoolReviewResponse(
+                cardId=card_id, status="capped", repeatCount=repeat_count
+            )
+
+        connection.execute(
+            """
+            update today_repeat_pool
+            set repeat_count = ?, defer_remaining = ?, updated_at = ?
+            where user_id = ? and card_id = ? and study_date = ? and book_id = ?
+            """,
+            (
+                repeat_count,
+                REPEAT_INSERT_INTERVAL,
+                now,
+                user_id,
+                card_id,
+                study_day.isoformat(),
+                row["book_id"],
+            ),
+        )
+        return RepeatPoolReviewResponse(
+            cardId=card_id, status="pending", repeatCount=repeat_count
+        )
 
 
 def _book_progress_aggregates(
@@ -900,89 +1089,200 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
                 tuple(queue_card_ids),
             ).fetchall()
         }
-        reviewed_ids = {
-            row["card_id"]
+        reviewed_rating = {
+            row["card_id"]: row["rating"]
             for row in connection.execute(
                 f"""
-                select distinct card_id
+                select distinct card_id, rating
                 from reviews
                 where card_id in ({placeholders})
-                  -- P1 2026-09-08：UTC 日界竞态修复——见 services.py
-                  -- _resolve_study_date 注释；该列取代 substr
-                  -- (reviewed_at,1,10) 的 UTC 前缀，避免北京 0-8 点
-                  -- 复习被错排到前一天。
+                  -- P1 2026-09-08：UTC 日界竞态修复——改用 study_date
+                  -- 列（服务器本地日期，与 today_queue.study_date 同口径）。
                   and reviews.study_date = ?
                 """,
                 (*queue_card_ids, study_date.isoformat()),
             ).fetchall()
         }
 
+        # 当日重复池（规格规则 7）：已评卡不再进入待学流，池内 pending
+        # 的卡除外 —— 它们仍要在今日后续学习中出现（isRepeat 标记）。
+        pool_rows = connection.execute(
+            """
+            select card_id, defer_remaining
+            from today_repeat_pool
+            where user_id = ? and book_id = ? and study_date = ?
+              and status = 'pending'
+            order by created_at, id
+            """,
+            (user_id, book_id, study_date.isoformat()),
+        ).fetchall()
+        pending_pool_ids = {row["card_id"] for row in pool_rows}
+
         total_cards = sum(1 for card_id in queue_card_ids if card_id in existing_ids)
+        # 进度条分子口径（规格规则 6）：分母 = 队列快照总数不变；分子只
+        # 计已完成卡 —— Got it / Maybe 的卡、池内已 Got it（cleared）与
+        # 达上限移出（capped）的卡。评 New 且池内仍 pending 的卡不计入
+        # （停滞、不回退），Got it / cleared 或 capped 后 +1。
         reviewed_cards = sum(
             1
             for card_id in queue_card_ids
-            if card_id in existing_ids and card_id in reviewed_ids
+            if card_id in existing_ids
+            and card_id in reviewed_rating
+            and (
+                reviewed_rating[card_id] != "unknown"
+                or card_id not in pending_pool_ids
+            )
         )
         pending_rows = [
             row
             for row in queue_rows
-            if row["card_id"] in existing_ids and row["card_id"] not in reviewed_ids
+            if row["card_id"] in existing_ids and row["card_id"] not in reviewed_rating
         ]
 
         cards: list[StudyCardResponse] = []
-        if pending_rows:
+        if pending_rows or pool_rows:
             pending_card_ids = [row["card_id"] for row in pending_rows]
-            pending_placeholders = ", ".join("?" for _ in pending_card_ids)
-            pending_words = [
-                row["normalized_text"]
-                for row in connection.execute(
-                    f"""
-                    select distinct words.normalized_text
-                    from cards
-                    join entries on entries.id = cards.entry_id
-                    join words on words.id = entries.word_id
-                    where cards.id in ({pending_placeholders})
-                    """,
-                    tuple(pending_card_ids),
-                ).fetchall()
+            pool_card_ids = [
+                row["card_id"]
+                for row in pool_rows
+                if row["card_id"] in existing_ids
             ]
-            word_placeholders = ", ".join("?" for _ in pending_words)
-            due_rows = connection.execute(
-                f"""
-                select
-                    cards.id as card_id,
-                    cards.last_reviewed_at,
-                    words.normalized_text
-                from words
-                cross join entries
-                cross join cards
-                -- CROSS JOIN 钉死 words→entries→cards 的索引驱动顺序；
-                -- due_at / status 作为索引后过滤条件（见
-                -- _study_cards_from_rows 的同型注释）。
-                where words.normalized_text in ({word_placeholders})
-                  and entries.word_id = words.id
-                  and cards.entry_id = entries.id
-                  and cards.due_at <= ?
-                  and cards.user_id = ?
-                  and cards.status in ('new', 'learning', 'mastered')
-                """,
-                (*pending_words, study_date.isoformat(), user_id),
-            ).fetchall()
-            study_cards = _study_cards_from_rows(connection, due_rows, user_id)
-            cards_by_id = {card.cardId: card for card in study_cards}
-            for row in pending_rows:
-                card = cards_by_id.get(row["card_id"])
-                if card is None:
+
+            # 待学队列卡：沿用 due_at <= study_date 的过滤（PRD ch.8）。
+            pending_map: dict[str, StudyCardResponse] = {}
+            if pending_card_ids:
+                pending_map = _study_cards_by_id(
+                    connection, user_id, pending_card_ids, due_date=study_date
+                )
+
+            # 池内重复卡：已评过（初评 unknown），due_at 已被 SM-2 推向
+            # 未来 —— 必须走无 due 过滤的查询路径（与 get_today_summary
+            # 的 completed 路径同型），否则永远取不回来。
+            pool_map: dict[str, StudyCardResponse] = {}
+            if pool_card_ids:
+                pool_map = _study_cards_by_id(
+                    connection, user_id, pool_card_ids, due_date=None
+                )
+
+            # 会话层插入位置确定性重算（规格规则 2 / 7，实现自由选了
+            # 重算而非持久化位置）：defer_remaining 是「还要再展示多少
+            # 张卡」的持久计数，每张当日流卡片的评分（review / 池操作）
+            # 各减 1。这里模拟当日流的推进：defer 到 0 的池卡插在下一张
+            # 待学卡之前；未到的随队列推进逐张递减；剩余未学卡不足 3
+            # 张（队列耗尽）时剩余池卡按入池顺序依次出现在队尾。
+            # 同词多义项去重（规格边界态：多义项以卡为粒度各自进池，
+            # 但学习卡按词渲染）—— 同词的多张池卡只注入一张重复卡
+            # （首张 pending 行），整词一起出现。
+            seen_pool_words: set[str] = set()
+            pool_pending = []
+            for row in pool_rows:
+                if row["card_id"] not in existing_ids:
                     continue
-                card.queueType = row["queue_type"]
-                card.queuePosition = row["position"]
-                cards.append(card)
+                pool_card = pool_map.get(row["card_id"])
+                if pool_card is None or pool_card.word in seen_pool_words:
+                    continue
+                seen_pool_words.add(pool_card.word)
+                pool_pending.append(
+                    {"card_id": row["card_id"], "defer": int(row["defer_remaining"])}
+                )
+            flow: list[tuple[str, object]] = []
+            queue_index = 0
+            while queue_index < len(pending_rows) or pool_pending:
+                if pool_pending and pool_pending[0]["defer"] <= 0:
+                    entry = pool_pending.pop(0)
+                    flow.append(("pool", entry["card_id"]))
+                    # 池卡弹出不算「再展示 3 张」的展示消耗（它已展示
+                    # 过、现在只是重看）。只前进来自队列卡（待学 new /
+                    # review）的展示消耗 —— 释义 B 才是规格原意。
+                    continue
+                if queue_index < len(pending_rows):
+                    flow.append(("queue", pending_rows[queue_index]))
+                    queue_index += 1
+                    for other in pool_pending:
+                        other["defer"] = max(other["defer"] - 1, 0)
+                    continue
+                # 队列耗尽：剩余池卡依次出现在队尾（规格边界态）。
+                entry = pool_pending.pop(0)
+                flow.append(("pool", entry["card_id"]))
+
+            for kind, entry in flow:
+                if kind == "queue":
+                    row = entry
+                    card = pending_map.get(row["card_id"])
+                    if card is None:
+                        continue
+                    card.queueType = row["queue_type"]
+                    card.queuePosition = row["position"]
+                    cards.append(card)
+                else:
+                    card = pool_map.get(entry)
+                    if card is None:
+                        continue
+                    # 池内卡必为当日 new 队列卡（D1）；isRepeat 供前端把
+                    # 评分分流到池端点。queuePosition 不适用（重复出现）。
+                    card.queueType = "new"
+                    card.queuePosition = None
+                    card.isRepeat = True
+                    cards.append(card)
 
         return TodaySessionResponse(
             totalCards=total_cards,
             cards=cards,
             reviewedCards=reviewed_cards,
         )
+
+
+def _study_cards_by_id(
+    connection, user_id: str, card_ids: list[str], *, due_date: date | None
+) -> dict[str, StudyCardResponse]:
+    """按 card_id 批量构建 StudyCardResponse（含多义项聚合）。
+
+    due_date=None 时不过滤 due_at（重复池卡 / 已评卡的取回路径，
+    它们的 due_at 已被 SM-2 推向未来）；due_date 给定时沿用队列的
+    due_at <= study_date 过滤（PRD ch.8）。"""
+    if not card_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in card_ids)
+    words = [
+        row["normalized_text"]
+        for row in connection.execute(
+            f"""
+            select distinct words.normalized_text
+            from cards
+            join entries on entries.id = cards.entry_id
+            join words on words.id = entries.word_id
+            where cards.id in ({placeholders})
+            """,
+            tuple(card_ids),
+        ).fetchall()
+    ]
+    if not words:
+        return {}
+    word_placeholders = ", ".join("?" for _ in words)
+    due_condition = "and cards.due_at <= ?" if due_date is not None else ""
+    due_params = (due_date.isoformat(),) if due_date is not None else ()
+    due_rows = connection.execute(
+        f"""
+        select
+            cards.id as card_id,
+            cards.last_reviewed_at,
+            words.normalized_text
+        from words
+        cross join entries
+        cross join cards
+        -- CROSS JOIN 钉死 words→entries→cards 的索引驱动顺序（见
+        -- _study_cards_from_rows 的同型注释）。
+        where words.normalized_text in ({word_placeholders})
+          and entries.word_id = words.id
+          and cards.entry_id = entries.id
+          {due_condition}
+          and cards.user_id = ?
+          and cards.status in ('new', 'learning', 'mastered')
+        """,
+        (*words, *due_params, user_id),
+    ).fetchall()
+    study_cards = _study_cards_from_rows(connection, due_rows, user_id)
+    return {card.cardId: card for card in study_cards}
 
 
 def get_today_summary(
@@ -1025,33 +1325,60 @@ def get_today_summary(
                 tuple(queue_card_ids),
             ).fetchall()
         }
-        reviewed_ids = {
-            row["card_id"]
+        reviewed_rating = {
+            row["card_id"]: row["rating"]
             for row in connection.execute(
                 f"""
-                select distinct card_id
+                select card_id, rating
                 from reviews
                 where card_id in ({placeholders})
                   -- P1 2026-09-08：UTC 日界竞态修复——同 _read_today_queue_session
-                  -- 的 reviewed_ids：study_date 列取代 substr 前缀。
+                  -- 的 reviewed 读取：study_date 列取代 substr 前缀。
                   and reviews.study_date = ?
                 """,
                 (*queue_card_ids, study_date.isoformat()),
             ).fetchall()
         }
 
+        # 当日重复池：unknown 且仍在池内 pending 的卡不计入完成分子，
+        # dayCompleted 追加「池清空」条件（规格：拼写/再来一组完成态
+        # 都必须等重复池清空）。
+        pool_pending_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                "select card_id from today_repeat_pool"
+                " where user_id = ? and book_id = ? and study_date = ?"
+                " and status = 'pending'",
+                (user_id, book_id, study_date.isoformat()),
+            ).fetchall()
+        }
+
+        def _counts_toward_completion(card_id: str) -> bool:
+            # 已评且（非 unknown，或虽评 unknown 但已不在 pending 池——
+            # 即 Got it 清除 / 达上限移出）。
+            if card_id not in reviewed_rating:
+                return False
+            return (
+                reviewed_rating[card_id] != "unknown"
+                or card_id not in pool_pending_ids
+            )
+
         total_cards = sum(1 for card_id in queue_card_ids if card_id in existing_ids)
         reviewed_cards = sum(
             1
             for card_id in queue_card_ids
-            if card_id in existing_ids and card_id in reviewed_ids
+            if card_id in existing_ids and _counts_toward_completion(card_id)
         )
-        day_completed = total_cards > 0 and reviewed_cards >= total_cards
+        day_completed = (
+            total_cards > 0
+            and reviewed_cards >= total_cards
+            and not pool_pending_ids
+        )
 
         completed_rows = [
             row
             for row in queue_rows
-            if row["card_id"] in existing_ids and row["card_id"] in reviewed_ids
+            if row["card_id"] in existing_ids and _counts_toward_completion(row["card_id"])
         ]
 
         completed_cards: list[StudyCardResponse] = []
@@ -1384,6 +1711,17 @@ def review_card(
                 card_id,
             ),
         )
+        # 当日重复池（会话层，SM-2 零污染）：本次 review 对应一张已展示
+        # 的当日流卡片 —— 其余 pending 池卡的插入间隔计数各前进一步
+        # （任何评分都算一次展示）。评 New（unknown）且该卡是当日队列
+        # new 卡时进池（D1），与 review 写入同事务（开放问题 3 的一致
+        # 性要求）。重复卡上的后续操作走池端点、不经本函数，409 路径
+        # 不受影响。
+        _decrement_repeat_pool_for_shown_card(
+            connection, user_id, card_id, reviewed_on
+        )
+        if request.rating == "unknown":
+            _enter_repeat_pool(connection, user_id, card_id, reviewed_on)
 
     return ReviewCardResponse(
         cardId=card_id,

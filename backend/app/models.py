@@ -275,6 +275,10 @@ class StudyCardResponse(BaseModel):
     # 1-based position in the day's queue snapshot (PRD ch.8); only set
     # when the card comes from today's queue read.
     queuePosition: int | None = None
+    # 当日重复池：当日队列 new 卡评 New 后间隔 3 张重新出现的重复卡
+    # 标记（服务端待学流注入 / 前端本地插入的副本都带它）。重复卡上
+    # 的评分走池端点（只更新池状态，不写 reviews、不改 SM-2）。
+    isRepeat: bool = False
 
 
 class TodaySessionResponse(BaseModel):
@@ -316,6 +320,24 @@ class ReviewCardResponse(BaseModel):
     nextStage: int
     nextDueAt: Date
     status: str
+
+
+# 当日重复池（会话层循环）：重复卡上的三按钮只更新池状态。
+# - known → cleared：移出池，当日不再出现（Got it 一次才移除）；
+# - uncertain / unknown → repeat_count +1、defer 重置（间隔 3 张再次
+#   后移），达 3 次上限置 capped 自动移出（SM-2 次日重学兜底）；
+# - 不写 reviews、不改 EF / 间隔 / due_at，与同卡同日唯一评分（409）
+#   零冲突。
+class RepeatPoolReviewRequest(BaseModel):
+    cardId: str
+    rating: Literal["known", "uncertain", "unknown"]
+
+
+class RepeatPoolReviewResponse(BaseModel):
+    cardId: str
+    status: Literal["pending", "cleared", "capped"]
+    # 数据面（规格规则 10）：该卡当日已重新出现的次数。
+    repeatCount: int
 
 
 # ---------------------------------------------------------------------------
