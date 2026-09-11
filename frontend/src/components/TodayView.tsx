@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CheckInRecord } from '../checkins';
 import { estimateFinishDays, finishEstimateParts } from '../estimate';
+import { currentStudyDayAnchor } from '../studyDay';
 import { CheckInGrid } from './CheckInGrid';
 
 type TodayViewProps = {
@@ -77,11 +78,14 @@ export function TodayView({
   // 数据全部来自已有状态（bookTotalWords / bookLearnedWords / checkIns /
   // newWordTarget），目标改动后这里即时重算；速度不足 3 天样本回退目标值。
   // 2026-09-11 DP-A4：预估整行英文，天数数字用行内 code pill 单独渲染。
+  // 2026-09 学习日边界 02:00：预估样本窗口与截断口径跟随学习日
+  // （固定北京时区、02:00 切日），展示粒度（天数/日期）不变。
+  const studyToday = currentStudyDayAnchor();
   const finishEstimate =
     typeof bookTotalWords === 'number' && typeof bookLearnedWords === 'number'
-      ? estimateFinishDays(bookTotalWords, bookLearnedWords, checkIns, newWordTarget)
+      ? estimateFinishDays(bookTotalWords, bookLearnedWords, checkIns, newWordTarget, studyToday)
       : { kind: 'unavailable' as const };
-  const estimateParts = finishEstimateParts(finishEstimate);
+  const estimateParts = finishEstimateParts(finishEstimate, studyToday);
 
   return (
     <section className="today-view" aria-labelledby="today-title">
@@ -237,7 +241,7 @@ export function TodayView({
         {error ? <p className="inline-error">{error}</p> : null}
       </div>
 
-      <CheckInGrid checkIns={checkIns} />
+      <CheckInGrid checkIns={checkIns} today={studyToday} />
     </section>
   );
 }

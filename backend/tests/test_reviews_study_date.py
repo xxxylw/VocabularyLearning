@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from app.db import connect, db_path, migrate, _migrated_paths
 from app.main import create_app
 from app.reviews_study_date_migration import _server_local_date, migrate_reviews_study_date
-from app.services import _resolve_study_date
+from app import study_clock
 
 # Tests in this file exercise the 00:00-08:00 Beijing window which
 # straddles the UTC day boundary. The aggregation must follow the
@@ -47,31 +47,30 @@ def _clear_migrate_cache() -> None:
 
 # ---------------------------------------------------------------------------
 # Helpers: pure unit coverage of the date-口径 utilities.
+# 学习日边界 02:00 改造（PM 规格）：_resolve_study_date（客户端
+# reviewedDate 优先 + 服务器本地时区）已被 study_clock 口径 +
+# review_card 归日双轨替代；客户端字段不再参与归日判定。以下单测
+# 固定新口径的关键性质（固定 Asia/Shanghai、naive 视作 UTC），
+# 00:00-08:00 窗口的端到端行为由本文件其余用例 + 新增
+# test_study_day_boundary.py 覆盖。
 
 
-def test_resolve_study_date_prefers_client_reviewed_date() -> None:
-    """``reviewedDate`` (the client-local date) is the authoritative
-    study date when supplied — the today_queue and reviewed_ids must
-    share the same date basis."""
-    beijing_2am = datetime(2026, 9, 8, 2, 0, tzinfo=_BEIJING)
-    assert _resolve_study_date(date(2026, 9, 8), beijing_2am) == date(2026, 9, 8)
+def test_study_day_uses_fixed_shanghai_timezone() -> None:
+    """D1：口径固定 Asia/Shanghai，不依赖运行环境本地时区。北京
+    2026-09-08 01:00 的提交（= UTC 09-07 17:00）无论 CI 机器时区
+    是什么都归学习日 09-07。"""
+    utc_instant = datetime(2026, 9, 7, 17, 0, tzinfo=timezone.utc)
+    assert study_clock.study_day(utc_instant) == date(2026, 9, 7)
+    # 同一时刻用带 +00:00 后缀的 naive / aware 两种形态都一致。
+    assert study_clock.study_day(datetime(2026, 9, 7, 17, 0)) == date(2026, 9, 7)
 
 
-def test_resolve_study_date_falls_back_to_local_for_utc_reviewed_at() -> None:
-    """When ``reviewedDate`` is absent, ``reviewedAt`` (UTC ISO) is
-    converted to the server-local calendar date. The production
-    incident's review was at 02:25 Beijing = 18:25 UTC the previous
-    day; the local date must be the Beijing date, not the UTC one."""
-    beijing_2am = datetime(2026, 9, 8, 2, 0, tzinfo=_BEIJING).astimezone(timezone.utc)
-    assert _resolve_study_date(None, beijing_2am) == date(2026, 9, 8)
-
-
-def test_resolve_study_date_treats_naive_datetime_as_utc() -> None:
+def test_study_day_treats_naive_datetime_as_utc() -> None:
     """A naive ``reviewedAt`` (no tz suffix) is interpreted as UTC
     so external API consumers / older clients that submit the legacy
-    format land in the correct server-local day."""
-    naive_utc = datetime(2026, 9, 8, 2, 0)  # 02:00 UTC
-    assert _resolve_study_date(None, naive_utc) == date(2026, 9, 8)
+    format land in the correct study day."""
+    naive_utc = datetime(2026, 9, 8, 2, 0)  # 02:00 UTC = 10:00 Beijing
+    assert study_clock.study_day(naive_utc) == date(2026, 9, 8)
 
 
 def test_server_local_date_handles_z_and_offset_and_naive() -> None:

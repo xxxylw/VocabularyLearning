@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 import json
 import os
 from uuid import uuid4
+
+from app import study_clock
 
 from app.books import (
     book_exists,
@@ -586,7 +588,11 @@ def prepare_book_words(
 
 
 def start_today_session(user_id: str, request: TodayStartRequest) -> TodaySessionResponse:
-    study_date = request.date or date.today()
+    # 学习日边界 02:00（PM 规格 + D1/D3 拍板）：默认学习日改为服务端
+    # study_day(now)，00:00-02:00 进入 Today 仍归属前一自然日对应的
+    # 学习日，02:00:00 起才翻入新学习日。显式 request.date 仅测试 /
+    # 兼容用途，保留。
+    study_date = request.date or study_clock.current_study_day()
     # P0 2026-09-08 「再来一组」：extraNewWords is folded into the daily
     # new-word allowance for this call only — the merge path appends
     # fresh new cards up to the resulting remaining quota. We do NOT
@@ -990,7 +996,9 @@ def get_today_summary(
     # reviewed cards have already moved their due_at into the future
     # via SM-2 and must be fetched as-is so the spelling practice list
     # can replay them on a freshly refreshed device.
-    study_date = study_date or date.today()
+    # 学习日边界 02:00：与 start_today_session 同口径（study_clock 单一
+    # 来源），00:00-02:00 查询 summary 仍读前一自然日学习日的队列。
+    study_date = study_date or study_clock.current_study_day()
     with connect() as connection:
         book_id = get_current_book_id(connection, user_id)
         queue_rows = connection.execute(
@@ -1287,16 +1295,14 @@ def merge_check_ins(user_id: str, request: MergeCheckInsRequest) -> CheckInsResp
 def review_card(
     user_id: str, card_id: str, request: ReviewCardRequest
 ) -> ReviewCardResponse:
-    # P1 2026-09-08（task 7683097747100093410）UTC 日界竞态修复：
-    # 旧实现 reviewed_on = request.reviewedDate or request.reviewedAt.date()，
-    # 后者在 0-8 点窗口（UTC 日界）取的是前一天，与 today_queue.study_date
-    # 分裂，导致「跨书共享词」复习被错排到前一天 / 当日 reviewedCards
-    # 永远差 1 / 后续提交 409。统一为 _resolve_study_date：
-    # reviewedDate 优先（客户端本地日期，与队列口径一致），否则把
-    # reviewedAt（UTC ISO）转服务器本地日期。
-    reviewed_on = _resolve_study_date(
-        request.reviewedDate, request.reviewedAt
-    )
+    # 学习日边界 02:00 归日双轨（PM 规格 D3 拍板）：
+    # - 今日队列内的卡（today_queue 快照 study_date 为当前学习日或
+    #   前一学习日——后者覆盖「01:50 开始的会话 02:10 提交」）按队列
+    #   快照 study_date 归日，保证跨 02:00 提交仍能完成当日队列、
+    #   dayCompleted 正确；
+    # - 队列外（跨书自由复习等）按服务端提交时刻 study_day(now) 归日；
+    # - 一律以服务器时间为准，客户端 reviewedDate / reviewedAt 不再
+    #   参与归日判定（验收：篡改客户端时钟不改变归日）。
     reviewed_at = request.reviewedAt.isoformat()
 
     with connect() as connection:
@@ -1311,6 +1317,7 @@ def review_card(
         ).fetchone()
         if card is None:
             raise LookupError("Card not found")
+        reviewed_on = _resolve_review_study_day(connection, user_id, card_id)
         if date.fromisoformat(card["due_at"]) > reviewed_on:
             raise ReviewConflictError("Card is not due on the reviewed date")
         if _review_exists_on_date(connection, card_id, reviewed_on):
@@ -1781,29 +1788,72 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _resolve_study_date(
-    reviewed_date: date | None, reviewed_at: datetime
-) -> date:
-    """Return the server-local study date for a review submission.
+def _queue_day_incomplete(
+    connection, user_id: str, book_id: str, study_date: date
+) -> bool:
+    """(user, book, study_date) 队列是否未完成：存在已建卡但当日尚无
+    review 的队列卡。与 _read_today_queue_session 的 reviewed_ids 同
+    口径（cards 存在 + reviews.study_date 匹配）。"""
+    row = connection.execute(
+        """
+        select 1
+        from today_queue tq
+        join cards c on c.id = tq.card_id
+        where tq.user_id = ? and tq.book_id = ? and tq.study_date = ?
+          and not exists (
+              select 1 from reviews r
+              where r.user_id = tq.user_id
+                and r.card_id = tq.card_id
+                and r.study_date = tq.study_date
+          )
+        limit 1
+        """,
+        (user_id, book_id, study_date.isoformat()),
+    ).fetchone()
+    return row is not None
 
-    Prefers the client-supplied ``reviewedDate`` (it always matches the
-    today_queue's local-date basis). Falls back to converting
-    ``reviewedAt`` (which the client always sends as a UTC ISO string
-    via ``Date.toISOString()``) into the server-local calendar date.
-    Naive datetimes are treated as UTC.
 
-    The returned date is the single source of truth for both
-    ``reviewed_on`` (used in the SM-2 due check and same-day
-    de-duplication) and the new ``reviews.study_date`` column; the
-    two previously diverged in the 00:00-08:00 Beijing window because
-    ``request.reviewedAt.date()`` is a UTC date.
+def _resolve_review_study_day(connection, user_id: str, card_id: str) -> date:
+    """归日双轨（D3）：返回一条 review 提交的 study_date。
+
+    1. 卡在当前学习日的今日队列（任意书，跨书共享词同卡多行）→
+       按队列快照归日（= 当前学习日）。
+    2. 卡在前一学习日的队列、且该队列未完成（进行中会话跨 02:00，
+       规格：不中断、评分归快照学习日）→ 按快照归日。这是规格第六
+       章验收用例 3 的硬要求：01:50 开始的会话 02:10 提交最后几张，
+       评分归快照学习日、dayCompleted=true、新学习日不受污染。
+       已完成的历史队列不再走快照 —— 次日 due 的复习卡按提交时刻
+       归新学习日（队列外口径），避免 due 校验误 409。
+    3. 其余（队列外：跨书自由复习、直接 API 提交、更早的陈旧队列）
+       → 按服务端提交时刻 study_day(now) 归日。
+
+    与 2026-09-08 UTC 竞态修复的差别：客户端 reviewedDate /
+    reviewedAt 不再参与归日判定（服务器时间为唯一权威，验收：
+    篡改客户端时钟不改变归日）；时区由服务器本地时区固定为
+    Asia/Shanghai（D1）。
     """
-    if reviewed_date is not None:
-        return reviewed_date
-    normalized = reviewed_at
-    if normalized.tzinfo is None:
-        normalized = normalized.replace(tzinfo=timezone.utc)
-    return normalized.astimezone().date()
+    current_day = study_clock.current_study_day()
+    prev_day = current_day - timedelta(days=1)
+
+    in_current = connection.execute(
+        "select 1 from today_queue"
+        " where user_id = ? and card_id = ? and study_date = ? limit 1",
+        (user_id, card_id, current_day.isoformat()),
+    ).fetchone()
+    if in_current is not None:
+        return current_day
+
+    prev_rows = connection.execute(
+        "select book_id from today_queue"
+        " where user_id = ? and card_id = ? and study_date = ?",
+        (user_id, card_id, prev_day.isoformat()),
+    ).fetchall()
+    for row in prev_rows:
+        if _queue_day_incomplete(connection, user_id, row["book_id"], prev_day):
+            return prev_day
+
+    return current_day
+
 
 
 def _create_enrichment_provider():

@@ -7,6 +7,28 @@ def use_fallback_enrichment(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 学习日边界 02:00（PM 规格）：study_clock 时钟固定。服务端归日一律走
+# study_clock.current_study_day()（固定 Asia/Shanghai、−2h），与 CI 机器
+# 时区和真实运行时刻解耦；既有测试以 date.today() 构造学习日，故默认把
+# 时钟钉在「当天 10:00 UTC」——该时刻在 ±12h 内任意时区下 study_day 都
+# 等于 date.today()，既有的 date.today() 基测试全部确定性通过。需要
+# 自定义时刻的边界测试在用例内再次 monkeypatch 覆盖本默认值。
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def pin_study_clock(monkeypatch):
+    from datetime import date as _date, datetime as _datetime, time as _time, timezone as _timezone
+
+    from app import study_clock as _study_clock
+
+    pinned = _datetime.combine(
+        _date.today(), _time(10, 0), tzinfo=_timezone.utc
+    )
+    assert _study_clock.study_day(pinned) == _date.today()
+    monkeypatch.setattr(_study_clock, "now", lambda: pinned)
+    return pinned
+
+
+# ---------------------------------------------------------------------------
 # v2 batch 2 (C-05): per-user data isolation for the legacy v1.1 suites.
 #
 # The legacy study suites drive the study API through TestClient without

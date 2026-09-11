@@ -1,4 +1,5 @@
 import type { StudyCard } from './api';
+import { studyDayKey } from './studyDay';
 
 export type CheckInRecord = {
   date: string;
@@ -37,7 +38,10 @@ export function localDateString(date: Date): string {
 
 export function buildCheckInRecord(cards: StudyCard[], completedAt = new Date()): CheckInRecord {
   return {
-    date: localDateString(completedAt),
+    // 2026-09 学习日边界 02:00：本地回退记录按学习日归日（北京
+    // 00:00–02:00 完成记到前一自然日），与服务端由 reviews.study_date
+    // 派生的打卡口径一致；completedAt 时间戳仍存提交时刻。
+    date: studyDayKey(completedAt),
     completedCards: cards.length,
     newCards: cards.filter((card) => card.queueType === 'new').length,
     reviewCards: cards.filter((card) => card.queueType === 'review').length,

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { BookListItem } from '../api';
 import type { CheckInRecord } from '../checkins';
 import { estimateFinishDays } from '../estimate';
+import { currentStudyDayAnchor } from '../studyDay';
 
 // PRD ch.10: the second built-in book gets a red programmatic cover so the
 // two shelf entries are visually distinct (纯 CSS，无图片，零版权风险).
@@ -42,7 +43,14 @@ export function BookShelfView({
     if (book.totalWords === 0) {
       return '';
     }
-    const estimate = estimateFinishDays(book.totalWords, book.learnedWords ?? 0, checkIns, newWordTarget);
+    // 2026-09 学习日边界 02:00：书架预估与 Today 主位同一学习日口径。
+    const estimate = estimateFinishDays(
+      book.totalWords,
+      book.learnedWords ?? 0,
+      checkIns,
+      newWordTarget,
+      currentStudyDayAnchor()
+    );
     if (estimate.kind === 'done') {
       return '新词已学完';
     }

@@ -16,7 +16,7 @@ Coverage:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time as dtime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -126,6 +126,17 @@ def test_check_ins_classifies_new_vs_review_across_days(tmp_path, monkeypatch):
 
     _review_card(client, session["cards"][0]["cardId"], day1)
     _review_card(client, session["cards"][1]["cardId"], day1)
+
+    # 学习日边界 02:00：day2 的复习要归 day2，必须把服务端学习时钟
+    # 推进到 day2（归日以服务器时间为准，客户端 reviewedDate 已退出
+    # 归日判定）。
+    from app import study_clock
+
+    monkeypatch.setattr(
+        study_clock,
+        "now",
+        lambda: datetime.combine(day2, dtime(10, 0), tzinfo=timezone.utc),
+    )
     _review_card(client, session["cards"][0]["cardId"], day2)
 
     records = _by_date(_check_ins(client))
