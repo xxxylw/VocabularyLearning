@@ -218,4 +218,77 @@ describe('StudySession 当日重复池', () => {
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
     expect(onReview).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps the position indicator within the day-queue denominator across repeat re-shows', async () => {
+    const user = userEvent.setup();
+    // 复现 bug 场景：当日队列 5 张、已学 3 张，剩余 alpha（槽 4）、
+    // bravo（槽 5）。alpha 评 New 本地重插后，重复副本的 queuePosition
+    // 为 null 走兜底计数——修复前依次显示 5/5 → 6/5 → 7/5。
+    const cards = [
+      { ...makeCard('card-1', 'alpha'), queuePosition: 4 },
+      { ...makeCard('card-2', 'bravo'), queuePosition: 5 }
+    ];
+    const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
+      card.isRepeat
+        ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
+        : Promise.resolve(undefined)
+    );
+    render(
+      <StudySession
+        cards={cards}
+        totalCards={5}
+        reviewedCards={3}
+        onReview={onReview}
+        onExit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('4 / 5')).toBeInTheDocument();
+    await revealAndRate(user, /^new$/i); // alpha 评 New → 剩余不足 3 张，副本落队尾
+
+    expect(screen.getByText('5 / 5')).toBeInTheDocument(); // bravo（槽 5）
+    await revealAndRate(user, /got it/i);
+
+    // alpha 副本重现：位置不推进、不超分母（修复前 6 / 5）。
+    expect(screen.getByText('5 / 5')).toBeInTheDocument();
+    expect(screen.queryByText('6 / 5')).not.toBeInTheDocument();
+
+    await revealAndRate(user, /maybe/i); // 副本 pending → 再次重插（修复前 7 / 5）
+    expect(screen.getByText('5 / 5')).toBeInTheDocument();
+    expect(screen.queryByText('7 / 5')).not.toBeInTheDocument();
+
+    await revealAndRate(user, /got it/i); // 副本清空 → 会话完成
+    expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
+  });
+
+  it('shows the last original-card position for a server-injected repeat copy (no zero display)', async () => {
+    const user = userEvent.setup();
+    // 重进 Today 的服务端流：已学 2 张，队首直接是重复副本（queuePosition
+    // 为 null）。副本显示最近一张原始卡的位置，且恒 ≤ 分母。
+    const cards = [
+      { ...makeCard('card-1', 'alpha'), isRepeat: true },
+      { ...makeCard('card-2', 'bravo'), queuePosition: 3 },
+      { ...makeCard('card-3', 'charlie'), queuePosition: 4 }
+    ];
+    const onReview = vi.fn().mockResolvedValue({ status: 'cleared' });
+    render(
+      <StudySession
+        cards={cards}
+        totalCards={4}
+        reviewedCards={2}
+        onReview={onReview}
+        onExit={vi.fn()}
+      />
+    );
+
+    // 副本在队首：显示 2 / 4（最近原始卡槽位），绝不 0、不超分母。
+    expect(screen.getByText('2 / 4')).toBeInTheDocument();
+
+    await revealAndRate(user, /got it/i); // 副本 cleared
+    expect(screen.getByText('3 / 4')).toBeInTheDocument(); // bravo（槽 3）
+    await revealAndRate(user, /got it/i);
+    expect(screen.getByText('4 / 4')).toBeInTheDocument(); // charlie（槽 4）
+    await revealAndRate(user, /got it/i);
+    expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
+  });
 });

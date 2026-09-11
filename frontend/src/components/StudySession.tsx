@@ -80,7 +80,9 @@ export function StudySession({
   // 的卡不计入（停滞、不回退，清空 / 达上限时 +1）。复习卡评 New 不进
   // 池（D1），照常计入。
   const [repeatCompleted, setRepeatCompleted] = useState(0);
-  // 已展示张数（含重复卡重现）：currentPosition 的兜底计数。
+  // 已展示的原始队列卡张数：currentPosition 的兜底计数。重复卡
+  // isRepeat 副本不计入——副本是同一张卡的重现，若每次重现都推进
+  // 游标，位置显示会在当日重复场景超过 day queue 分母（6/5、7/5）。
   const [shownCount, setShownCount] = useState(0);
 
   useEffect(() => {
@@ -99,8 +101,14 @@ export function StudySession({
   const dayCompletedCount = reviewedCards + repeatCompleted;
   const completionPercent =
     denominator === 0 ? 0 : (dayCompletedCount / denominator) * 100;
+  // 位置游标口径：重复卡 isRepeat 副本是同一张卡的重现，不推进
+  // shownCount（服务端 flow 计算同口径——池卡不算展示消耗）。副本
+  // 显示最近一张原始卡的位置（下限 1），原始卡显示下一槽位——位置
+  // 恒 ≤ 分母，不再出现 6/5、7/5。
+  const fallbackPosition = reviewedCards + shownCount;
   const currentPosition =
-    card?.queuePosition ?? reviewedCards + shownCount + 1;
+    card?.queuePosition ??
+    (card?.isRepeat ? Math.max(1, fallbackPosition) : fallbackPosition + 1);
   // 消费即从工作流头移除，队列清空（含重复副本全部解决）才会话完成
   // —— 与服务端「dayCompleted 追加池清空条件」同构（规格规则 5）。
   const isComplete = cards.length > 0 && queue.length === 0;
@@ -153,7 +161,7 @@ export function StudySession({
         ) {
           setRepeatCompleted((count) => count + 1);
         }
-        setShownCount((count) => count + 1);
+        setShownCount((count) => (card.isRepeat ? count : count + 1));
         setIsRevealed(false);
         setLookupState({ status: 'idle' });
         setShowAllDefinitions(false);
@@ -378,7 +386,11 @@ export function StudySession({
           {/* PRD decision 1: render real UK/US IPA when data exists; when the
               panel has no real IPA it renders nothing (no placeholder copy). */}
           {onLookupPronunciation ? (
-            <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} />
+            <PronunciationPanel
+              word={card.word}
+              onLookupPronunciation={onLookupPronunciation}
+              autoPlay={!card.isRepeat}
+            />
           ) : null}
         </div>
 

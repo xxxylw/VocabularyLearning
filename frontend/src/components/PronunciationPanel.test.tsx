@@ -116,3 +116,89 @@ describe('PronunciationPanel play button (P1 ghost speaker icon)', () => {
     expect(rule).toContain('outline-offset: 2px');
   });
 });
+
+describe('PronunciationPanel auto-play (P1: play once when a new card starts)', () => {
+  it('auto-plays the dictionary audio exactly once when autoPlay is enabled and the data is ready', async () => {
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
+
+    const { rerender } = render(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation())}
+        autoPlay
+      />
+    );
+
+    await screen.findByRole('button', { name: 'Play atmosphere pronunciation' });
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+
+    // Re-renders from the card lifecycle (Reveal / rating / Show more)
+    // must not trigger a second auto-play — the per-word guard holds.
+    rerender(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation())}
+        autoPlay
+      />
+    );
+    await screen.findByRole('button', { name: 'Play atmosphere pronunciation' });
+    expect(play).toHaveBeenCalledTimes(1);
+
+    vi.restoreAllMocks();
+  });
+
+  it('does not auto-play when autoPlay is not passed (manual-only callers keep current behavior)', async () => {
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
+
+    render(
+      <PronunciationPanel word="atmosphere" onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation())} />
+    );
+
+    await screen.findByRole('button', { name: 'Play atmosphere pronunciation' });
+    expect(play).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('silently skips when the browser blocks autoplay (play rejects), without surfacing any error UI', async () => {
+    const play = vi.fn().mockRejectedValue(new DOMException('play() failed', 'NotAllowedError'));
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
+
+    render(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation())}
+        autoPlay
+      />
+    );
+
+    // The panel renders normally and the rejection is swallowed — no retry,
+    // no alert / error text, no unhandled rejection.
+    expect(await screen.findByRole('button', { name: 'Play atmosphere pronunciation' })).toBeInTheDocument();
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    vi.restoreAllMocks();
+  });
+
+  it('does not auto-play when the word has no audio URL', async () => {
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
+
+    render(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation({ audioUrl: null }))}
+        autoPlay
+      />
+    );
+
+    await screen.findByText('/ˈætməsfɪə(r)/ UK');
+    expect(play).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+});

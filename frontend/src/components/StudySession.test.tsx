@@ -162,6 +162,69 @@ describe('StudySession', () => {
     expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
   });
 
+  it('auto-plays the word audio once for a normal card front (P1 auto-play)', async () => {
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
+    const onLookupPronunciation = vi.fn().mockResolvedValue({
+      word: 'atmosphere',
+      ipa: null,
+      ipaUk: '/ˈætməsfɪə(r)/',
+      ipaUs: '/ˈætməsfɪr/',
+      audioUrl: 'https://upload.wikimedia.org/atmosphere.ogg',
+      sourceUrl: 'https://en.wiktionary.org/wiki/atmosphere',
+      status: 'ready'
+    });
+
+    render(
+      <StudySession
+        cards={cards}
+        onReview={vi.fn()}
+        onExit={vi.fn()}
+        onLookupPronunciation={onLookupPronunciation}
+      />
+    );
+
+    await screen.findByText('/ˈætməsfɪə(r)/ UK');
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+
+    vi.restoreAllMocks();
+  });
+
+  it('does not auto-play a same-day repeat card, but its manual play button still works (P1 auto-play)', async () => {
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
+    const onLookupPronunciation = vi.fn().mockResolvedValue({
+      word: 'atmosphere',
+      ipa: null,
+      ipaUk: '/ˈætməsfɪə(r)/',
+      ipaUs: '/ˈætməsfɪr/',
+      audioUrl: 'https://upload.wikimedia.org/atmosphere.ogg',
+      sourceUrl: 'https://en.wiktionary.org/wiki/atmosphere',
+      status: 'ready'
+    });
+    const repeatCard: StudyCard = { ...baseCard, isRepeat: true, queuePosition: null, queueType: 'new' };
+    const user = userEvent.setup();
+
+    render(
+      <StudySession
+        cards={[repeatCard]}
+        onReview={vi.fn()}
+        onExit={vi.fn()}
+        onLookupPronunciation={onLookupPronunciation}
+      />
+    );
+
+    // Data ready, but a repeat copy never auto-plays (heard seconds ago).
+    await screen.findByText('/ˈætməsfɪə(r)/ UK');
+    expect(play).not.toHaveBeenCalled();
+
+    // Regression: the manual ghost button still plays it.
+    await user.click(screen.getByRole('button', { name: 'Play atmosphere pronunciation' }));
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+
+    vi.restoreAllMocks();
+  });
+
   it('shows today completed-word progress while studying', async () => {
     const user = userEvent.setup();
     const onReview = vi.fn().mockResolvedValue(undefined);

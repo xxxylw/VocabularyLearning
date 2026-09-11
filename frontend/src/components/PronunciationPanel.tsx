@@ -4,6 +4,13 @@ import type { Pronunciation } from '../api';
 type PronunciationPanelProps = {
   word: string;
   onLookupPronunciation: (word: string) => Promise<Pronunciation>;
+  /**
+   * P1 auto-play (task 7684163198957702092): when true, automatically play
+   * the dictionary audio once as the card's front becomes ready. Callers
+   * opt in per card (e.g. StudySession passes `!card.isRepeat`); the
+   * spelling flow keeps the default so its prompt stage stays silent.
+   */
+  autoPlay?: boolean;
 };
 
 /**
@@ -29,11 +36,15 @@ function buildIpaFragments(pronunciation: Pronunciation): Array<{ ipa: string; l
 
 export function PronunciationPanel({
   word,
-  onLookupPronunciation
+  onLookupPronunciation,
+  autoPlay = false
 }: PronunciationPanelProps) {
   const [pronunciation, setPronunciation] = useState<Pronunciation | null>(null);
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading');
   const audioRef = useRef<HTMLAudioElement>(null);
+  // Per-word guard: each word auto-plays at most once per panel instance, so
+  // re-renders (Reveal / rating / Show more) never retrigger playback.
+  const autoPlayedWordRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -55,6 +66,26 @@ export function PronunciationPanel({
       audioRef.current?.pause();
     };
   }, [word, onLookupPronunciation]);
+
+  useEffect(() => {
+    // P1 auto-play: fires once per word, only after the <audio> element has
+    // actually rendered (i.e. data ready with an audioUrl). If the lookup
+    // resolved late and the user already moved on, the isCurrent guard in
+    // the lookup effect above kept `pronunciation` null, so this never
+    // plays the wrong word. Any failure (no audio, autoplay blocked by the
+    // browser, network) is silently skipped — no retry, no UI notice.
+    if (!autoPlay || !pronunciation?.audioUrl) {
+      return;
+    }
+    if (autoPlayedWordRef.current === word) {
+      return;
+    }
+    autoPlayedWordRef.current = word;
+    const playResult = audioRef.current?.play();
+    if (playResult && typeof playResult.catch === 'function') {
+      playResult.catch(() => {});
+    }
+  }, [autoPlay, pronunciation, word]);
 
   if (status !== 'ready' || !pronunciation || pronunciation.status === 'unavailable') {
     // Loading / error / no data: render nothing (no placeholder slot).
