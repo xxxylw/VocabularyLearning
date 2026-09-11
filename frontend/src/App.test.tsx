@@ -79,6 +79,52 @@ describe('App', () => {
     expect(screen.getByText('a weather pattern that warms the eastern Pacific Ocean')).toBeInTheDocument();
   });
 
+  it('dedupes the spelling card group by cardId and shows session-local progress', async () => {
+    // Bug 7684167107172388020：当日有重复卡（重复池 isRepeat 副本 /
+    // 队列快照重复行）时，拼写卡组按 cardId 保序去重 —— N = distinct
+    // 词数；进度为拼写会话自身进度，恒 ≤ N，不再锚定 dayProgress
+    // （旧口径背完 55 卡后进拼写会显示 56/55、57/55）。
+    const user = userEvent.setup();
+    const cardA = studyCard();
+    const cardADuplicate = { ...studyCard(), isRepeat: true };
+    const cardB = {
+      ...studyCard(),
+      cardId: 'card-2',
+      word: 'carbon dioxide',
+      definition: 'a gas produced when carbon burns',
+      chineseNote: null
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      .mockResolvedValueOnce(checkInsResponse([]))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [cardA] }))
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
+      })
+      // 会话完成后的 summary：completedCards 含 cardA 的重复条目。
+      .mockResolvedValueOnce(completedDaySummaryResponse([cardA, cardADuplicate, cardB]));
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: /start today cards/i }));
+    await user.click(await screen.findByRole('button', { name: /reveal/i }));
+    await user.click(screen.getByRole('button', { name: /got it/i }));
+    await user.click(await screen.findByRole('button', { name: /practice spelling/i }));
+
+    expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
+    // 卡组去重后 N = 2（cardA + cardB），进度从 1 / 2 起算。
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    expect(screen.queryByText(/3 \/ 2/)).not.toBeInTheDocument();
+  });
+
   it('offers spelling practice when today has no more cards after a completed session', async () => {
     // P0 2026-09-08: the old flicker path (click Start today cards on
     // a finished day → empty-state section) is gone. After completion
@@ -251,13 +297,13 @@ describe('App', () => {
     await user.click(screen.getByTestId('book-cover-card'));
 
     // Bookshelf: list + current badge + confirm dialog before switching.
-    expect(await screen.findByRole('heading', { name: '选择单词书' })).toBeInTheDocument();
-    expect(screen.getByText('当前')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Choose a book' })).toBeInTheDocument();
+    expect(screen.getByText('Current')).toBeInTheDocument();
     await user.click(screen.getAllByTestId('bookshelf-item')[1]);
     const dialog = await screen.findByTestId('bookshelf-confirm');
-    expect(dialog).toHaveTextContent('切换后将学习《托福核心词汇》，当前书的学习进度会保留。');
+    expect(dialog).toHaveTextContent('You will study “托福核心词汇”. Your progress in the current book is kept.');
 
-    await user.click(screen.getByRole('button', { name: /确认切换/ }));
+    await user.click(screen.getByRole('button', { name: /^Switch$/ }));
 
     // The switch PUT fires with the targeted bookId.
     await waitFor(() => {
@@ -272,7 +318,7 @@ describe('App', () => {
     // TodayView.test.tsx, which keeps this integration test focused on
     // the click → PUT → return-to-Today flow.
     await waitFor(() => {
-      expect(screen.queryByRole('heading', { name: '选择单词书' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Choose a book' })).not.toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /start today cards/i })).toBeInTheDocument();
   });
@@ -296,7 +342,7 @@ describe('App', () => {
     // Wait for the completion-set banner — once it appears, the Start
     // button must already be gone. (findBy* awaits the React commit,
     // so the subsequent queryBy* assertion observes the same render.)
-    expect(await screen.findByTestId('today-day-completed')).toHaveTextContent('今日卡片已背完');
+    expect(await screen.findByTestId('today-day-completed')).toHaveTextContent('All cards done for today');
     expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('another-group')).toBeInTheDocument();
     expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();
@@ -338,7 +384,7 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /back home/i }));
     // Once the completion-set banner renders, the Start button must
     // be gone and the new pair must be present.
-    expect(await screen.findByTestId('today-day-completed')).toHaveTextContent('今日卡片已背完');
+    expect(await screen.findByTestId('today-day-completed')).toHaveTextContent('All cards done for today');
     expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('another-group')).toBeInTheDocument();
     expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();

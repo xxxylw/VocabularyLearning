@@ -432,7 +432,7 @@ def require_study_entitlement(user: dict[str, object]) -> None:
     if not bool(view["subscribed"]):
         raise SubscriptionError(
             SUBSCRIPTION_EXPIRED,
-            "订阅已到期，学习功能已锁定；续费后立即恢复",
+            "Your subscription has expired and study is locked. Renew to resume.",
             status_code=403,
         )
 

@@ -1,4 +1,10 @@
 :root {
+  /* Apple 风微效果 token（设计规格 2026-09-11）：两条缓动、≤320ms。 */
+  --dur-micro: 120ms;
+  --dur-quick: 200ms;
+  --dur-menu: 280ms;
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   color: #2f2a24;
   background: #f4eadc;
   font-family:
@@ -371,7 +377,7 @@ a {
   height: 100%;
   border-radius: inherit;
   background: #6f8b79;
-  transition: width 180ms ease;
+  transition: width var(--dur-quick) var(--ease-standard);
 }
 
 .completed-text {
@@ -453,6 +459,8 @@ a {
   font-size: clamp(1.2rem, 3vw, 2rem);
   font-weight: 800;
   padding: 10px 14px;
+  transition: border-color var(--dur-quick) var(--ease-standard),
+              box-shadow var(--dur-quick) var(--ease-standard);
 }
 
 .spelling-input:focus {
@@ -554,12 +562,6 @@ a {
   font-size: 0.78rem;
   font-weight: 700;
   white-space: nowrap;
-}
-
-.bookshelf-item-estimate {
-  color: #7a6a52;
-  font-size: 0.82rem;
-  font-weight: 700;
 }
 
 
@@ -1120,6 +1122,17 @@ a {
   .celebration-field span {
     animation: none;
   }
+  .spelling-input.shake,
+  .spelling-feedback,
+  .spelling-answer,
+  .spelling-card.entering,
+  .account-menu-panel.open,
+  .account-menu-panel.closing {
+    animation: none;
+  }
+  button:where(:not(:disabled)):active {
+    transform: none;
+  }
 }
 
 /* ===== All-English word card (P0 redesign) =====
@@ -1576,4 +1589,57 @@ v3 P0（2026-09-06）：只读模式非模态引导条 + Today 锁定态（V3-01
 
 .today-locked-cta {
   background: #8b8172;
+}
+
+
+/* ===== Apple-style micro-interactions（设计规格 2026-09-11）=====
+ * 全站按钮按压态 + 拼写页 shake/反馈入场/卡片入场。
+ * 仅 3 个 React class 钩子：.shake / .entering / .open。
+ */
+/* :where() 降特异性——class 级自带 transition 的按钮（书封卡、发音键等）保持原值。 */
+button:where(:not(:disabled)) {
+  transition: transform var(--dur-micro) var(--ease-standard),
+              border-color var(--dur-micro) var(--ease-standard),
+              background-color var(--dur-micro) var(--ease-standard);
+}
+
+button:where(:not(:disabled)):active {
+  transform: scale(0.97);
+}
+
+/* 拼写页：首次答错抖输入框（idle → retry 一次性触发）。 */
+@keyframes spelling-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px); }
+  40%      { transform: translateX(4px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(2px); }
+}
+
+.spelling-input.shake {
+  animation: spelling-shake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* 拼写页：反馈条 / 答案行三态统一 200ms 淡入。 */
+@keyframes feedback-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.spelling-feedback {
+  animation: feedback-in var(--dur-quick) var(--ease-out);
+}
+
+.spelling-answer {
+  animation: feedback-in var(--dur-quick) var(--ease-out);
+}
+
+/* 拼写页：换卡入场（下一词 / 错词再来一组）。 */
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.spelling-card.entering {
+  animation: card-in 240ms var(--ease-out);
 }

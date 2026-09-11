@@ -212,7 +212,7 @@ describe('TodayView', () => {
 
     // The Start button is gone — replaced by the completion-set buttons.
     expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
-    expect(screen.getByTestId('today-day-completed')).toHaveTextContent('今日卡片已背完');
+    expect(screen.getByTestId('today-day-completed')).toHaveTextContent('All cards done for today');
     expect(screen.getByTestId('another-group')).toBeInTheDocument();
     expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();
 

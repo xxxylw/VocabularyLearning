@@ -461,7 +461,7 @@ async function authJson<T>(method: 'GET' | 'POST' | 'PUT', url: string, body?: u
     throw toApiError(
       response.status,
       parsed,
-      `请求失败（${response.status}${response.statusText ? ` ${response.statusText}` : ''}）`
+      `Request failed (${response.status}${response.statusText ? ` ${response.statusText}` : ''})`
     );
   }
 

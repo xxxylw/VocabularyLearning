@@ -167,7 +167,7 @@ export function TodayView({
                   <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
                 </svg>
               </span>
-              学习功能已锁定
+              Study is locked
             </strong>
           </div>
         ) : dayCompleted ? (
@@ -177,7 +177,7 @@ export function TodayView({
           <>
             <div className="stat-row" data-testid="today-day-completed">
               <span>Today</span>
-              <strong>今日卡片已背完 🎉</strong>
+              <strong>All cards done for today</strong>
             </div>
             <button
               className="primary-action"
@@ -186,7 +186,7 @@ export function TodayView({
               disabled={isLoading || !onAnotherGroup}
               data-testid="another-group"
             >
-              {isLoading ? 'Preparing cards' : '再来一组'}
+              {isLoading ? 'Preparing cards' : 'One more group'}
             </button>
             {canPracticeSpelling && onPracticeSpelling ? (
               <button
@@ -196,7 +196,7 @@ export function TodayView({
                 disabled={isLoading}
                 data-testid="practice-spelling-completed"
               >
-                练习拼写
+                Practice spelling
               </button>
             ) : null}
           </>
@@ -226,7 +226,7 @@ export function TodayView({
             type="button"
             onClick={onGoSubscribe}
           >
-            续费解锁学习
+            Renew to unlock study
           </button>
         ) : dayCompleted ? null : (
           <button className="primary-action" type="button" onClick={handleStart} disabled={isLoading}>

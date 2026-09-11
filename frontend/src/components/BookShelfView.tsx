@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { BookListItem } from '../api';
-import type { CheckInRecord } from '../checkins';
-import { estimateFinishDays } from '../estimate';
-import { currentStudyDayAnchor } from '../studyDay';
+
+// 2026-09-11 需求变更：书架/选书页不再展示「还有多久背完」预估（用户口径：
+// 只在主页 Today 封面卡标注）。后端预估数据/API 不动，TodayView 保留原样。
 
 // PRD ch.10: the second built-in book gets a red programmatic cover so the
 // two shelf entries are visually distinct (纯 CSS，无图片，零版权风险).
@@ -20,11 +20,6 @@ type BookShelfViewProps = {
   // Fallback notice from GET /api/books/current when the pointer
   // referenced a missing book and the default book took over.
   notice?: string | null;
-  // 需求 A「背完时间预估」辅位（DP-A3）：每本书 meta 行追加同一口径的
-  // 预估天数（用该书自身 totalWords / learnedWords，速度沿用当前用户口径），
-  // 只显示单行天数、不加日期。
-  checkIns?: CheckInRecord[];
-  newWordTarget?: number;
 };
 
 export function BookShelfView({
@@ -33,32 +28,9 @@ export function BookShelfView({
   onSwitch,
   isSwitching = false,
   error,
-  notice,
-  checkIns = [],
-  newWordTarget = 20
+  notice
 }: BookShelfViewProps) {
   const [confirmTarget, setConfirmTarget] = useState<BookListItem | null>(null);
-
-  function bookEstimateText(book: BookListItem): string {
-    if (book.totalWords === 0) {
-      return '';
-    }
-    // 2026-09 学习日边界 02:00：书架预估与 Today 主位同一学习日口径。
-    const estimate = estimateFinishDays(
-      book.totalWords,
-      book.learnedWords ?? 0,
-      checkIns,
-      newWordTarget,
-      currentStudyDayAnchor()
-    );
-    if (estimate.kind === 'done') {
-      return '新词已学完';
-    }
-    if (estimate.kind === 'estimate') {
-      return `预计还需 ${estimate.days} 天背完`;
-    }
-    return '';
-  }
 
   function handleBookClick(book: BookListItem) {
     if (book.isCurrent || book.totalWords === 0) {
@@ -81,10 +53,10 @@ export function BookShelfView({
       <header className="bookshelf-header">
         <div>
           <p className="eyebrow">Bookshelf</p>
-          <h1 id="bookshelf-title">选择单词书</h1>
+          <h1 id="bookshelf-title">Choose a book</h1>
         </div>
         <button className="ghost-button" type="button" onClick={onBack}>
-          返回 Today
+          Back to Today
         </button>
       </header>
 
@@ -127,18 +99,13 @@ export function BookShelfView({
               <span className="bookshelf-meta">
                 <span className="bookshelf-item-title" title={book.title}>
                   {book.title}
-                  {book.isCurrent ? <span className="current-book-badge">当前</span> : null}
+                  {book.isCurrent ? <span className="current-book-badge">Current</span> : null}
                 </span>
                 <span className="bookshelf-item-stats">
-                  {book.totalWords} 词 · 已学 {book.learnedWords ?? 0} · 已掌握 {book.masteredWords ?? 0}
+                  {book.totalWords} words · {book.learnedWords ?? 0} learned · {book.masteredWords ?? 0} mastered
                 </span>
-                {bookEstimateText(book) ? (
-                  <span className="bookshelf-item-estimate" data-testid={`bookshelf-estimate-${book.id}`}>
-                    {bookEstimateText(book)}
-                  </span>
-                ) : null}
                 {book.totalWords === 0 ? (
-                  <span className="bookshelf-item-hint">数据未就绪，暂不可选</span>
+                  <span className="bookshelf-item-hint">Data not ready — coming soon</span>
                 ) : null}
               </span>
             </button>
@@ -148,7 +115,7 @@ export function BookShelfView({
 
       {books.length < 2 ? (
         <p className="bookshelf-empty-note" data-testid="bookshelf-empty-note">
-          更多单词书将通过导入功能陆续加入（规划中）
+          More books will be added through import
         </p>
       ) : null}
 
@@ -161,22 +128,22 @@ export function BookShelfView({
             aria-labelledby="bookshelf-confirm-title"
             data-testid="bookshelf-confirm"
           >
-            <h2 id="bookshelf-confirm-title">切换单词书</h2>
-            <p>切换后将学习《{confirmTarget.title}》，当前书的学习进度会保留。</p>
+            <h2 id="bookshelf-confirm-title">Switch books</h2>
+            <p>You will study “{confirmTarget.title}”. Your progress in the current book is kept.</p>
             <div className="bookshelf-confirm-actions">
               <button
                 className="ghost-button"
                 type="button"
                 onClick={() => setConfirmTarget(null)}
               >
-                取消
+                Cancel
               </button>
               <button
                 className="primary-action"
                 type="button"
                 onClick={() => void handleConfirmSwitch()}
               >
-                确认切换
+                Switch
               </button>
             </div>
           </div>

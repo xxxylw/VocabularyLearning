@@ -1083,3 +1083,49 @@ desktop 4 列 / mobile 2 列；年卡主 CTA；全部复用既有 token。
     grid-column: 1 / -1;
   }
 }
+
+
+/* ===== 账号菜单 Apple 风微效果（设计规格 2026-09-11）=====
+ * 桌面下拉 280ms 右上 origin 入场；菜单项按压为灰色高亮非缩放；
+ * ≤760px 底部抽屉 320ms 滑入。关闭为瞬时卸载（规格 2.4-2 折中）。
+ */
+.account-menu-panel {
+  transform-origin: top right;
+}
+
+.account-menu-panel.open {
+  animation: menu-in var(--dur-menu) var(--ease-out);
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 菜单项：iOS 列表式按压高亮（不缩放，区别于按钮）。 */
+.account-menu-subscription,
+.account-menu-logout {
+  transition: background-color var(--dur-micro) var(--ease-standard);
+}
+
+.account-menu-subscription:active,
+.account-menu-logout:active {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+@media (max-width: 760px) {
+  .account-menu-panel.open {
+    animation: sheet-up 320ms var(--ease-out);
+  }
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu-panel.open {
+    animation: none;
+  }
+}

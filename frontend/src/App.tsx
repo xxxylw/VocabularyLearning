@@ -207,7 +207,7 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
         error instanceof ApiError &&
         (error.code === 'subscription_expired' || error.status === 403)
       ) {
-        setError('订阅已到期，学习功能已进入只读模式。续费后即可恢复学习。');
+        setError('Your subscription has expired and study is now read-only. Renew to resume studying.');
       } else {
         setError('Today cards could not be loaded. Please try again.');
       }
@@ -278,10 +278,21 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
 
   // 拼写练习入口：优先用服务端 summary.completedCards（与当日队列
   // 顺序一致，跨设备可用），回退到 lastCompletedCards。
+  // Bug 7684167107172388020：卡组按 cardId 保序去重——同一词当日
+  // 重复出现（当日重复池 isRepeat 副本 / 队列快照重复行）拼写只练
+  // 一次；两个来源统一去重，进度分母 N = distinct 词数。
   function startSpellingPractice(spellingCards: StudyCard[]) {
-    const cards = todaySummary?.completedCards?.length
+    const source = todaySummary?.completedCards?.length
       ? todaySummary.completedCards
       : spellingCards;
+    const seenCardIds = new Set<string>();
+    const cards = source.filter((card) => {
+      if (seenCardIds.has(card.cardId)) {
+        return false;
+      }
+      seenCardIds.add(card.cardId);
+      return true;
+    });
     setCards(cards);
     setLastCompletedCards(cards);
     setScreen('spelling');
@@ -316,8 +327,6 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     return (
       <SpellingSession
         cards={cards}
-        startIndex={dayProgress?.reviewedCards ?? 0}
-        totalCount={dayProgress?.totalCards ?? cards.length}
         onExit={() => setScreen('today')}
         onLookupPronunciation={lookupPronunciation}
       />
@@ -334,8 +343,6 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
           isSwitching={isSwitching}
           error={bookshelfError}
           notice={bookFallbackNotice}
-          checkIns={checkIns}
-          newWordTarget={newWordTarget}
         />
       </main>
     );

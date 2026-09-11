@@ -70,14 +70,14 @@ describe('SpellingSession', () => {
     expect(screen.queryByText('El Nino phenomenon')).not.toBeInTheDocument();
     expect(screen.getByText('a weather pattern that warms the eastern Pacific Ocean')).toBeInTheDocument();
 
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), '  el   nino ');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), '  el   nino ');
     await user.click(screen.getByRole('button', { name: /check/i }));
 
     // 2026-09-08 重设计：首答对直接进入「correct」态，主按钮切换为「下一词」。
     expect(screen.getByText(/correct/i)).toBeInTheDocument();
     expect(screen.getByText('El Nino')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /下一词/i }));
+    await user.click(screen.getByRole('button', { name: /next word/i }));
 
     // F-01: every sentence of the "carbon dioxide" definition leaks a
     // component of the answer, so the prompt falls back to a structured
@@ -111,30 +111,30 @@ describe('SpellingSession', () => {
     const user = userEvent.setup();
     render(<SpellingSession cards={spellingCards} onExit={vi.fn()} />);
 
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nnio');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'El Nnio');
     await user.click(screen.getByRole('button', { name: /check/i }));
 
     // 第一次答错：进入重试态，提示「再试一次」并保留输入，不揭示答案。
-    expect(screen.getByTestId('spelling-retry-hint')).toHaveTextContent('再试一次');
+    expect(screen.getByTestId('spelling-retry-hint')).toHaveTextContent('Try again');
     expect(screen.queryByText(/Answer: El Nino/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: /type the english word/i })).toHaveValue('El Nnio');
+    expect(screen.getByRole('textbox', { name: /type the word/i })).toHaveValue('El Nnio');
 
     // 重试答对：计为正确（不进错词列表）、不揭示完整释义，揭示词面。
-    await user.clear(screen.getByRole('textbox', { name: /type the english word/i }));
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nino');
+    await user.clear(screen.getByRole('textbox', { name: /type the word/i }));
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'El Nino');
     await user.click(screen.getByRole('button', { name: /check/i }));
 
     expect(screen.getByText(/correct/i)).toBeInTheDocument();
     expect(screen.getByText('El Nino')).toBeInTheDocument();
     // 重试后答对：进入「correct」态，主按钮变为「下一词」。
-    expect(screen.getByRole('button', { name: /下一词/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /next word/i })).toBeInTheDocument();
   });
 
   it('reveals the answer only after two consecutive wrong attempts (DP-B2)', async () => {
     const user = userEvent.setup();
     render(<SpellingSession cards={spellingCards} onExit={vi.fn()} />);
 
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nnio');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'El Nnio');
     await user.click(screen.getByRole('button', { name: /check/i }));
     expect(screen.getByTestId('spelling-retry-hint')).toBeInTheDocument();
 
@@ -146,7 +146,7 @@ describe('SpellingSession', () => {
       'a weather pattern that warms the eastern Pacific Ocean'
     );
     // 进入 revealed 态：主按钮「下一词」。
-    expect(screen.getByRole('button', { name: /下一词/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /next word/i })).toBeInTheDocument();
   });
 
   it('only shows pronunciation after the spelling answer is revealed', async () => {
@@ -168,7 +168,7 @@ describe('SpellingSession', () => {
     );
 
     expect(onLookupPronunciation).not.toHaveBeenCalled();
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nnio');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'El Nnio');
     await user.click(screen.getByRole('button', { name: /check/i }));
     expect(onLookupPronunciation).not.toHaveBeenCalled();
     // 第二次仍错：揭示后查发音。
@@ -183,34 +183,30 @@ describe('SpellingSession', () => {
     const onExit = vi.fn();
     render(<SpellingSession cards={[spellingCards[0]]} onExit={onExit} />);
 
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nino');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'El Nino');
     await user.click(screen.getByRole('button', { name: /check/i }));
-    await user.click(screen.getByRole('button', { name: /下一词/i }));
+    await user.click(screen.getByRole('button', { name: /next word/i }));
     await user.click(screen.getByTestId('spelling-back-today'));
 
     expect(onExit).toHaveBeenCalledTimes(1);
   });
 
-  it('resumes day-queue progress from the shared snapshot offset (PRD ch.8)', async () => {
+  it('counts spelling progress session-locally (X / N), never anchoring the day queue', async () => {
+    // Bug 7684167107172388020：背完当日 55 卡进拼写时，旧锚定口径从
+    // 56/55 起算（用户实测 57/55）。修正后拼写进度 = 会话自身进度，
+    // 与当日队列 / dayProgress 无关，恒 ≤ N。
     const user = userEvent.setup();
-    render(
-      <SpellingSession
-        cards={spellingCards}
-        startIndex={10}
-        totalCount={40}
-        onExit={vi.fn()}
-      />
-    );
+    render(<SpellingSession cards={spellingCards} onExit={vi.fn()} />);
 
-    expect(screen.getByText('11 / 40')).toBeInTheDocument();
-    expect(screen.getByText('10 / 40 completed')).toBeInTheDocument();
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    expect(screen.getByText('0 / 2 completed')).toBeInTheDocument();
 
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'El Nino');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'El Nino');
     await user.click(screen.getByRole('button', { name: /check/i }));
-    await user.click(screen.getByRole('button', { name: /下一词/i }));
+    await user.click(screen.getByRole('button', { name: /next word/i }));
 
-    expect(screen.getByText('12 / 40')).toBeInTheDocument();
-    expect(screen.getByText('11 / 40 completed')).toBeInTheDocument();
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(screen.getByText('1 / 2 completed')).toBeInTheDocument();
   });
 
   it('completes with stats + wrong-word list and offers 错词再来一组 to retry only wrong cards', async () => {
@@ -219,21 +215,21 @@ describe('SpellingSession', () => {
     render(<SpellingSession cards={spellingCards} onExit={onExit} />);
 
     // 第一词：两次都答错 → 计入错词。
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'wrong');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'wrong');
     await user.click(screen.getByRole('button', { name: /check/i }));
     await user.click(screen.getByRole('button', { name: /check/i }));
-    await user.click(screen.getByRole('button', { name: /下一词/i }));
+    await user.click(screen.getByRole('button', { name: /next word/i }));
 
     // 第二词：首答对 → 计为正确，再点「下一词」进入完成态。
-    await user.type(screen.getByRole('textbox', { name: /type the english word/i }), 'carbon dioxide');
+    await user.type(screen.getByRole('textbox', { name: /type the word/i }), 'carbon dioxide');
     await user.click(screen.getByRole('button', { name: /check/i }));
-    await user.click(screen.getByRole('button', { name: /下一词/i }));
+    await user.click(screen.getByRole('button', { name: /next word/i }));
 
     // 完成态：2 词 · 对 1 · 错 1，错误词列表含「El Nino」+ 释义首句。
     const summary = screen.getByTestId('spelling-summary');
-    expect(summary).toHaveTextContent('2 词');
-    expect(summary).toHaveTextContent('对 1');
-    expect(summary).toHaveTextContent('错 1');
+    expect(summary).toHaveTextContent('2 words');
+    expect(summary).toHaveTextContent('1 correct');
+    expect(summary).toHaveTextContent('1 missed');
     const wrongList = screen.getByTestId('spelling-wrong-list');
     expect(within(wrongList).getByText('El Nino')).toBeInTheDocument();
     expect(within(wrongList).getByText((content) => content.includes('a weather pattern that warms the eastern Pacific Ocean'))).toBeInTheDocument();
@@ -241,7 +237,7 @@ describe('SpellingSession', () => {
     // 「错词再来一组」重启错词一轮（仅 1 词）。
     await user.click(screen.getByTestId('spelling-retry-wrong'));
     expect(screen.getByText('1 / 1')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: /type the english word/i })).toHaveValue('');
+    expect(screen.getByRole('textbox', { name: /type the word/i })).toHaveValue('');
   });
 
   it('does not collapse the prompt to the single-line font fit (DP-B1 / F-08)', () => {

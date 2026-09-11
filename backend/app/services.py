@@ -325,7 +325,7 @@ def get_current_book(user_id: str) -> BookSummaryResponse:
     with connect() as connection:
         book_row, fallback = resolve_current_book(connection, user_id)
         notice = (
-            f"当前书不存在，已回退默认书「{book_row['title']}」"
+            f"Current book not found. Switched to the default book “{book_row['title']}”."
             if fallback
             else None
         )

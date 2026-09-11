@@ -170,9 +170,9 @@ describe('VocabApp subscription routing (batch 3)', () => {
     render(<VocabApp />);
 
     await screen.findByTestId('study-app');
-    await user.click(screen.getByRole('button', { name: '账号' }));
+    await user.click(screen.getByRole('button', { name: 'Account' }));
 
-    expect(screen.getByText('订阅生效中')).toBeInTheDocument();
+    expect(screen.getByText('Subscribed')).toBeInTheDocument();
     expect(screen.getByText('user@example.com')).toBeInTheDocument();
   });
 
@@ -185,9 +185,9 @@ describe('VocabApp subscription routing (batch 3)', () => {
     render(<VocabApp />);
 
     await screen.findByTestId('study-app');
-    await user.click(screen.getByRole('button', { name: '账号' }));
+    await user.click(screen.getByRole('button', { name: 'Account' }));
 
-    expect(screen.getByText('未订阅')).toBeInTheDocument();
+    expect(screen.getByText('Not subscribed')).toBeInTheDocument();
   });
 
   // V3-09 (2026-09-11 DP-1/DP-4): 账号菜单常驻订阅入口三态文案。
@@ -202,11 +202,11 @@ describe('VocabApp subscription routing (batch 3)', () => {
     render(<VocabApp />);
 
     await screen.findByTestId('study-app');
-    await user.click(screen.getByRole('button', { name: '账号' }));
+    await user.click(screen.getByRole('button', { name: 'Account' }));
 
     const entry = screen.getByTestId('account-menu-subscription');
-    expect(entry).toHaveTextContent('开通订阅');
-    expect(entry).not.toHaveTextContent('订阅管理');
+    expect(entry).toHaveTextContent('Subscribe');
+    expect(entry).not.toHaveTextContent('Manage Subscription');
 
     await user.click(entry);
     await waitFor(() => {
@@ -223,9 +223,9 @@ describe('VocabApp subscription routing (batch 3)', () => {
     render(<VocabApp />);
 
     await screen.findByTestId('study-app');
-    await user.click(screen.getByRole('button', { name: '账号' }));
+    await user.click(screen.getByRole('button', { name: 'Account' }));
 
-    expect(screen.getByTestId('account-menu-subscription')).toHaveTextContent('订阅管理');
+    expect(screen.getByTestId('account-menu-subscription')).toHaveTextContent('Manage Subscription');
   });
 
   it('shows 订阅 · Subscription for a super account regardless of status', async () => {
@@ -238,10 +238,10 @@ describe('VocabApp subscription routing (batch 3)', () => {
     render(<VocabApp />);
 
     await screen.findByTestId('study-app');
-    await user.click(screen.getByRole('button', { name: '账号' }));
+    await user.click(screen.getByRole('button', { name: 'Account' }));
 
     const entry = screen.getByTestId('account-menu-subscription');
-    expect(entry).toHaveTextContent('订阅 · Subscription');
+    expect(entry).toHaveTextContent('Subscription');
 
     await user.click(entry);
     await waitFor(() => {

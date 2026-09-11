@@ -30,14 +30,14 @@ describe('BookShelfView', () => {
       />
     );
 
-    expect(screen.getByRole('heading', { name: '选择单词书' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Choose a book' })).toBeInTheDocument();
     const items = screen.getAllByTestId('bookshelf-item');
     expect(items).toHaveLength(2);
     const current = items.find((el) => el.getAttribute('aria-current') === 'true');
     expect(current).toBeDefined();
     expect(current).toHaveAttribute('data-book-id', 'book-default');
-    expect(within(current!).getByText('当前')).toBeInTheDocument();
-    expect(within(current!).getByText(/3383 词 · 已学 120 · 已掌握 30/)).toBeInTheDocument();
+    expect(within(current!).getByText('Current')).toBeInTheDocument();
+    expect(within(current!).getByText(/3383 words · 120 learned · 30 mastered/)).toBeInTheDocument();
     expect(screen.queryByTestId('bookshelf-empty-note')).not.toBeInTheDocument();
   });
 
@@ -45,7 +45,7 @@ describe('BookShelfView', () => {
     render(<BookShelfView books={[makeBook()]} onBack={vi.fn()} onSwitch={vi.fn()} />);
 
     expect(screen.getByTestId('bookshelf-empty-note')).toHaveTextContent(
-      '更多单词书将通过导入功能陆续加入（规划中）'
+      'More books will be added through import'
     );
   });
 
@@ -83,10 +83,10 @@ describe('BookShelfView', () => {
     await user.click(screen.getAllByTestId('bookshelf-item')[1]);
 
     const dialog = await screen.findByTestId('bookshelf-confirm');
-    expect(dialog).toHaveTextContent('切换后将学习《托福核心词汇》，当前书的学习进度会保留。');
+    expect(dialog).toHaveTextContent('You will study “托福核心词汇”. Your progress in the current book is kept.');
     expect(onSwitch).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: /确认切换/ }));
+    await user.click(screen.getByRole('button', { name: /^Switch$/ }));
     expect(onSwitch).toHaveBeenCalledWith('book-b');
   });
 
@@ -100,7 +100,7 @@ describe('BookShelfView', () => {
     );
 
     await user.click(screen.getAllByTestId('bookshelf-item')[1]);
-    await user.click(screen.getByRole('button', { name: /取消/ }));
+    await user.click(screen.getByRole('button', { name: /^Cancel$/ }));
 
     expect(screen.queryByTestId('bookshelf-confirm')).not.toBeInTheDocument();
     expect(onSwitch).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ describe('BookShelfView', () => {
 
     render(<BookShelfView books={[makeBook()]} onBack={onBack} onSwitch={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: /返回 Today/ }));
+    await user.click(screen.getByRole('button', { name: /Back to Today/ }));
     expect(onBack).toHaveBeenCalled();
   });
 
@@ -146,39 +146,26 @@ describe('BookShelfView', () => {
         books={[makeBook()]}
         onBack={vi.fn()}
         onSwitch={vi.fn()}
-        notice="当前书不存在，已回退默认书「雅思词汇真经」"
+        notice="Current book not found. Switched to the default book “雅思词汇真经”."
       />
     );
 
-    expect(screen.getByTestId('bookshelf-notice')).toHaveTextContent('已回退默认书');
+    expect(screen.getByTestId('bookshelf-notice')).toHaveTextContent('Switched to the default book');
   });
 
-  it('shows a single-day estimate line per book using the user\'s median speed', () => {
+  it('renders no finish-estimate line on the shelf (estimate only lives on Today cover)', () => {
+    // 2026-09-11 需求变更：选书页不再标注「还有多久背完」，主页 Today 封面卡保留。
     const bookA = makeBook({ id: 'book-a', title: '雅思词汇真经', totalWords: 100, learnedWords: 60, masteredWords: 0 });
     const bookB = makeBook({ id: 'book-b', title: '考研红宝书', totalWords: 200, learnedWords: 0, masteredWords: 0 });
+    const finished = makeBook({ id: 'book-c', title: '已学完的书', totalWords: 100, learnedWords: 100, masteredWords: 0 });
 
-    render(
-      <BookShelfView
-        books={[bookA, bookB]}
-        onBack={vi.fn()}
-        onSwitch={vi.fn()}
-        checkIns={[
-          { date: '2026-09-06', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' },
-          { date: '2026-09-07', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' },
-          { date: '2026-09-08', completedCards: 10, newCards: 10, reviewCards: 0, completedAt: '' }
-        ]}
-        newWordTarget={20}
-      />
-    );
+    render(<BookShelfView books={[bookA, bookB, finished]} onBack={vi.fn()} onSwitch={vi.fn()} />);
 
-    // 速度 10 词/天：A 剩 40 → 4 天；B 剩 200 → 20 天。
-    expect(screen.getByTestId('bookshelf-estimate-book-a')).toHaveTextContent('预计还需 4 天背完');
-    expect(screen.getByTestId('bookshelf-estimate-book-b')).toHaveTextContent('预计还需 20 天背完');
-  });
-
-  it('renders 新词已学完 for a finished book on the shelf', () => {
-    const book = makeBook({ id: 'book-a', title: '雅思词汇真经', totalWords: 100, learnedWords: 100, masteredWords: 0 });
-    render(<BookShelfView books={[book]} onBack={vi.fn()} onSwitch={vi.fn()} />);
-    expect(screen.getByTestId('bookshelf-estimate-book-a')).toHaveTextContent('新词已学完');
+    expect(screen.queryByTestId('bookshelf-estimate-book-a')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('bookshelf-estimate-book-b')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('bookshelf-estimate-book-c')).not.toBeInTheDocument();
+    expect(screen.queryByText(/预计还需/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/背完/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/新词已学完/)).not.toBeInTheDocument();
   });
 });

@@ -308,7 +308,7 @@ def test_pointer_to_missing_book_falls_back_to_default(tmp_path, monkeypatch):
     body = response.json()
     assert body["id"] == "default-book"
     assert body["title"] == "雅思词汇真经"
-    assert "已回退默认书" in body["fallbackNotice"]
+    assert "Switched to the default book" in body["fallbackNotice"]
 
     # The app keeps working after the fallback: Today still serves words.
     session = _start(client, today, 1)

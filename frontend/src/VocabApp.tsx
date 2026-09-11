@@ -92,7 +92,10 @@ export function VocabApp() {
                     readOnly: false,
                     renewEligible: false,
                     renewDeadline: null,
-                    renewReminder: null
+                    renewReminder: null,
+                    // V3-09 基线遗漏：降级路径须补齐统一布尔位（未订阅= false），
+                    // 否则 tsc -b 在 cloud@6375ff6 上报 TS2345。
+                    hasActivePaidSubscription: false
                   }
                 }
               : current
@@ -155,7 +158,7 @@ export function VocabApp() {
       <main className="auth-page">
         <section className="auth-card">
           <p className="auth-subtitle">
-            <Spinner /> 正在进入…
+            <Spinner /> Loading…
           </p>
         </section>
       </main>
@@ -210,7 +213,7 @@ export function VocabApp() {
       <main className="auth-page">
         <section className="auth-card">
           <p className="auth-subtitle">
-            <Spinner /> 正在跳转登录…
+            <Spinner /> Redirecting to sign in…
           </p>
         </section>
       </main>
@@ -230,7 +233,7 @@ export function VocabApp() {
       <main className="auth-page">
         <section className="auth-card">
           <p className="auth-subtitle">
-            <Spinner /> 正在进入…
+            <Spinner /> Loading…
           </p>
         </section>
       </main>
@@ -254,13 +257,13 @@ export function VocabApp() {
               <path d="M5.5 7V5a2.5 2.5 0 015 0v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </span>
-          <p className="readonly-notice-text">订阅已到期，学习功能已锁定 · 书架、进度与统计仍可浏览</p>
+          <p className="readonly-notice-text">Your subscription has expired — study is locked. Bookshelf, progress, and stats remain available.</p>
           <button
             type="button"
             className="readonly-notice-cta"
             onClick={() => navigate('/subscription')}
           >
-            去续费
+            Renew
           </button>
         </aside>
       ) : null}
@@ -304,7 +307,7 @@ function AccountArea({
         className="account-menu-button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="账号"
+        aria-label="Account"
         onClick={(event) => {
           event.stopPropagation();
           setOpen((value) => !value);
@@ -321,11 +324,15 @@ function AccountArea({
         </svg>
       </button>
       {open ? (
-        <div className="account-menu-panel" role="menu" onClick={(event) => event.stopPropagation()}>
+        <div
+          className="account-menu-panel open"
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+        >
           <span className="account-menu-handle" aria-hidden="true" />
           <p className="account-menu-email">{user.email}</p>
           {user.isSuper ? (
-            <p className="account-menu-plan">super 账号</p>
+            <p className="account-menu-plan">super</p>
           ) : subscription !== undefined ? (
             subscription.status === 'trialing' ? (
               // V3-01 试用剩余天数常显（≤3 天强调色 + 订阅入口）。
@@ -334,16 +341,16 @@ function AccountArea({
                   (subscription.trialDaysLeft ?? 0) <= 3 ? ' account-menu-plan-urgent' : ''
                 }`}
               >
-                试用剩余 {subscription.trialDaysLeft ?? '—'} 天
+                {subscription.trialDaysLeft ?? '—'} days left in trial
               </p>
             ) : subscription.subscribed ? (
               <p className="account-menu-plan">
-                <span className="subscription-badge">订阅生效中</span>
+                <span className="subscription-badge">Subscribed</span>
               </p>
             ) : subscription.readOnly ? (
-              <p className="account-menu-plan account-menu-plan-muted">已到期 · 只读模式</p>
+              <p className="account-menu-plan account-menu-plan-muted">Expired · Read-only</p>
             ) : (
-              <p className="account-menu-plan account-menu-plan-muted">未订阅</p>
+              <p className="account-menu-plan account-menu-plan-muted">Not subscribed</p>
             )
           ) : null}
           {/* V3-09（2026-09-11 拍板第 5 条·入口常驻）：账号菜单「订阅」
@@ -362,15 +369,15 @@ function AccountArea({
             }}
           >
             {user.isSuper
-              ? '订阅 · Subscription'
+              ? 'Subscription'
               : subscription !== undefined &&
                 subscription.subscribed &&
                 subscription.status === 'active'
-                ? '订阅管理'
-                : '开通订阅'}
+                ? 'Manage Subscription'
+                : 'Subscribe'}
           </button>
           <button type="button" className="account-menu-logout" role="menuitem" onClick={onLogout}>
-            退出登录
+            Sign Out
           </button>
         </div>
       ) : null}
