@@ -1425,6 +1425,30 @@ a {
   background: linear-gradient(150deg, #a8524a 0%, #7c3530 100%);
 }
 
+/* 2026-09-12 (PRD ch.15 + ch.16): palettes for the five new built-in books —
+   托福真经 blue / 六级闪过 purple / 四级闪过 teal / 专四如鱼 amber / 专八如鱼
+   slate. Each is distinct from the green default, the red 红宝书 and from one
+   another (版权硬边界：程序化封面，零图片资源). */
+.bookshelf-cover--blue {
+  background: linear-gradient(150deg, #4a6fa5 0%, #33507c 100%);
+}
+
+.bookshelf-cover--purple {
+  background: linear-gradient(150deg, #7d5a8c 0%, #5a3f68 100%);
+}
+
+.bookshelf-cover--teal {
+  background: linear-gradient(150deg, #4f8f8b 0%, #356663 100%);
+}
+
+.bookshelf-cover--amber {
+  background: linear-gradient(150deg, #a8834a 0%, #7c5c30 100%);
+}
+
+.bookshelf-cover--slate {
+  background: linear-gradient(150deg, #5d6b7d 0%, #414c5c 100%);
+}
+
 .bookshelf-cover-spine {
   position: absolute;
   inset: 0 auto 0 0;

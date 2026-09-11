@@ -168,4 +168,47 @@ describe('BookShelfView', () => {
     expect(screen.queryByText(/背完/)).not.toBeInTheDocument();
     expect(screen.queryByText(/新词已学完/)).not.toBeInTheDocument();
   });
+
+  it('gives each of the five new built-in books its own distinct cover palette', () => {
+    // 2026-09-12 (PRD ch.15 + ch.16): 托福真经 / 六级闪过 / 四级闪过 / 专四 /
+    // 专八如鱼得水 — five palettes, mutually distinct and distinct from the
+    // default green and the 红宝书 red (programmatic covers, zero images).
+    const newBooks: Array<[string, string, string]> = [
+      ['toefl-zhenjing-2026', '托福词汇真经', 'bookshelf-cover--blue'],
+      ['cet6-shanguo-2026', '六级词汇闪过', 'bookshelf-cover--purple'],
+      ['cet4-shanguo-2026', '四级词汇闪过', 'bookshelf-cover--teal'],
+      ['tem4-ruyudeshui-2026', '如鱼得水记单词 · 专四', 'bookshelf-cover--amber'],
+      ['tem8-ruyudeshui-2026', '如鱼得水记单词 · 专八', 'bookshelf-cover--slate']
+    ];
+
+    render(
+      <BookShelfView
+        books={[
+          makeBook(),
+          ...newBooks.map(([id, title]) =>
+            makeBook({ id, title, isCurrent: false, totalWords: 4000 })
+          )
+        ]}
+        onBack={vi.fn()}
+        onSwitch={vi.fn()}
+      />
+    );
+
+    const items = screen.getAllByTestId('bookshelf-item');
+    // default book keeps the plain green cover
+    const defaultCover = items[0].querySelector('.bookshelf-cover');
+    expect(defaultCover).not.toBeNull();
+    expect(defaultCover!.className).toBe('bookshelf-cover');
+
+    const seen = new Set<string>(['bookshelf-cover', 'bookshelf-cover--red']);
+    newBooks.forEach(([id, , expectedClass], index) => {
+      const item = items.find((el) => el.getAttribute('data-book-id') === id);
+      expect(item).toBeDefined();
+      const cover = item!.querySelector('.bookshelf-cover');
+      expect(cover).not.toBeNull();
+      expect(cover).toHaveClass('bookshelf-cover', expectedClass);
+      expect(seen.has(expectedClass)).toBe(false);
+      seen.add(expectedClass);
+    });
+  });
 });

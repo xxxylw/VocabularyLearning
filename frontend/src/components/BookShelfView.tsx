@@ -9,6 +9,24 @@ import type { BookListItem } from '../api';
 // Keep in sync with backend/app/books.py RED_BOOK_ID.
 export const RED_BOOK_ID = 'kaoyan-hongbaoshu-2027';
 
+// 2026-09-12 (PRD ch.15 + ch.16): covers for the five new built-in books
+// (托福词汇真经 / 六级词汇闪过 / 四级词汇闪过 / 如鱼得水记单词·专四 /
+// 如鱼得水记单词·专八) — programmatic palettes, distinct from each other
+// and from the existing green (default) / red (红宝书) covers. Keep in sync
+// with backend/app/books.py.
+const BOOK_COVER_CLASSES: Record<string, string> = {
+  [RED_BOOK_ID]: 'bookshelf-cover--red',
+  'toefl-zhenjing-2026': 'bookshelf-cover--blue',
+  'cet6-shanguo-2026': 'bookshelf-cover--purple',
+  'cet4-shanguo-2026': 'bookshelf-cover--teal',
+  'tem4-ruyudeshui-2026': 'bookshelf-cover--amber',
+  'tem8-ruyudeshui-2026': 'bookshelf-cover--slate'
+};
+
+function coverClassFor(bookId: string): string {
+  return BOOK_COVER_CLASSES[bookId] ?? '';
+}
+
 type BookShelfViewProps = {
   books: BookListItem[];
   onBack: () => void;
@@ -85,8 +103,8 @@ export function BookShelfView({
             >
               <span
                 className={
-                  book.id === RED_BOOK_ID
-                    ? 'bookshelf-cover bookshelf-cover--red'
+                  coverClassFor(book.id)
+                    ? `bookshelf-cover ${coverClassFor(book.id)}`
                     : 'bookshelf-cover'
                 }
                 aria-hidden="true"

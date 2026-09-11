@@ -25,6 +25,30 @@ RED_BOOK_TITLE = "考研英语红宝书"
 SHAN_BOOK_ID = "kaoyan-shanguo-2027"
 SHAN_BOOK_TITLE = "考研词汇闪过"
 
+# 2026-09-12 内置第四~第八本词书 (PRD ch.15 托福词汇真经 + ch.16 六级/四级
+# 词汇闪过 + 专四/专八如鱼得水记单词): same data-driven contract as above —
+# book rows appear when their word lists land via
+# backend/scripts/import_builtin_books.py; the ids are shared with the import
+# pipeline, the builtin packaging checks and the frontend cover palettes.
+# 注意与生产库既有「大学英语六级大纲词汇」「专四英语大纲词汇」等书是不同书，
+# id 命名已避开（shanguo/ruyudeshui ≠ dagang）。
+TOEFL_BOOK_ID = "toefl-zhenjing-2026"
+TOEFL_BOOK_TITLE = "托福词汇真经"
+
+CET6_SHANGUO_BOOK_ID = "cet6-shanguo-2026"
+CET6_SHANGUO_BOOK_TITLE = "六级词汇闪过"
+
+CET4_SHANGUO_BOOK_ID = "cet4-shanguo-2026"
+CET4_SHANGUO_BOOK_TITLE = "四级词汇闪过"
+
+# PRD ch.16 书名口径修正: 该系列书名核验为《如鱼得水记单词》，专四/专八以
+# 副标注区分（title 带副标注）。
+TEM4_RUYUDESHUI_BOOK_ID = "tem4-ruyudeshui-2026"
+TEM4_RUYUDESHUI_BOOK_TITLE = "如鱼得水记单词 · 专四"
+
+TEM8_RUYUDESHUI_BOOK_ID = "tem8-ruyudeshui-2026"
+TEM8_RUYUDESHUI_BOOK_TITLE = "如鱼得水记单词 · 专八"
+
 CURRENT_BOOK_SETTING_KEY = "current_book_id"
 
 
