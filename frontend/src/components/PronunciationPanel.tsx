@@ -45,15 +45,24 @@ export function PronunciationPanel({
   // Per-word guard: each word auto-plays at most once per panel instance, so
   // re-renders (Reveal / rating / Show more) never retrigger playback.
   const autoPlayedWordRef = useRef<string | null>(null);
+  // Which word the current `pronunciation` state actually belongs to. Kept as
+  // a ref (not state) so it is updated synchronously: on a card switch the
+  // auto-play effect below runs in the same commit as this lookup effect and
+  // still sees the PREVIOUS word's data; without this gate it would mark the
+  // new word as played against the stale audio element and then never play
+  // the new word once its own data arrives.
+  const loadedWordRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
+    loadedWordRef.current = null;
     setStatus('loading');
     setPronunciation(null);
 
     void onLookupPronunciation(word)
       .then((result) => {
         if (!isCurrent) return;
+        loadedWordRef.current = word;
         setPronunciation(result);
         setStatus('ready');
       })
@@ -75,6 +84,11 @@ export function PronunciationPanel({
     // plays the wrong word. Any failure (no audio, autoplay blocked by the
     // browser, network) is silently skipped — no retry, no UI notice.
     if (!autoPlay || !pronunciation?.audioUrl) {
+      return;
+    }
+    // Stale-data gate: only play when the rendered data was fetched for the
+    // word currently on the card (see loadedWordRef note above).
+    if (loadedWordRef.current !== word) {
       return;
     }
     if (autoPlayedWordRef.current === word) {

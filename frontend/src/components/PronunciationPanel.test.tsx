@@ -184,6 +184,45 @@ describe('PronunciationPanel auto-play (P1: play once when a new card starts)', 
     vi.restoreAllMocks();
   });
 
+  it('auto-plays the NEW word after the card switches (regression: later cards must play like the first)', async () => {
+    // Record the src of the <audio> element each play() call targets, so we
+    // can tell a real play of the new word apart from a stale replay of the
+    // previous word's element.
+    const playedSrcs: string[] = [];
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+      playedSrcs.push(this.src);
+      return Promise.resolve();
+    });
+
+    const lookup = vi.fn().mockImplementation((word: string) =>
+      Promise.resolve(
+        readyPronunciation({
+          word,
+          audioUrl: `https://upload.wikimedia.org/${word}.ogg`,
+          sourceUrl: `https://en.wiktionary.org/wiki/${word}`
+        })
+      )
+    );
+
+    const { rerender } = render(
+      <PronunciationPanel word="atmosphere" onLookupPronunciation={lookup} autoPlay />
+    );
+    await screen.findByRole('button', { name: 'Play atmosphere pronunciation' });
+    await waitFor(() => expect(playedSrcs).toEqual(['https://upload.wikimedia.org/atmosphere.ogg']));
+
+    // Same mounted panel, next card — the path StudySession takes on rating.
+    rerender(<PronunciationPanel word="resilient" onLookupPronunciation={lookup} autoPlay />);
+    await screen.findByRole('button', { name: 'Play resilient pronunciation' });
+    await waitFor(() =>
+      expect(playedSrcs).toEqual([
+        'https://upload.wikimedia.org/atmosphere.ogg',
+        'https://upload.wikimedia.org/resilient.ogg'
+      ])
+    );
+
+    vi.restoreAllMocks();
+  });
+
   it('does not auto-play when the word has no audio URL', async () => {
     const play = vi.fn().mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(play);
