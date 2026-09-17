@@ -86,6 +86,8 @@ ALIASES: dict[str, str] = {
     "fire-bomb": "firebomb",
     "forbes": "Forbes",
     "hrh": "HRH",
+    "ohp": "OHP",
+    "wollongong": "Wollongong",
     "generaliza-tion": "generalization",
     "gonorrh": "gonorrhea",
     "instalation": "installation",
