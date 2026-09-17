@@ -18,7 +18,7 @@ distilled to capped senses/IPAs on the fly; raw wiktextract JSON is discarded.
 """
 from __future__ import annotations
 
-import argparse, csv, glob, json, os, re, sqlite3, sys, uuid
+import argparse, csv, glob, json, os, re, sqlite3, sys, unicodedata, uuid
 from datetime import datetime, timezone
 
 US_TAGS = {"US", "General-American"}
@@ -41,6 +41,19 @@ WORD_LINE_RE = re.compile(r'^\{"word": "((?:[^"\\]|\\.)*)"')
 
 def norm(w: str) -> str:
     return " ".join(w.strip().lower().split())
+
+
+# NFKD 不分解的常用拉丁扩展字符（kaikki/词表可能带变音符，ECDICT 多为无符拼写）
+_STRIP_MAP = str.maketrans({
+    "æ": "ae", "œ": "oe", "ø": "o", "å": "a",
+    "ð": "d", "þ": "th", "ł": "l", "đ": "d", "ß": "ss",
+})
+
+
+def strip_diacritics(w: str) -> str:
+    """去掉变音符号用于 ECDICT 兜底匹配（naïve→naive、café→cafe）。"""
+    decomposed = unicodedata.normalize("NFKD", w)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).translate(_STRIP_MAP)
 
 
 def utc_now() -> str:
@@ -66,11 +79,42 @@ def load_sense_caps(db_path: str) -> dict[str, int]:
     return caps
 
 
+def _add_sense_dedup(bucket: list[dict], other: list[dict], seen: dict[str, list], row: dict,
+                     is_form: bool) -> None:
+    """同一词内相同定义只保留一条（QA 口径：同词内完全相同定义视为重复 entry）。
+
+    wiktextract 常把同一 gloss 在多个 etymology/POS 小节重复列出（如 yoke/the
+    各 5 条全同），且同一 gloss 可能一处无标签、另一处带 alt-of 标签（basement）。
+    重复出现时只把未见过的例句并入已保留条（上限 MAX_EXAMPLES_PER_SENSE）；
+    真实义项与形态义项撞定义时保留真实义项。
+    """
+    key = " ".join(row["definition"].split())
+    prev = seen.get(key)
+    if prev is not None:
+        if prev[0] is other and not is_form:
+            # 已保留的是形态义项，新来的是同定义真实义项：升级为真实义项，例句并入
+            other.remove(prev[1])
+            for sent in prev[1]["examples"]:
+                if sent not in row["examples"] and len(row["examples"]) < MAX_EXAMPLES_PER_SENSE:
+                    row["examples"].append(sent)
+            seen[key] = [bucket, row]
+            bucket.append(row)
+            return
+        kept = prev[1]
+        for sent in row["examples"]:
+            if sent not in kept["examples"] and len(kept["examples"]) < MAX_EXAMPLES_PER_SENSE:
+                kept["examples"].append(sent)
+        return
+    seen[key] = [bucket, row]
+    bucket.append(row)
+
+
 def distill_kaikki(data: list[dict], cap: int) -> dict:
     """Extract only what the build needs from a raw wiktextract record."""
     us = uk = generic = audio = None
     senses: list[dict] = []
     form_senses: list[dict] = []  # form-of / alt-of 等形态说明义项，仅作填充
+    seen: dict[str, list] = {}  # 去重键 → [所在桶, 行]，真实/形态两桶共用
     for e in data:
         for s in e.get("sounds") or []:
             tags = set(s.get("tags") or [])
@@ -85,35 +129,33 @@ def distill_kaikki(data: list[dict], cap: int) -> dict:
             if not audio and (s.get("mp3_url") or s.get("ogg_url")):
                 if not tags or tags & US_TAGS:
                     audio = s.get("mp3_url") or s.get("ogg_url")
-        if len(senses) < cap:
-            pos = POS_MAP.get(e.get("pos") or "", e.get("pos") or "word")
-            for sense in e.get("senses") or []:
-                glosses = sense.get("glosses") or []
-                if not glosses:
-                    continue
-                # wiktextract glosses 由外到内分层，首条常是 "As an auxiliary verb:" 这类
-                # 目录头（冒号结尾、非完整 gloss）；优先取第一条非目录头 gloss
-                gloss = glosses[0]
-                for g in glosses:
-                    if not g.rstrip().endswith(":"):
-                        gloss = g
-                        break
-                examples = [x["text"] for x in (sense.get("examples") or []) if x.get("text")]
-                tags = sense.get("tags") or []
-                label = ", ".join(tags[:2]) if tags else ""
-                row = {
-                    "part_of_speech": pos,
-                    "definition": gloss,
-                    "sense_label": label,
-                    "examples": examples[:MAX_EXAMPLES_PER_SENSE],
-                }
-                if set(tags) & {"form-of", "alt-of", "alternative"}:
-                    form_senses.append(row)
-                else:
-                    senses.append(row)
-                if len(senses) >= cap:
+        pos = POS_MAP.get(e.get("pos") or "", e.get("pos") or "word")
+        for sense in e.get("senses") or []:
+            glosses = sense.get("glosses") or []
+            if not glosses:
+                continue
+            # wiktextract glosses 由外到内分层，首条常是 "As an auxiliary verb:" 这类
+            # 目录头（冒号结尾、非完整 gloss）；优先取第一条非目录头 gloss
+            gloss = glosses[0]
+            for g in glosses:
+                if not g.rstrip().endswith(":"):
+                    gloss = g
                     break
-    # 形态义项仅在实际义项不足 cap 时垫底填充
+            examples = [x["text"] for x in (sense.get("examples") or []) if x.get("text")]
+            tags = sense.get("tags") or []
+            label = ", ".join(tags[:2]) if tags else ""
+            row = {
+                "part_of_speech": pos,
+                "definition": gloss,
+                "sense_label": label,
+                "examples": examples[:MAX_EXAMPLES_PER_SENSE],
+            }
+            if set(tags) & {"form-of", "alt-of", "alternative"}:
+                _add_sense_dedup(form_senses, senses, seen, row, is_form=True)
+            else:
+                _add_sense_dedup(senses, form_senses, seen, row, is_form=False)
+    # 先去重再截断：cap 作用于去重后的义项数；形态义项垫底填充
+    senses = senses[:cap]
     for row in form_senses:
         if len(senses) >= cap:
             break
@@ -150,18 +192,37 @@ def load_kaikki(shard_dir: str, wanted: set[str], caps: dict[str, int]) -> dict[
     return out
 
 
-def load_ecdict(path: str, wanted: set[str]) -> dict[str, dict]:
+def load_ecdict(path: str, wanted: set[str]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """返回 (精确匹配索引, 去变音符兜底索引)。后者供 naïve→naive 这类词：
+    词表带变音符而 ECDICT 只有无符拼写。精确命中优先于兜底。"""
+    wanted_stripped = {strip_diacritics(w) for w in wanted}
     idx: dict[str, dict] = {}
+    candidates: dict[str, dict] = {}  # 去符形 → ECDICT 行（原形不在 wanted 里的行）
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             w = norm(row["word"] or "")
-            if not w or w in idx:
+            if not w:
                 continue
-            if w not in wanted:
+            if w in wanted:
+                if w not in idx:
+                    idx[w] = row
                 continue
-            idx[w] = row
-    print(f"load_ecdict: kept={len(idx)}", file=sys.stderr)
-    return idx
+            s = w if w.isascii() else strip_diacritics(w)
+            if s in wanted_stripped and s not in candidates:
+                candidates[s] = row
+    stripped: dict[str, dict] = {}
+    for cand in wanted:
+        if cand in idx:
+            continue
+        s = strip_diacritics(cand)
+        if s == cand:
+            continue
+        if s in idx:
+            stripped[cand] = idx[s]
+        elif s in candidates:
+            stripped[cand] = candidates[s]
+    print(f"load_ecdict: kept={len(idx)} stripped_fallback={len(stripped)}", file=sys.stderr)
+    return idx, stripped
 
 
 # ---------- per-word build ----------
@@ -212,9 +273,14 @@ def ecdict_senses(erow: dict, cap: int) -> list[dict]:
                "a": "adjective", "adv": "adverb", "ad": "adverb", "prep": "preposition",
                "pron": "pronoun", "conj": "conjunction", "num": "number", "int": "exclamation"}
     pos = pos_map.get(pos, pos or "word")
+    seen: set[str] = set()
     for line in ecdict_lines(erow.get("definition")):
         if not line or line.startswith("["):
             continue
+        key = " ".join(line.split())
+        if key in seen:
+            continue
+        seen.add(key)
         out.append({"part_of_speech": pos, "definition": line, "sense_label": "", "examples": []})
         if len(out) >= cap:
             break
@@ -269,13 +335,15 @@ def write_db(db_path: str, built: list[dict], schema_path: str) -> None:
         wid = new_id()
         conn.execute("insert into words (id, text, normalized_text, created_at, updated_at) values (?,?,?,?,?)",
                      (wid, w, norm(w), now, now))
+        # 溯源标签：kaikki 义项标 open_api；ECDICT 兜底词标 fallback（schema CHECK 允许）
+        src_tag = "fallback" if bw["source"] == "ecdict" else "open_api"
         for i, ent in enumerate(bw["entries"], start=1):
             eid = new_id()
             conn.execute(
                 "insert into entries (id, word_id, sense_order, part_of_speech, sense_label, definition,"
                 " definition_source, chinese_note, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?)",
                 (eid, wid, i, ent["part_of_speech"], ent["sense_label"], ent["definition"],
-                 "open_api", bw["chinese_note"], now, now))
+                 src_tag, bw["chinese_note"], now, now))
             for j, sent in enumerate(ent["examples"], start=1):
                 conn.execute(
                     "insert into entry_examples (id, entry_id, example_order, sentence, source, is_primary,"
@@ -330,13 +398,14 @@ def main() -> None:
     else:
         caps = {}
     kaikki = load_kaikki(a.kaikki_dir, wanted, caps)
-    ecdict = load_ecdict(a.ecdict, wanted)
+    ecdict, ecdict_stripped = load_ecdict(a.ecdict, wanted)
 
     built, report_rows = [], []
     for w in words:
         nw = norm(w)
         cap = caps.get(nw, DEFAULT_SENSE_CAP)
-        bw = build_word(w, kaikki.get(nw), ecdict.get(nw), cap)
+        erow = ecdict.get(nw) or ecdict_stripped.get(nw)
+        bw = build_word(w, kaikki.get(nw), erow, cap)
         built.append(bw)
         report_rows.append({
             "word": w, "source": bw["source"], "degraded": bw["degraded"],
@@ -350,10 +419,20 @@ def main() -> None:
     write_db(a.out, built, a.schema)
     scan = oxford_residual_scan(a.out)
     n = len(built)
+    # QA 口径的重复 entry 指标：同词内完全相同定义（去重应使其≈0），直接写进报告便于核销
+    dup_entries = 0
+    for bw in built:
+        seen_defs: set[str] = set()
+        for ent in bw["entries"]:
+            key = " ".join(ent["definition"].split())
+            dup_entries += 1 if key in seen_defs else 0
+            seen_defs.add(key)
     summary = {
         "words": n,
         "by_source": {},
+        "ecdict_fallback_words": sorted(r["word"] for r in report_rows if r["source"] == "ecdict"),
         "degraded": [r["word"] for r in report_rows if r["degraded"]],
+        "duplicate_definitions": dup_entries,
         "pron_grades": {},
         "senses": sum(r["senses"] for r in report_rows),
         "senses_with_examples": sum(r["senses_with_examples"] for r in report_rows),
