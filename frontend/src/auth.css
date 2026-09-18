@@ -397,6 +397,89 @@
   cursor: pointer;
 }
 
+/* v3 open-dictionary About 页（2026-09-18）：账号菜单「About & Data
+   Sources」入口，样式同 account-menu-logout 族。 */
+.account-menu-about {
+  min-height: 44px;
+  border: 1px solid rgba(64, 58, 49, 0.18);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: rgba(255, 252, 246, 0.72);
+  color: #4b463f;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------
+   v3 open-dictionary About & Data Sources 页（2026-09-18）：数据源署名
+   （合规硬要求，随词典切换上线）。卡片沿用 auth-page/auth-card 壳层，
+   加宽一档便于阅读，正文左对齐；全部复用既有 token。
+--------------------------------------------------------------------------- */
+.about-card {
+  width: min(560px, calc(100% - 24px));
+  text-align: left;
+}
+
+.about-card .eyebrow,
+.about-card .auth-title,
+.about-card .auth-subtitle {
+  text-align: center;
+}
+
+.about-sources {
+  list-style: none;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.about-source {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(110, 91, 68, 0.12);
+  border-radius: 8px;
+  background: rgba(110, 91, 68, 0.04);
+}
+
+.about-source-name {
+  margin: 0;
+  color: #2c2822;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.about-source-role {
+  margin: 0;
+  color: #6a6257;
+  font-size: 0.85rem;
+}
+
+.about-source-license {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #6a6257;
+  word-break: break-word;
+}
+
+.about-source-license a {
+  color: #486f83;
+  font-weight: 700;
+}
+
+.about-note {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: #8a8175;
+}
+
+.about-back {
+  margin-top: 18px;
+  justify-self: center;
+}
+
 @media (max-width: 760px) {
   .auth-page {
     align-items: flex-start;

@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { App } from './App';
 import { fetchCurrentUser, fetchSubscriptionMe, logout } from './api';
 import type { AuthUser, SubscriptionStatus } from './api';
-import { navigate, routeToString, useHashRoute, isAuthRoute } from './router';
+import { navigate, routeToString, useHashRoute, isAuthRoute, isPublicRoute } from './router';
 import { clearSessionToken, getSessionToken, setSessionToken } from './session';
+import { AboutView } from './components/AboutView';
 import { CheckEmailView } from './components/auth/CheckEmailView';
 import { ForgotPasswordView } from './components/auth/ForgotPasswordView';
 import { LoginView } from './components/auth/LoginView';
@@ -113,7 +114,7 @@ export function VocabApp() {
     if (session.status === 'checking') {
       return;
     }
-    if (session.status === 'guest' && !isAuthRoute(route.path)) {
+    if (session.status === 'guest' && !isPublicRoute(route.path)) {
       navigate(`/login?next=${encodeURIComponent(routeToString(route))}`);
     }
     if (
@@ -162,6 +163,17 @@ export function VocabApp() {
           </p>
         </section>
       </main>
+    );
+  }
+
+  // About & data sources (v3 open-dictionary switch, 2026-09-18): public
+  // compliance page — renders for guests and signed-in users alike.
+  if (route.path === '/about') {
+    return (
+      <AboutView
+        backPath={session.status === 'authed' ? '/today' : '/login'}
+        backLabel={session.status === 'authed' ? 'Back to Today' : 'Back to sign in'}
+      />
     );
   }
 
@@ -375,6 +387,18 @@ function AccountArea({
                 subscription.status === 'active'
                 ? 'Manage Subscription'
                 : 'Subscribe'}
+          </button>
+          <button
+            type="button"
+            className="account-menu-about"
+            role="menuitem"
+            data-testid="account-menu-about"
+            onClick={() => {
+              setOpen(false);
+              navigate('/about');
+            }}
+          >
+            About &amp; Data Sources
           </button>
           <button type="button" className="account-menu-logout" role="menuitem" onClick={onLogout}>
             Sign Out

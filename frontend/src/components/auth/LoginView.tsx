@@ -244,6 +244,13 @@ export function LoginView({
           注册
         </button>
       </p>
+      {/* v3 open-dictionary switch (2026-09-18): data-source attribution
+          page — guests need a UI entry too (compliance page, public). */}
+      <p className="auth-switch">
+        <button className="auth-text-link" type="button" onClick={() => navigate('/about')}>
+          About &amp; data sources
+        </button>
+      </p>
       <Toast message={toastMessage} />
     </AuthCard>
   );
