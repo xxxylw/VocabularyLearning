@@ -52,7 +52,7 @@ export function ForgotPasswordView({ initialEmail }: { initialEmail?: string }) 
   }
 
   return (
-    <AuthCard eyebrow="VOCABULARYLEARNING" title="忘记密码" subtitle="输入注册邮箱，我们会发送 6 位数字验证码">
+    <AuthCard eyebrow="FUSIO" title="忘记密码" subtitle="输入注册邮箱，我们会发送 6 位数字验证码">
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
           <label htmlFor="forgot-email">邮箱</label>

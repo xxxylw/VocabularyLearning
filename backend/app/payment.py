@@ -86,7 +86,7 @@ ORDER_NOT_FOUND = "order_not_found"
 ORDER_NOT_CANCELLABLE = "order_not_cancellable"
 SUPER_CONFLICT = "super_account"
 
-_CHANNEL_LABELS = {CHANNEL_WECHAT: "微信支付", CHANNEL_ALIPAY: "支付宝"}
+_CHANNEL_LABELS = {CHANNEL_WECHAT: "WeChat Pay", CHANNEL_ALIPAY: "Alipay"}
 
 
 class PaymentError(Exception):
@@ -179,8 +179,8 @@ def _notify_url(channel: str) -> str:
 
 def _order_title() -> str:
     return (
-        os.environ.get("PAYMENT_ORDER_TITLE", "词汇学习订阅").strip()
-        or "词汇学习订阅"
+        os.environ.get("PAYMENT_ORDER_TITLE", "Fusio Subscription").strip()
+        or "Fusio Subscription"
     )
 
 
@@ -327,7 +327,7 @@ def _wechat_request(
         detail = error.read().decode("utf-8", errors="replace")
         raise PaymentError(
             GATEWAY_ERROR,
-            f"微信支付接口返回 {error.code}：{detail[:200]}",
+            f"WeChat Pay API error {error.code}: {detail[:200]}",
             status_code=502,
         ) from error
     if verify and response is not None:
@@ -338,11 +338,11 @@ def _wechat_request(
         parsed = json.loads(text)
     except (ValueError, TypeError) as error:
         raise PaymentError(
-            GATEWAY_ERROR, f"微信支付返回了无法解析的响应：{text[:200]}", status_code=502
+            GATEWAY_ERROR, f"WeChat Pay returned an unparseable response: {text[:200]}", status_code=502
         ) from error
     if not isinstance(parsed, dict):
         raise PaymentError(
-            GATEWAY_ERROR, f"微信支付返回了意外的响应结构：{text[:200]}", status_code=502
+            GATEWAY_ERROR, f"WeChat Pay returned an unexpected response structure: {text[:200]}", status_code=502
         )
     return parsed
 
@@ -408,7 +408,7 @@ def _wechat_verify_response(headers: dict[str, str], text: str) -> None:
     if public_key is None:
         raise PaymentError(
             GATEWAY_ERROR,
-            f"微信支付响应使用了未知平台证书（serial={serial}）",
+            f"WeChat Pay used an unknown platform certificate (serial={serial})",
             status_code=502,
         )
     message = f"{timestamp}\n{nonce}\n{text}\n"
@@ -421,7 +421,7 @@ def _wechat_verify_response(headers: dict[str, str], text: str) -> None:
         )
     except (InvalidSignature, ValueError) as error:
         raise PaymentError(
-            GATEWAY_ERROR, "微信支付响应验签失败", status_code=502
+            GATEWAY_ERROR, "WeChat Pay signature verification failed", status_code=502
         ) from error
 
 
@@ -454,7 +454,7 @@ def wechat_create_native_payment(
     result = _wechat_request("POST", "/v3/pay/transactions/native", body)
     code_url = str(result.get("code_url", ""))
     if not code_url:
-        raise PaymentError(GATEWAY_ERROR, "微信支付未返回 code_url", status_code=502)
+        raise PaymentError(GATEWAY_ERROR, "WeChat Pay did not return a code_url", status_code=502)
     return code_url
 
 
@@ -634,20 +634,20 @@ def _alipay_gateway_post(method: str, biz_content: dict[str, Any]) -> dict[str, 
         detail = error.read().decode("utf-8", errors="replace")
         raise PaymentError(
             GATEWAY_ERROR,
-            f"支付宝网关返回 {error.code}：{detail[:200]}",
+            f"Alipay gateway error {error.code}: {detail[:200]}",
             status_code=502,
         ) from error
     try:
         parsed = json.loads(text)
     except (ValueError, TypeError) as error:
         raise PaymentError(
-            GATEWAY_ERROR, f"支付宝返回了无法解析的响应：{text[:200]}", status_code=502
+            GATEWAY_ERROR, f"Alipay returned an unparseable response: {text[:200]}", status_code=502
         ) from error
     node_key = f"{method.replace('.', '_')}_response"
     node = parsed.get(node_key)
     if not isinstance(node, dict):
         raise PaymentError(
-            GATEWAY_ERROR, f"支付宝返回了意外的响应结构：{text[:200]}", status_code=502
+            GATEWAY_ERROR, f"Alipay returned an unexpected response structure: {text[:200]}", status_code=502
         )
     # 响应验签：sign 内容是响应节点按返回顺序的紧凑 JSON。
     sign = str(parsed.get("sign", "") or "")
@@ -662,12 +662,12 @@ def _alipay_gateway_post(method: str, biz_content: dict[str, Any]) -> dict[str, 
             )
         except (InvalidSignature, ValueError) as error:
             raise PaymentError(
-                GATEWAY_ERROR, "支付宝响应验签失败", status_code=502
+                GATEWAY_ERROR, "Alipay signature verification failed", status_code=502
             ) from error
     if str(node.get("code", "")) != "10000":
         raise PaymentError(
             GATEWAY_ERROR,
-            f"支付宝接口失败（{node.get('code')}）："
+            f"Alipay API error ({node.get('code')}): "
             f"{node.get('sub_msg') or node.get('msg', '')}",
             status_code=502,
         )
@@ -758,10 +758,10 @@ def cancel_order(user: dict[str, object], out_trade_no: str) -> dict[str, object
             "select * from orders where out_trade_no = ?", (out_trade_no,)
         ).fetchone()
         if row is None or str(row["user_id"]) != str(user["id"]):
-            raise PaymentError(ORDER_NOT_FOUND, "订单不存在", status_code=404)
+            raise PaymentError(ORDER_NOT_FOUND, "Order not found", status_code=404)
         if str(row["status"]) != "pending":
             raise PaymentError(
-                ORDER_NOT_CANCELLABLE, "当前订单状态不可取消", status_code=409
+                ORDER_NOT_CANCELLABLE, "This order can no longer be canceled", status_code=409
             )
         connection.execute(
             "update orders set status = 'closed', updated_at = ?"
@@ -820,18 +820,18 @@ def create_order(
     from app.db import connect
 
     if bool(user["is_super"]):
-        raise PaymentError(SUPER_CONFLICT, "super 账号无需订阅", status_code=409)
+        raise PaymentError(SUPER_CONFLICT, "The super account does not need a subscription", status_code=409)
 
     if channel not in CHANNELS:
         raise PaymentError(
             PAYMENT_CHANNEL_INVALID,
-            f"未知支付渠道：{channel or '(空)'}",
+            f"Unknown payment channel: {channel or '(empty)'}",
             status_code=400,
         )
 
     config = subscription_module.plans_config()
     if plan not in config:
-        raise PaymentError(PLAN_NOT_FOUND, "未知的订阅档位", status_code=400)
+        raise PaymentError(PLAN_NOT_FOUND, "Unknown subscription plan", status_code=400)
     amount_cents = int(config[plan]["priceCents"])
     currency = "CNY"
 
@@ -843,14 +843,14 @@ def create_order(
         if not eligible:
             raise PaymentError(
                 RENEW_NOT_ELIGIBLE,
-                "当前不满足续费优惠价条件，请按标价档购买",
+                "The renewal discount is not available for this account; please pick a standard plan",
                 status_code=400,
             )
 
     if not is_channel_configured(channel):
         raise PaymentError(
             PAYMENT_NOT_CONFIGURED,
-            f"支付通道尚未开通：管理员还未配置{_CHANNEL_LABELS[channel]}密钥",
+            f"Payment channel unavailable: the {_CHANNEL_LABELS[channel]} gateway key has not been configured",
             status_code=503,
         )
 
@@ -1065,7 +1065,7 @@ def handle_wechat_notify(
         if payload is None:
             _archive_callback(None, body, "rejected_bad_signature")
             logger.warning("wechat notify rejected: bad signature")
-            return {"code": "FAIL", "message": "签名校验失败"}, 401
+            return {"code": "FAIL", "message": "Signature verification failed"}, 401
 
         out_trade_no = _extract_out_trade_no(payload)
         trade_state = str(payload.get("trade_state", ""))
@@ -1077,7 +1077,7 @@ def handle_wechat_notify(
             _archive_callback(
                 out_trade_no, body, f"ignored_trade_state_{trade_state or 'missing'}"
             )
-            return {"code": "SUCCESS", "message": "成功"}, 200
+            return {"code": "SUCCESS", "message": "Success"}, 200
 
         result = confirm_payment(
             out_trade_no,
@@ -1088,10 +1088,10 @@ def handle_wechat_notify(
         if result in ("confirmed", "already_paid"):
             # 幂等：重复通知不重复续期，直接 success 止住重试。
             _archive_callback(out_trade_no, body, result)
-            return {"code": "SUCCESS", "message": "成功"}, 200
+            return {"code": "SUCCESS", "message": "Success"}, 200
         _archive_callback(out_trade_no, body, f"rejected_{result}")
         logger.warning("wechat notify rejected: %s (%s)", result, out_trade_no)
-        return {"code": "FAIL", "message": f"订单处理失败：{result}"}, 400
+        return {"code": "FAIL", "message": f"Order processing failed: {result}"}, 400
     except Exception:  # noqa: BLE001 — 处理异常也要落档并应答失败（QA P2）
         logger.exception("wechat notify processing crashed")
         try:
@@ -1099,7 +1099,7 @@ def handle_wechat_notify(
         except (ValueError, TypeError):
             parsed = {}
         _archive_callback(_extract_out_trade_no(parsed), body, "exception")
-        return {"code": "FAIL", "message": "处理异常"}, 500
+        return {"code": "FAIL", "message": "Processing error"}, 500
 
 
 # ---------------------------------------------------------------------------

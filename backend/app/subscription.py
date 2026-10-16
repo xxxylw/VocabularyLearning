@@ -114,25 +114,25 @@ def plans_config() -> dict[str, dict[str, object]]:
     return {
         PLAN_MONTHLY: {
             "plan": PLAN_MONTHLY,
-            "label": "单月",
+            "label": "1 month",
             "priceCents": _read_int_env("VOCAB_PRICE_MONTHLY_CENTS", 500),
             "durationDays": _read_int_env("VOCAB_DURATION_MONTHLY_DAYS", 30),
         },
         PLAN_RENEW: {
             "plan": PLAN_RENEW,
-            "label": "续费优惠",
+            "label": "Renewal offer",
             "priceCents": _read_int_env("VOCAB_PRICE_RENEW_CENTS", 299),
             "durationDays": _read_int_env("VOCAB_DURATION_RENEW_DAYS", 30),
         },
         PLAN_HALFYEAR: {
             "plan": PLAN_HALFYEAR,
-            "label": "半年",
+            "label": "6 months",
             "priceCents": _read_int_env("VOCAB_PRICE_HALFYEAR_CENTS", 2100),
             "durationDays": _read_int_env("VOCAB_DURATION_HALFYEAR_DAYS", 180),
         },
         PLAN_YEARLY: {
             "plan": PLAN_YEARLY,
-            "label": "一年",
+            "label": "12 months",
             "priceCents": _read_int_env("VOCAB_PRICE_YEARLY_CENTS", 3000),
             "durationDays": _read_int_env("VOCAB_DURATION_YEARLY_DAYS", 360),
         },
@@ -519,7 +519,7 @@ def create_mock_order(user: dict[str, object]) -> dict[str, object]:
 
     if not bool(user["is_super"]):
         raise SubscriptionError(
-            MOCK_DISABLED, "模拟订阅已下线，请使用真实支付", status_code=410
+            MOCK_DISABLED, "Mock subscriptions are retired; please use a real payment", status_code=410
         )
 
     from app.db import connect
@@ -582,7 +582,7 @@ def cancel_subscription(user: dict[str, object]) -> dict[str, object]:
 
     if not bool(user["is_super"]):
         raise SubscriptionError(
-            MOCK_DISABLED, "订阅不支持取消；已支付的有效期将履约到期", status_code=410
+            MOCK_DISABLED, "Subscriptions cannot be canceled; paid time remains active until expiry", status_code=410
         )
 
     from app.db import connect
@@ -594,7 +594,7 @@ def cancel_subscription(user: dict[str, object]) -> dict[str, object]:
         row = _refresh(connection, row)
         if row is None or row["status"] != "active":
             raise SubscriptionError(
-                NO_ACTIVE_SUBSCRIPTION, "当前没有生效中的订阅", status_code=409
+                NO_ACTIVE_SUBSCRIPTION, "No active subscription on this account", status_code=409
             )
         connection.execute(
             """

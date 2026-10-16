@@ -133,7 +133,7 @@ def _metadata_value(metadata: dict[str, object], key: str) -> str | None:
 
 
 def _fetch_json(url: str) -> dict[str, object]:
-    request = Request(url, headers={"User-Agent": "VocabularyLearning/0.1 (educational pronunciation lookup)"})
+    request = Request(url, headers={"User-Agent": "Fusio/0.1 (educational pronunciation lookup)"})
     with urlopen(request, timeout=12) as response:
         return json.loads(response.read().decode("utf-8"))
 

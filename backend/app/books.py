@@ -51,6 +51,40 @@ TEM8_RUYUDESHUI_BOOK_TITLE = "如鱼得水记单词 · 专八"
 
 CURRENT_BOOK_SETTING_KEY = "current_book_id"
 
+# 2026-10-15 需求一（学习流程零中文）：内置词书的英文展示名。书名渲染在
+# 今日封面卡 / 书架 / 换书确认框，属于用户可见文本；DB 行不动，仅
+# services 序列化层换名（_display_book_title）。id → 英文名为权威映射
+# （生产库 13 本全覆盖）；按中文标题兜底防止旧库换书行漏网。
+ENGLISH_BOOK_TITLES: dict[str, str] = {
+    DEFAULT_BOOK_ID: "IELTS Vocabulary Essentials",
+    RED_BOOK_ID: "Postgraduate English Vocabulary (Red Book)",
+    SHAN_BOOK_ID: "Postgraduate Vocabulary Sprint",
+    TOEFL_BOOK_ID: "TOEFL Vocabulary Essentials",
+    CET6_SHANGUO_BOOK_ID: "CET-6 Vocabulary Sprint",
+    CET4_SHANGUO_BOOK_ID: "CET-4 Vocabulary Sprint",
+    TEM4_RUYUDESHUI_BOOK_ID: "TEM-4 Words Made Easy",
+    TEM8_RUYUDESHUI_BOOK_ID: "TEM-8 Words Made Easy",
+    "cet6-dagang-2026": "CET-6 Syllabus Vocabulary",
+    "gaokao-kechengbiao-2026": "Senior High English Curriculum 3500",
+    "gre-3000": "GRE Core 3000",
+    "tem4-dagang-2026": "TEM-4 Syllabus Vocabulary",
+    "ielts-advanced-2026": "IELTS Advanced Vocabulary",
+    # 中文标题 → 英文名（按 title 兜底）
+    DEFAULT_BOOK_TITLE: "IELTS Vocabulary Essentials",
+    RED_BOOK_TITLE: "Postgraduate English Vocabulary (Red Book)",
+    SHAN_BOOK_TITLE: "Postgraduate Vocabulary Sprint",
+    TOEFL_BOOK_TITLE: "TOEFL Vocabulary Essentials",
+    CET6_SHANGUO_BOOK_TITLE: "CET-6 Vocabulary Sprint",
+    CET4_SHANGUO_BOOK_TITLE: "CET-4 Vocabulary Sprint",
+    TEM4_RUYUDESHUI_BOOK_TITLE: "TEM-4 Words Made Easy",
+    TEM8_RUYUDESHUI_BOOK_TITLE: "TEM-8 Words Made Easy",
+    "大学英语六级大纲词汇": "CET-6 Syllabus Vocabulary",
+    "高中英语课标词汇3500": "Senior High English Curriculum 3500",
+    "GRE核心词汇3000": "GRE Core 3000",
+    "专四英语大纲词汇": "TEM-4 Syllabus Vocabulary",
+    "雅思进阶词汇": "IELTS Advanced Vocabulary",
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()

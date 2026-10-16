@@ -4,11 +4,13 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 import json
 import os
+import re
 from uuid import uuid4
 
 from app import study_clock
 
 from app.books import (
+    ENGLISH_BOOK_TITLES,
     book_exists,
     get_current_book_id,
     read_current_book_pointer,
@@ -309,7 +311,7 @@ def _book_summary_response(
     )
     return BookSummaryResponse(
         id=book_row["id"],
-        title=book_row["title"],
+        title=_display_book_title(str(book_row["id"]), book_row["title"]),
         description=book_row["description"],
         source=book_row["source"],
         createdAt=book_row["created_at"],
@@ -325,7 +327,8 @@ def get_current_book(user_id: str) -> BookSummaryResponse:
     with connect() as connection:
         book_row, fallback = resolve_current_book(connection, user_id)
         notice = (
-            f"Current book not found. Switched to the default book “{book_row['title']}”."
+            "Current book not found. Switched to the default book"
+            f" “{_display_book_title(str(book_row['id']), book_row['title'])}”."
             if fallback
             else None
         )
@@ -444,7 +447,7 @@ def list_books(user_id: str) -> BookListResponse:
             books.append(
                 BookListItemResponse(
                     id=row["id"],
-                    title=row["title"],
+                    title=_display_book_title(str(row["id"]), row["title"]),
                     description=row["description"],
                     source=row["source"],
                     createdAt=row["created_at"],
@@ -1967,6 +1970,53 @@ def _count_new_words_studied_on(user_id: str, study_date: date) -> int:
     return row["total"]
 
 
+# ── 2026-10-15 需求一：学习流程用户可见零中文 ─────────────────────────
+# 数据库继续保留 chinese_note 与中文文本（不删列不改数据），但 API
+# 序列化层只输出英文：释义里的 CJK 片段被清洗，清洗后无英文可用时按
+# 现有降级规则出英文占位并置 degraded；含 CJK 的例句整条不下发；
+# chineseNote 一律置 None（字段保留为兼容旧客户端的 null）。
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+# 与库里 fallback 词条同口径的英文占位（既不剩中文也不渲染空白）。
+_NO_ENGLISH_DEFINITION_PLACEHOLDER = (
+    "Definition not yet available from open dictionary sources."
+)
+
+
+def _english_only_definition(text: str | None) -> str | None:
+    """Clean a definition for user display. Returns the cleaned English
+    text, or None when no usable English content remains after removing
+    CJK fragments (caller then applies the degraded placeholder)."""
+    if not text:
+        return text
+    if not _CJK_RE.search(text):
+        return text
+    cleaned = re.sub(r"\((?:Chinese|中文)\s*[:：][^()]*\)", "", text)
+    cleaned = _CJK_RE.sub("", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned).strip()
+    if not cleaned or _CJK_RE.search(cleaned):
+        return None
+    return cleaned
+
+
+def _english_only_examples(
+    examples: list[StudyExampleResponse],
+) -> list[StudyExampleResponse]:
+    """Drop example sentences that contain CJK characters (live-DB rows
+    are English sentences quoting CJK proper nouns)."""
+    return [e for e in examples if not _CJK_RE.search(e.sentence)]
+
+
+def _display_book_title(book_id: str | None, title: str) -> str:
+    """Map built-in Chinese book titles to their English display names.
+    2026-10-15 需求一：书名渲染在今日封面卡 / 书架 / 换书确认框，属于
+    学习流程用户可见文本。DB 行不动，仅展示层换名。"""
+    if book_id is not None and book_id in ENGLISH_BOOK_TITLES:
+        return ENGLISH_BOOK_TITLES[book_id]
+    return ENGLISH_BOOK_TITLES.get(title, title)
+
+
 def _study_cards_from_rows(
     connection, card_rows, user_id: str
 ) -> list[StudyCardResponse]:
@@ -2057,6 +2107,13 @@ def _study_cards_from_rows(
             )
         )
 
+    # 2026-10-15 需求一：含 CJK 的例句不下发（英文句子引用中文专名的
+    # 那批行整条过滤；同 sense 的其余英文例句照常）。
+    examples_by_card = {
+        card_id: _english_only_examples(examples)
+        for card_id, examples in examples_by_card.items()
+    }
+
     grouped_rows: dict[str, list] = {}
     for row in all_sense_rows:
         grouped_rows.setdefault(row["normalized_text"], []).append(row)
@@ -2064,25 +2121,37 @@ def _study_cards_from_rows(
     study_cards: list[StudyCardResponse] = []
     for rows in grouped_rows.values():
         first = rows[0]
+        # 2026-10-15 需求一：释义清洗（全库仅 league 一条英文释义里夹
+        # CJK 括注）；清洗后无英文可用的 sense 出英文占位并计为 degraded
+        # （既有降级规则，不渲染空白也不回退中文）。
+        cleaned_definitions: list[str | None] = [
+            _english_only_definition(row["definition"]) for row in rows
+        ]
         senses = [
             StudySenseResponse(
                 cardId=row["card_id"],
                 partOfSpeech=row["part_of_speech"],
                 senseLabel=row["sense_label"],
-                definition=row["definition"],
+                definition=(
+                    cleaned
+                    if cleaned is not None
+                    else _NO_ENGLISH_DEFINITION_PLACEHOLDER
+                ),
                 definitionSource=row["definition_source"],
                 examples=examples_by_card[row["card_id"]],
-                chineseNote=row["chinese_note"],
+                chineseNote=None,
             )
-            for row in rows
+            for row, cleaned in zip(rows, cleaned_definitions)
         ]
         # A card is "degraded" when any of its senses came from the fallback
-        # enrichment provider. Frontend uses this to swap fake text for a
-        # "Definition preparing" placeholder so the user is never shown
-        # template content as if it were real Oxford data.
+        # enrichment provider, or when a definition had no usable English
+        # after CJK cleaning (2026-10-15 需求一). Frontend uses this to swap
+        # fake text for a "Definition preparing" placeholder so the user is
+        # never shown template content as if it were real Oxford data.
         degraded = any(
             sense.definitionSource == "fallback" for sense in senses
-        )
+        ) or any(cleaned is None for cleaned in cleaned_definitions)
+        top_definition = _english_only_definition(first["definition"])
         study_cards.append(
             StudyCardResponse(
                 cardId=first["card_id"],
@@ -2090,10 +2159,14 @@ def _study_cards_from_rows(
                 word=first["word"],
                 partOfSpeech=first["part_of_speech"],
                 senseLabel=first["sense_label"],
-                definition=first["definition"],
+                definition=(
+                    top_definition
+                    if top_definition is not None
+                    else _NO_ENGLISH_DEFINITION_PLACEHOLDER
+                ),
                 definitionSource=first["definition_source"],
                 examples=examples_by_card[first["card_id"]],
-                chineseNote=first["chinese_note"],
+                chineseNote=None,
                 senses=senses,
                 status=first["status"],
                 stage=first["stage"],

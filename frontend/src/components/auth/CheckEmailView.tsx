@@ -146,7 +146,7 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
 
   return (
     <AuthCard
-      eyebrow="VOCABULARYLEARNING"
+      eyebrow="FUSIO"
       title="查收你的验证邮件"
       subtitle={
         <>

@@ -63,7 +63,7 @@ export function AboutView({ backPath, backLabel }: AboutViewProps) {
   return (
     <main className="auth-page" data-testid="about-page">
       <section className="auth-card about-card">
-        <p className="eyebrow">VOCABULARYLEARNING</p>
+        <p className="eyebrow">FUSIO</p>
         <h1 className="auth-title">About &amp; Data Sources</h1>
         <p className="auth-subtitle">
           The dictionary in this app is built from open-licensed sources. This page credits each

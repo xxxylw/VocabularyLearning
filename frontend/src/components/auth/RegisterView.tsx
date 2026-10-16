@@ -102,7 +102,7 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
   }
 
   return (
-    <AuthCard eyebrow="VOCABULARYLEARNING" title="创建账号" subtitle="开始云端背单词">
+    <AuthCard eyebrow="FUSIO" title="创建账号" subtitle="开始云端背单词">
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
           <label htmlFor="register-email">邮箱</label>

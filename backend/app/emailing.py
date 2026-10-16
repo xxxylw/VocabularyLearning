@@ -66,7 +66,7 @@ def _send(to: str, subject: str, html: str) -> None:
         )
     payload = json.dumps(
         {
-            "sender": {"name": "VocabularyLearning", "email": sender},
+            "sender": {"name": "Fusio", "email": sender},
             "to": [{"email": to}],
             "subject": subject,
             "htmlContent": html,
@@ -190,12 +190,12 @@ def _wrap(title: str, body_html: str) -> str:
 <div style="font-family:Inter,Segoe UI,system-ui,sans-serif;max-width:520px;
             margin:0 auto;padding:32px 24px;color:#2f2a24;">
   <p style="letter-spacing:.12em;font-size:12px;font-weight:800;
-            color:#7b5f86;margin:0 0 12px;">VOCABULARYLEARNING</p>
+            color:#7b5f86;margin:0 0 12px;">FUSIO</p>
   <h1 style="font-size:22px;margin:0 0 16px;color:#2c2822;">{title}</h1>
   {body_html}
   <p style="font-size:12px;color:#8a8175;margin-top:32px;">
-    这封邮件由 VocabularyLearning 发送，验证码 10 分钟内有效。
-    请勿转发本邮件，以免验证码泄露。
+    This email was sent by Fusio. The code is valid for 10 minutes.
+    Please do not forward this email to keep the code safe.
   </p>
 </div>
 """
@@ -213,17 +213,19 @@ def _code_block(code: str) -> str:
 def send_verification_email(to: str, code: str) -> None:
     _send(
         to,
-        "你的 VocabularyLearning 激活验证码",
+        "Your Fusio activation code",
         _wrap(
-            "激活你的账号",
+            "Activate your account",
             f"""
             <p style="margin:0 0 20px;color:#6a6257;">
-              感谢注册。请在网站的验证码输入框中输入以下 6 位数字验证码
-              完成激活（10 分钟内有效）：
+              Thanks for signing up. Enter the 6-digit code below in the
+              verification box on the website to activate your account
+              (valid for 10 minutes):
             </p>
             {_code_block(code)}
             <p style="font-size:13px;color:#8a8175;margin:0;">
-              如果验证码已过期或输入错误次数过多，请回到页面重新获取。
+              If the code has expired or you have entered it incorrectly too
+              many times, go back to the page and request a new one.
             </p>
             """,
         ),
@@ -233,17 +235,19 @@ def send_verification_email(to: str, code: str) -> None:
 def send_password_reset_email(to: str, code: str) -> None:
     _send(
         to,
-        "你的 VocabularyLearning 密码重置验证码",
+        "Your Fusio password reset code",
         _wrap(
-            "重置密码",
+            "Reset your password",
             f"""
             <p style="margin:0 0 20px;color:#6a6257;">
-              我们收到了重置密码的请求。请在网站的重置页面输入以下
-              6 位数字验证码并设置新密码（10 分钟内有效）：
+              We received a request to reset your password. Enter the
+              6-digit code below on the reset page of the website and set a
+              new password (valid for 10 minutes):
             </p>
             {_code_block(code)}
             <p style="font-size:13px;color:#8a8175;margin:0;">
-              如果这不是你的操作，请忽略本邮件，密码不会变化。
+              If this was not you, please ignore this email — your password
+              will stay unchanged.
             </p>
             """,
         ),

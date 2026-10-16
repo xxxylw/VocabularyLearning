@@ -52,7 +52,7 @@ def _check_rate(email: str) -> None:
             status_code=429,
             detail={
                 "code": "rate_limited",
-                "message": "发送过于频繁，请稍后再试",
+                "message": "Too many requests. Please try again later.",
                 "retryAfter": error.retry_after_seconds,
             },
         ) from error
@@ -75,7 +75,7 @@ def register(request: RegisterRequest) -> RegisterResponse:
     if auth.find_user_by_email(email) is not None:
         raise HTTPException(
             status_code=409,
-            detail={"code": "email_taken", "message": "该邮箱已注册"},
+            detail={"code": "email_taken", "message": "This email is already registered"},
         )
     created = auth.create_user(email, request.password)
     try:
@@ -89,11 +89,11 @@ def register(request: RegisterRequest) -> RegisterResponse:
             status_code=503,
             detail={
                 "code": "email_send_failed",
-                "message": f"验证邮件发送失败（{error}），请稍后重试",
+                "message": f"Could not send the verification email ({error}). Please try again later.",
             },
         ) from error
     auth.record_send(email)
-    return RegisterResponse(email=email, message="账号已创建，请查收验证邮件")
+    return RegisterResponse(email=email, message="Account created. Please check your inbox for the verification email.")
 
 
 def _delete_user(user_id: str) -> None:
@@ -145,13 +145,13 @@ def login(request: LoginRequest) -> LoginResponse:
     if user is None or not auth.verify_password(
         request.password, str(user["password_hash"])
     ):
-        raise HTTPException(status_code=401, detail="邮箱或密码不正确")
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
     if not user["email_verified"]:
         raise HTTPException(
             status_code=403,
             detail={
                 "code": "email_not_verified",
-                "message": "该邮箱尚未激活，请查收验证邮件",
+                "message": "This email is not verified yet. Please check your verification email.",
             },
         )
     token = auth.create_session(str(user["id"]))
@@ -198,7 +198,7 @@ def change_password(
     if user is None or not auth.verify_password(
         request.currentPassword, str(user["password_hash"])
     ):
-        raise HTTPException(status_code=400, detail="当前密码不正确")
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
     policy_error = auth.password_policy_error(request.newPassword)
     if policy_error is not None:
         raise HTTPException(status_code=400, detail=policy_error)
@@ -209,16 +209,16 @@ def change_password(
 
 _CODE_ERROR_STATUS = {"invalid": 400, "missing": 410, "expired": 410, "max_attempts": 410}
 _CODE_ERROR_MESSAGE = {
-    "invalid": "验证码错误，还可尝试 {remaining} 次",
-    "missing": "验证码无效或已过期，请重新获取",
-    "expired": "验证码已过期，请重新获取",
-    "max_attempts": "验证码错误次数过多已作废，请重新获取",
+    "invalid": "Incorrect code. {remaining} attempt(s) left.",
+    "missing": "Code is invalid or has expired. Please request a new one.",
+    "expired": "Code has expired. Please request a new one.",
+    "max_attempts": "Too many incorrect attempts. Please request a new code.",
 }
 
 
 def _code_http_error(error: auth.EmailCodeError) -> HTTPException:
     status = _CODE_ERROR_STATUS.get(error.reason, 410)
-    message = _CODE_ERROR_MESSAGE.get(error.reason, "验证码无效或已过期，请重新获取")
+    message = _CODE_ERROR_MESSAGE.get(error.reason, "Code is invalid or has expired. Please request a new one.")
     if error.reason == "invalid" and error.remaining is not None:
         message = message.format(remaining=error.remaining)
     return HTTPException(
@@ -236,7 +236,7 @@ def verify_email(request: VerifyEmailCodeRequest) -> TokenEmailResponse:
     if len(code) != 6 or not code.isdigit():
         raise HTTPException(
             status_code=400,
-            detail={"code": "code_invalid", "message": "请输入邮件中的 6 位数字验证码"},
+            detail={"code": "code_invalid", "message": "Please enter the 6-digit code from your email"},
         )
     try:
         user = auth.consume_email_code(email, code, "verify_email")
@@ -258,7 +258,7 @@ def verify_email_legacy(token: str) -> None:
         status_code=410,
         detail={
             "code": "link_disabled",
-            "message": "链接式验证已停用，请使用邮件中的 6 位数字验证码",
+            "message": "Verification links are no longer supported. Please use the 6-digit code from your email.",
         },
     )
 
@@ -286,7 +286,7 @@ def resend_verification(request: EmailOnlyRequest) -> dict[str, bool]:
             status_code=503,
             detail={
                 "code": "email_send_failed",
-                "message": f"重发失败（{error}），请稍后再试",
+                "message": f"Could not resend ({error}). Please try again later.",
             },
         ) from error
     auth.record_send(email)
@@ -310,7 +310,7 @@ def forgot_password(request: EmailOnlyRequest) -> dict[str, bool]:
             status_code=503,
             detail={
                 "code": "email_send_failed",
-                "message": f"重置邮件发送失败（{error}），请稍后再试",
+                "message": f"Could not send the password reset email ({error}). Please try again later.",
             },
         ) from error
     auth.record_send(email)
@@ -329,7 +329,7 @@ def reset_password(request: ResetPasswordRequest) -> dict[str, bool]:
     if len(code) != 6 or not code.isdigit():
         raise HTTPException(
             status_code=400,
-            detail={"code": "code_invalid", "message": "请输入邮件中的 6 位数字验证码"},
+            detail={"code": "code_invalid", "message": "Please enter the 6-digit code from your email"},
         )
     try:
         user = auth.consume_email_code(email, code, "reset_password")

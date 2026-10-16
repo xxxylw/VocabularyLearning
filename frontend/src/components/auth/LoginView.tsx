@@ -116,7 +116,7 @@ export function LoginView({
 
   return (
     <AuthCard
-      eyebrow="VOCABULARYLEARNING"
+      eyebrow="FUSIO"
       title="登录"
       subtitle="用邮箱继续你的学习进度"
     >

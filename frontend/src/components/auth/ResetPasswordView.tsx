@@ -69,7 +69,7 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
 
   return (
     <AuthCard
-      eyebrow="VOCABULARYLEARNING"
+      eyebrow="FUSIO"
       title="设置新密码"
       subtitle="输入邮件中的 6 位数字验证码，并设置新密码"
     >

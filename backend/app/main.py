@@ -52,7 +52,7 @@ def static_dir() -> Path | None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="VocabularyLearning", version=APP_VERSION, lifespan=_lifespan)
+    app = FastAPI(title="Fusio", version=APP_VERSION, lifespan=_lifespan)
     # /api/health is anonymous (used by the launcher and uptime checks);
     # every other study endpoint on ``router`` is guarded by
     # app.auth.require_user.

@@ -13,7 +13,7 @@ import { AuthCard } from './shared';
 export function VerifyEmailView({ email }: { email?: string }) {
   return (
     <AuthCard
-      eyebrow="VOCABULARYLEARNING"
+      eyebrow="FUSIO"
       title="链接已失效"
       subtitle="验证方式已升级为 6 位验证码"
     >
