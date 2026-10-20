@@ -62,17 +62,17 @@ export function LoginView({
         if (error.status === 403) {
           setNotVerified(true);
         } else if (error.status === 401) {
-          setFormError('邮箱或密码不正确');
+          setFormError('Incorrect email or password.');
         } else if (error.status === 429) {
-          setFormError(error.message !== '' ? error.message : '发送过于频繁，请稍后再试');
+          setFormError(error.message !== '' ? error.message : 'Too many requests. Please try again later.');
         } else if (error.status >= 500) {
-          setFormError('网络异常，请稍后重试');
+          setFormError('Network error. Please try again later.');
           setIsNetworkError(true);
         } else {
           setFormError(error.message);
         }
       } else {
-        setFormError('网络异常，请稍后重试');
+        setFormError('Network error. Please try again later.');
         setIsNetworkError(true);
       }
     } finally {
@@ -87,7 +87,7 @@ export function LoginView({
 
   function validateEmailField() {
     if (email !== '' && !emailValid) {
-      setFieldErrors((prev) => ({ ...prev, email: '邮箱格式不正确' }));
+      setFieldErrors((prev) => ({ ...prev, email: 'Invalid email address' }));
     } else {
       setFieldErrors((prev) => ({ ...prev, email: undefined }));
     }
@@ -103,11 +103,11 @@ export function LoginView({
       .then(() => {
         // C-05a spec copy (designer P2-② reuse): the resend voids the
         // previous code server-side, so say so instead of 已重新发送.
-        showToast('新验证码已发送，旧验证码已失效');
+        showToast('A new code has been sent; the previous one is no longer valid.');
         cooldown.start(60);
       })
       .catch(() => {
-        setResendError('重发失败，请稍后再试');
+        setResendError('Failed to resend. Please try again later.');
       })
       .finally(() => {
         setIsResending(false);
@@ -117,8 +117,8 @@ export function LoginView({
   return (
     <AuthCard
       eyebrow="FUSIO"
-      title="登录"
-      subtitle="用邮箱继续你的学习进度"
+      title="Log In"
+      subtitle="Continue your study progress with your email"
     >
       {notice !== undefined && notice !== null && notice !== '' ? (
         <p className="auth-notice-banner" role="status">
@@ -128,7 +128,7 @@ export function LoginView({
 
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
-          <label htmlFor="login-email">邮箱</label>
+          <label htmlFor="login-email">Email</label>
           <input
             id="login-email"
             className={fieldErrors.email !== undefined ? 'auth-input has-error' : 'auth-input'}
@@ -147,11 +147,11 @@ export function LoginView({
         </div>
 
         <div className="auth-field">
-          <label htmlFor="login-password">密码</label>
+          <label htmlFor="login-password">Password</label>
           <PasswordField
             id="login-password"
             autoComplete="current-password"
-            placeholder="输入密码"
+            placeholder="Enter your password"
             value={password}
             disabled={isSubmitting}
             autoFocus={autoFocusPassword}
@@ -163,20 +163,20 @@ export function LoginView({
               type="button"
               onClick={() => navigate('/forgot-password')}
             >
-              忘记密码？
+              Forgot your password?
             </button>
           </div>
         </div>
 
         {notVerified ? (
           <p className="auth-inline-error auth-form-error" role="alert">
-            该邮箱尚未激活，请查收验证邮件（
+            This email isn't verified yet. Check your inbox (
             <button
               className="auth-inline-link"
               type="button"
               onClick={() => navigate(`/check-email?email=${encodeURIComponent(email.trim())}`)}
             >
-              去查收
+              View Email
             </button>
             <span aria-hidden="true"> / </span>
             <button
@@ -185,9 +185,9 @@ export function LoginView({
               disabled={cooldown.isCooling || isResending}
               onClick={() => void handleResend()}
             >
-              {isResending ? '重发中…' : '重发'}
+              {isResending ? 'Resending…' : 'Resend'}
             </button>
-            ）
+            )
           </p>
         ) : null}
 
@@ -196,16 +196,16 @@ export function LoginView({
             {formError}
             {isNetworkError ? (
               <>
-                {'（'}
+                {'('}
                 <button
                   className="auth-inline-link"
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => void submitLogin()}
                 >
-                  重试
+                  Retry
                 </button>
-                {'）'}
+                {')'}
               </>
             ) : null}
           </p>
@@ -220,16 +220,16 @@ export function LoginView({
         <button className="auth-cta" type="submit" disabled={!canSubmit}>
           {isSubmitting ? (
             <>
-              <Spinner /> 登录中…
+              <Spinner /> Logging in…
             </>
           ) : (
-            '登录'
+            'Log In'
           )}
         </button>
       </form>
 
       <p className="auth-switch">
-        还没有账号？
+        No account yet?
         <button
           className="auth-text-link"
           type="button"
@@ -241,14 +241,7 @@ export function LoginView({
             )
           }
         >
-          注册
-        </button>
-      </p>
-      {/* v3 open-dictionary switch (2026-09-18): data-source attribution
-          page — guests need a UI entry too (compliance page, public). */}
-      <p className="auth-switch">
-        <button className="auth-text-link" type="button" onClick={() => navigate('/about')}>
-          About &amp; data sources
+          Sign Up
         </button>
       </p>
       <Toast message={toastMessage} />

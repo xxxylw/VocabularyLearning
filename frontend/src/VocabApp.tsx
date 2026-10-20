@@ -4,7 +4,6 @@ import { fetchCurrentUser, fetchSubscriptionMe, logout } from './api';
 import type { AuthUser, SubscriptionStatus } from './api';
 import { navigate, routeToString, useHashRoute, isAuthRoute, isPublicRoute } from './router';
 import { clearSessionToken, getSessionToken, setSessionToken } from './session';
-import { AboutView } from './components/AboutView';
 import { CheckEmailView } from './components/auth/CheckEmailView';
 import { ForgotPasswordView } from './components/auth/ForgotPasswordView';
 import { LoginView } from './components/auth/LoginView';
@@ -166,17 +165,6 @@ export function VocabApp() {
     );
   }
 
-  // About & data sources (v3 open-dictionary switch, 2026-09-18): public
-  // compliance page — renders for guests and signed-in users alike.
-  if (route.path === '/about') {
-    return (
-      <AboutView
-        backPath={session.status === 'authed' ? '/today' : '/login'}
-        backLabel={session.status === 'authed' ? 'Back to Today' : 'Back to sign in'}
-      />
-    );
-  }
-
   if (session.status === 'guest' && isAuthRoute(route.path)) {
     const query = route.query;
     switch (route.path) {
@@ -186,9 +174,9 @@ export function VocabApp() {
             initialEmail={query.get('email') ?? undefined}
             notice={
               query.get('from') === 'verify'
-                ? '邮箱已激活，请登录'
+                ? 'Your email is verified. Please log in.'
                 : query.get('from') === 'reset'
-                  ? '请用新密码登录'
+                  ? 'Please log in with your new password.'
                   : null
             }
             next={query.get('next')}
@@ -204,7 +192,7 @@ export function VocabApp() {
         return (
           <CheckEmailView
             email={query.get('email')}
-            notice={query.get('from') === 'register' ? '账号已创建，验证码已发送至你的邮箱' : null}
+            notice={query.get('from') === 'register' ? 'Account created. We have sent a 6-digit code to your email.' : null}
           />
         );
       case '/forgot-password':
@@ -387,18 +375,6 @@ function AccountArea({
                 subscription.status === 'active'
                 ? 'Manage Subscription'
                 : 'Subscribe'}
-          </button>
-          <button
-            type="button"
-            className="account-menu-about"
-            role="menuitem"
-            data-testid="account-menu-about"
-            onClick={() => {
-              setOpen(false);
-              navigate('/about');
-            }}
-          >
-            About &amp; Data Sources
           </button>
           <button type="button" className="account-menu-logout" role="menuitem" onClick={onLogout}>
             Sign Out

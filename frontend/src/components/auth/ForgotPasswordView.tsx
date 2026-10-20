@@ -32,19 +32,19 @@ export function ForgotPasswordView({ initialEmail }: { initialEmail?: string }) 
     setIsSubmitting(true);
     try {
       await requestPasswordReset(email.trim());
-      showToast('验证码已发送');
+      showToast('Code sent');
       navigate(`/reset-password?email=${encodeURIComponent(email.trim())}`);
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 429) {
-          setFormError(error.message !== '' ? error.message : '发送过于频繁，请稍后再试');
+          setFormError(error.message !== '' ? error.message : 'Too many requests. Please try again later.');
         } else if (error.status === 503) {
-          setFormError('重置邮件发送失败，请稍后重试');
+          setFormError('Failed to send the reset email. Please try again later.');
         } else {
           setFormError(error.message);
         }
       } else {
-        setFormError('网络异常，请稍后重试');
+        setFormError('Network error. Please try again later.');
       }
     } finally {
       setIsSubmitting(false);
@@ -52,10 +52,10 @@ export function ForgotPasswordView({ initialEmail }: { initialEmail?: string }) 
   }
 
   return (
-    <AuthCard eyebrow="FUSIO" title="忘记密码" subtitle="输入注册邮箱，我们会发送 6 位数字验证码">
+    <AuthCard eyebrow="FUSIO" title="Forgot Password" subtitle="Enter your registered email and we'll send a 6-digit code">
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
-          <label htmlFor="forgot-email">邮箱</label>
+          <label htmlFor="forgot-email">Email</label>
           <input
             id="forgot-email"
             className={emailError !== undefined ? 'auth-input has-error' : 'auth-input'}
@@ -67,7 +67,7 @@ export function ForgotPasswordView({ initialEmail }: { initialEmail?: string }) 
             disabled={isSubmitting}
             onChange={(event) => setEmail(event.target.value)}
             onBlur={() =>
-              setEmailError(email !== '' && !emailValid ? '邮箱格式不正确' : undefined)
+              setEmailError(email !== '' && !emailValid ? 'Invalid email address' : undefined)
             }
           />
           {emailError !== undefined ? (
@@ -88,20 +88,20 @@ export function ForgotPasswordView({ initialEmail }: { initialEmail?: string }) 
         >
           {isSubmitting ? (
             <>
-              <Spinner /> 发送中…
+              <Spinner /> Sending…
             </>
           ) : (
-            '发送验证码'
+            'Send Code'
           )}
         </button>
       </form>
 
-      <p className="auth-note">验证码 10 分钟内有效，错误 5 次后需重新获取</p>
+      <p className="auth-note">The code is valid for 10 minutes; after 5 failed attempts you'll need a new one.</p>
 
       <p className="auth-switch">
-        想起密码了？
+        Remembered your password?
         <button className="auth-text-link" type="button" onClick={() => navigate('/login')}>
-          回登录
+          Back to Log In
         </button>
       </p>
       <Toast message={toastMessage} />

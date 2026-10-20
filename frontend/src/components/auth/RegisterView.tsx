@@ -50,15 +50,15 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 409) {
-          setFieldErrors((prev) => ({ ...prev, email: '该邮箱已注册' }));
+          setFieldErrors((prev) => ({ ...prev, email: 'This email is already registered.' }));
         } else if (error.status === 503) {
-          setFormError('验证邮件发送失败，请稍后重试');
+          setFormError('Failed to send the verification email. Please try again later.');
           setShowRetry(true);
         } else if (error.status === 429) {
-          setFormError(error.message !== '' ? error.message : '发送过于频繁，请稍后再试');
+          setFormError(error.message !== '' ? error.message : 'Too many requests. Please try again later.');
           cooldown.start(60);
         } else if (error.status >= 500) {
-          setFormError('网络异常，请稍后重试');
+          setFormError('Network error. Please try again later.');
           setShowRetry(true);
         } else if (error.status === 400) {
           setFormError(error.message);
@@ -66,7 +66,7 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
           setFormError(error.message);
         }
       } else {
-        setFormError('网络异常，请稍后重试');
+        setFormError('Network error. Please try again later.');
         setShowRetry(true);
       }
     } finally {
@@ -82,7 +82,7 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
   function validateEmailField() {
     setFieldErrors((prev) => ({
       ...prev,
-      email: email !== '' && !emailValid ? '邮箱格式不正确' : undefined
+      email: email !== '' && !emailValid ? 'Invalid email address' : undefined
     }));
   }
 
@@ -97,15 +97,15 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
     setFieldErrors((prev) => ({
       ...prev,
       confirm:
-        confirmPassword !== '' && !passwordsMatch ? '两次输入的密码不一致' : undefined
+        confirmPassword !== '' && !passwordsMatch ? 'Passwords do not match.' : undefined
     }));
   }
 
   return (
-    <AuthCard eyebrow="FUSIO" title="创建账号" subtitle="开始云端背单词">
+    <AuthCard eyebrow="FUSIO" title="Create Account" subtitle="Start building your vocabulary in the cloud">
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
-          <label htmlFor="register-email">邮箱</label>
+          <label htmlFor="register-email">Email</label>
           <input
             id="register-email"
             className={fieldErrors.email !== undefined ? 'auth-input has-error' : 'auth-input'}
@@ -121,9 +121,9 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
           {fieldErrors.email !== undefined ? (
             <p className="auth-inline-error">
               <span>{fieldErrors.email}</span>
-              {fieldErrors.email === '该邮箱已注册' ? (
+              {fieldErrors.email === 'This email is already registered.' ? (
                 <>
-                  （
+                  (
                   <button
                     className="auth-inline-link"
                     type="button"
@@ -131,9 +131,9 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
                       navigate(`/login?email=${encodeURIComponent(email.trim())}`)
                     }
                   >
-                    去登录
+                    Go to Log In
                   </button>
-                  ）
+                  )
                 </>
               ) : null}
             </p>
@@ -141,11 +141,11 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
         </div>
 
         <div className="auth-field">
-          <label htmlFor="register-password">密码</label>
+          <label htmlFor="register-password">Password</label>
           <PasswordField
             id="register-password"
             autoComplete="new-password"
-            placeholder="设置密码（至少 8 位，含字母和数字）"
+            placeholder="Set a password (min 8 chars, letters and numbers)"
             value={password}
             hasError={fieldErrors.password !== undefined}
             disabled={isSubmitting}
@@ -159,11 +159,11 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
         </div>
 
         <div className="auth-field">
-          <label htmlFor="register-confirm">确认密码</label>
+          <label htmlFor="register-confirm">Confirm Password</label>
           <PasswordField
             id="register-confirm"
             autoComplete="new-password"
-            placeholder="再次输入密码"
+            placeholder="Re-enter your password"
             value={confirmPassword}
             hasError={fieldErrors.confirm !== undefined}
             disabled={isSubmitting}
@@ -184,10 +184,10 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
         <button className="auth-cta" type="submit" disabled={!canSubmit}>
           {isSubmitting ? (
             <>
-              <Spinner /> 创建中…
+              <Spinner /> Creating…
             </>
           ) : (
-            '创建账号'
+            'Create Account'
           )}
         </button>
 
@@ -198,13 +198,13 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
             disabled={cooldown.isCooling || isSubmitting}
             onClick={() => void submitRegistration()}
           >
-            {cooldown.isCooling ? `再发一次（${cooldown.remaining}s 后可用）` : '再发一次'}
+            {cooldown.isCooling ? `Resend available in ${cooldown.remaining}s` : 'Resend'}
           </button>
         ) : null}
       </form>
 
       <p className="auth-switch">
-        已有账号？
+        Already have an account?
         <button
           className="auth-text-link"
           type="button"
@@ -214,7 +214,7 @@ export function RegisterView({ initialEmail }: RegisterViewProps) {
             )
           }
         >
-          登录
+          Log In
         </button>
       </p>
     </AuthCard>

@@ -96,9 +96,9 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
       })
       .catch((error: unknown) => {
         if (error instanceof ApiError) {
-          setSubmitError(error.message !== '' ? error.message : '验证码错误，请重试');
+          setSubmitError(error.message !== '' ? error.message : 'Incorrect code. Please try again.');
         } else {
-          setSubmitError('网络异常，请稍后重试');
+          setSubmitError('Network error. Please try again later.');
         }
         // Clear the boxes so the user can retype without backspacing six times.
         setCode('');
@@ -121,7 +121,7 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
       .then(() => {
         // C-05a spec: the resend voids the previous code server-side,
         // so the toast must say so instead of a generic "已重新发送".
-        showToast('新验证码已发送，旧验证码已失效');
+        showToast('A new code has been sent; the previous one is no longer valid.');
         cooldown.start(60);
         // Walkthrough P2-a: whatever digits are sitting in the boxes
         // belong to the now-voided code. Clearing them trips the
@@ -134,9 +134,9 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
       })
       .catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 429) {
-          setSubmitError(error.message !== '' ? error.message : '发送过于频繁，请稍后再试');
+          setSubmitError(error.message !== '' ? error.message : 'Too many requests. Please try again later.');
         } else {
-          setSubmitError('重发失败，请稍后再试');
+          setSubmitError('Failed to resend. Please try again later.');
         }
       })
       .finally(() => {
@@ -146,12 +146,12 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
 
   return (
     <AuthCard
-      eyebrow="FUSIO"
-      title="查收你的验证邮件"
+      eyebrow="VOCABULARYLEARNING"
+      title="Check your email"
       subtitle={
         <>
-          我们已把 6 位验证码发到{' '}
-          <strong className="auth-email-echo">{email !== null && email !== '' ? email : '你的邮箱'}</strong>
+          We've sent a 6-digit code to{' '}
+          <strong className="auth-email-echo">{email !== null && email !== '' ? email : 'your email'}</strong>
           {email !== null && email !== '' && !isVerified ? (
             <>
               {' '}
@@ -164,11 +164,11 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
                     : navigate('/register')
                 }
               >
-                修改邮箱
+                Change email
               </button>
             </>
           ) : null}
-          ，在下方输入即可完成激活
+          . Enter it below to finish activation.
         </>
       }
       icon={<EnvelopeIcon />}
@@ -181,7 +181,7 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
 
       {isVerified ? (
         <p className="auth-verified-badge" role="status">
-          已激活
+          Verified
         </p>
       ) : (
         <CodeInput
@@ -205,14 +205,14 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
           type="button"
           onClick={() => navigate(`/login?from=verify&email=${encodeURIComponent(email ?? '')}`)}
         >
-          去登录
+          Go to Log In
         </button>
       ) : (
         <>
           {cooldown.isCooling ? (
-            <p className="auth-countdown">{cooldown.remaining}s 后可重新发送</p>
+            <p className="auth-countdown">Resend available in {cooldown.remaining}s</p>
           ) : (
-            <p className="auth-countdown auth-countdown-ready">可以重新发送了</p>
+            <p className="auth-countdown auth-countdown-ready">You can resend now</p>
           )}
           <button
             className="auth-ghost-cta"
@@ -220,13 +220,13 @@ export function CheckEmailView({ email, notice }: CheckEmailViewProps) {
             disabled={cooldown.isCooling || isResending}
             onClick={() => handleResend()}
           >
-            没收到？重发验证码
+            Didn't get it? Resend code
           </button>
         </>
       )}
 
       <p className="auth-note">
-        验证码 10 分钟内有效；错误 5 次后需重新获取；没收到请检查垃圾邮件箱
+        The code is valid for 10 minutes; after 5 failed attempts you'll need a new one. Check your spam folder if it doesn't arrive.
       </p>
       <Toast message={toastMessage} />
     </AuthCard>

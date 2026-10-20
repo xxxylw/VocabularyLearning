@@ -62,9 +62,6 @@ export function isAuthRoute(path: string): boolean {
   );
 }
 
-// v3 open-dictionary switch (2026-09-18): /about is the data-source
-// attribution page — a compliance page, so it must stay reachable for
-// signed-out visitors too (the route guard exempts it via this helper).
 export function isPublicRoute(path: string): boolean {
-  return isAuthRoute(path) || path === '/about';
+  return isAuthRoute(path);
 }

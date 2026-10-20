@@ -184,7 +184,7 @@ export function SpellingSession({
   const isRevealed = result === 'revealed';
   const isResolved = isCorrect || isRevealed;
   const fullDefinition =
-    [card.definition, card.chineseNote].filter((part) => typeof part === 'string' && part.length > 0).join(' · ') ||
+    [card.definition].filter((part) => typeof part === 'string' && part.length > 0).join(' · ') ||
     '';
 
   return (

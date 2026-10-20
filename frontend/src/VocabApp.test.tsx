@@ -156,7 +156,7 @@ describe('VocabApp subscription routing (batch 3)', () => {
 
     render(<VocabApp />);
 
-    expect(await screen.findByText('/ 月')).toBeInTheDocument();
+    expect(await screen.findByText('/ mo')).toBeInTheDocument();
     expect(screen.getAllByText('¥').length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByTestId('study-app')).toBeNull();
   });

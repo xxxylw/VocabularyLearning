@@ -212,14 +212,14 @@ describe('SubscriptionView', () => {
     // 2026-09-10 定价调整：半年卡 21 元（原价 30，7折）、年卡 30 元
     // （原价 60，5折）——折扣标签为精确折扣，不再出现「约 5.7 折」。
     const halfyearCard = screen.getByTestId('subscription-tier-halfyear');
-    expect(within(halfyearCard).getByText('7折')).toBeInTheDocument();
+    expect(within(halfyearCard).getByText('30% off')).toBeInTheDocument();
     expect(within(halfyearCard).getByText('21')).toBeInTheDocument();
     const yearlyCard = screen.getByTestId('subscription-tier-yearly');
-    expect(within(yearlyCard).getByText('5折')).toBeInTheDocument();
+    expect(within(yearlyCard).getByText('50% off')).toBeInTheDocument();
     expect(within(yearlyCard).getByText('30')).toBeInTheDocument();
-    expect(screen.queryByText('约 5.7 折')).toBeNull();
+    expect(screen.queryByText('About 30% off')).toBeNull();
     // 状态卡（试用中）+ 试用剩余天数常显。
-    expect(screen.getByText(/试用剩余 5 天/)).toBeInTheDocument();
+    expect(screen.getByText(/Trial: 5 days left/)).toBeInTheDocument();
   });
 
   it('hides the renew tier for ineligible users (server-judged)', async () => {
@@ -241,7 +241,7 @@ describe('SubscriptionView', () => {
 
     expect(await screen.findByTestId('subscription-tier-renew')).toBeInTheDocument();
     expect(screen.getByTestId('subscription-tier-renew')).toHaveTextContent('2.99');
-    expect(screen.getByText(/到期前或到期后 7 天内可享/)).toBeInTheDocument();
+    expect(screen.getByText(/Within 7 days before or after expiry/)).toBeInTheDocument();
   });
 
   it('shows the payment-disabled banner and blocks checkout when unconfigured', async () => {
@@ -256,7 +256,7 @@ describe('SubscriptionView', () => {
 
     expect(await screen.findByTestId('payment-disabled')).toBeInTheDocument();
     // 档位按钮置灰：点击无效，连渠道面板都不进入。
-    const tierButton = screen.getAllByRole('button', { name: '立即支付' })[0];
+    const tierButton = screen.getAllByRole('button', { name: 'Pay Now' })[0];
     expect(tierButton).toBeDisabled();
     await user.click(tierButton);
     expect(screen.queryByTestId('subscription-channel-picker')).toBeNull();
@@ -288,7 +288,7 @@ describe('SubscriptionView', () => {
     render(<SubscriptionView />);
 
     await screen.findByTestId('subscription-tier-grid');
-    await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Pay Now' })[0]);
 
     // 渠道选择 → 微信（code_url 本地渲染二维码）。
     expect(await screen.findByTestId('subscription-channel-picker')).toBeInTheDocument();
@@ -303,14 +303,14 @@ describe('SubscriptionView', () => {
 
     // 收银台：金额 + 本地渲染的微信二维码 + 取消支付（订单级）。
     expect(await screen.findByTestId('subscription-checkout')).toBeInTheDocument();
-    expect(screen.getByText('5.00 元')).toBeInTheDocument();
+    expect(screen.getByText('¥5.00')).toBeInTheDocument();
     expect(await screen.findByTestId('wechat-qr')).toBeInTheDocument();
-    expect(screen.getByText('取消支付')).toBeInTheDocument();
+    expect(screen.getByText('Cancel Payment')).toBeInTheDocument();
 
     // 轮询命中支付成功 → 状态卡刷新、收银台收起。
     await waitFor(
       () => {
-        expect(screen.getByTestId('subscription-badge')).toHaveTextContent('订阅生效中');
+        expect(screen.getByTestId('subscription-badge')).toHaveTextContent('Subscription Active');
       },
       { timeout: 5000 }
     );
@@ -325,7 +325,7 @@ describe('SubscriptionView', () => {
     render(<SubscriptionView />);
 
     await screen.findByTestId('subscription-tier-grid');
-    await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Pay Now' })[0]);
     await user.click((await screen.findByTestId('channel-alipay')));
     const postCall = fetchMock.mock.calls.find(
       ([url, init]) => url === '/api/subscription/orders' && init?.method === 'POST'
@@ -334,9 +334,9 @@ describe('SubscriptionView', () => {
 
     // 支付宝收银台：跳转官方收银台的链接 + 无二维码。
     expect(await screen.findByTestId('subscription-checkout')).toBeInTheDocument();
-    expect(screen.getByText('支付宝支付')).toBeInTheDocument();
+    expect(screen.getByText('Alipay')).toBeInTheDocument();
     expect(screen.queryByTestId('wechat-qr')).toBeNull();
-    const link = screen.getByRole('link', { name: '打开支付宝收银台' });
+    const link = screen.getByRole('link', { name: 'Open Alipay Checkout' });
     expect(link).toHaveAttribute('href', ALIPAY_ORDER.payUrl);
   });
 
@@ -351,7 +351,7 @@ describe('SubscriptionView', () => {
     render(<SubscriptionView />);
 
     await screen.findByTestId('subscription-tier-grid');
-    await user.click(screen.getAllByRole('button', { name: '立即支付' })[0]);
+    await user.click(screen.getAllByRole('button', { name: 'Pay Now' })[0]);
     expect(await screen.findByTestId('channel-wechat')).toBeEnabled();
     expect(screen.getByTestId('channel-alipay')).toBeDisabled();
   });
@@ -361,15 +361,15 @@ describe('SubscriptionView', () => {
 
     render(<SubscriptionView />);
 
-    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('已到期 · 只读模式');
+    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('Expired · Read-only');
     // P2 #1（设计定稿 2026-09-07）：到期主行 = 过去时「已于 X 到期」，
     // 日期与状态之间有分隔，不再出现「有效期至 X到期」无分隔拼接。
     expect(screen.getByTestId('subscription-expiry')).toHaveTextContent(
-      `已于 ${localDatestamp(EXPIRED.expiresAt)} 到期 · 书架、进度与统计仍可浏览`
+      `Expired on ${localDatestamp(EXPIRED.expiresAt)} — bookshelf, progress and stats remain viewable`
     );
-    expect(screen.getByTestId('subscription-expiry').textContent).not.toContain('有效期至');
-    expect(screen.getByRole('button', { name: '续费' })).toBeInTheDocument();
-    expect(screen.getByText('返回浏览（只读模式）')).toBeInTheDocument();
+    expect(screen.getByTestId('subscription-expiry').textContent).not.toContain('Valid until');
+    expect(screen.getByRole('button', { name: 'Renew' })).toBeInTheDocument();
+    expect(screen.getByText('Back to browsing (read-only)')).toBeInTheDocument();
   });
 
   it('P2 #1: anomalous future expires_at degrades to the dateless line (never a future date)', async () => {
@@ -380,12 +380,12 @@ describe('SubscriptionView', () => {
 
     render(<SubscriptionView />);
 
-    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('已到期 · 只读模式');
+    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('Expired · Read-only');
     const line = screen.getByTestId('subscription-expiry');
-    expect(line).toHaveTextContent('订阅已到期 · 书架、进度与统计仍可浏览');
+    expect(line).toHaveTextContent('Your subscription has expired — bookshelf, progress and stats remain viewable');
     expect(line.textContent).not.toContain('2026-10-06');
-    expect(line.textContent).not.toContain('有效期至');
-    expect(line.textContent).not.toContain('已于');
+    expect(line.textContent).not.toContain('Valid until');
+    expect(line.textContent).not.toContain('Expired on');
   });
 
   it('P2 #1: missing expires_at renders the dateless degraded line', async () => {
@@ -394,9 +394,9 @@ describe('SubscriptionView', () => {
     render(<SubscriptionView />);
 
     expect(await screen.findByTestId('subscription-expiry')).toHaveTextContent(
-      '订阅已到期 · 书架、进度与统计仍可浏览'
+      'Your subscription has expired — bookshelf, progress and stats remain viewable'
     );
-    expect(screen.getByTestId('subscription-badge')).toHaveTextContent('已到期 · 只读模式');
+    expect(screen.getByTestId('subscription-badge')).toHaveTextContent('Expired · Read-only');
   });
 
   it('active state: expiry + renew-reminder toggle wired to PUT', async () => {
@@ -406,8 +406,8 @@ describe('SubscriptionView', () => {
 
     render(<SubscriptionView />);
 
-    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('订阅生效中');
-    expect(screen.getByText(/有效期至 2026-10-01/)).toBeInTheDocument();
+    expect(await screen.findByTestId('subscription-badge')).toHaveTextContent('Subscription Active');
+    expect(screen.getByText(/Valid until 2026-10-01/)).toBeInTheDocument();
 
     // 续费提醒开关是管理侧唯一自主开关。
     const toggle = screen.getByRole('checkbox');
@@ -431,7 +431,7 @@ describe('SubscriptionView', () => {
 
     await screen.findByTestId('subscription-tier-grid');
 
-    const expectedCopy = `已订阅 · 有效期至 ${localDatestamp(ACTIVE_PAID.expiresAt)}`;
+    const expectedCopy = `Subscribed · Valid until ${localDatestamp(ACTIVE_PAID.expiresAt)}`;
     for (const plan of ['monthly', 'halfyear', 'yearly'] as const) {
       const card = screen.getByTestId(`subscription-tier-${plan}`);
       expect(card).toHaveClass('subscription-tier-grayed');
@@ -452,13 +452,13 @@ describe('SubscriptionView', () => {
     const renewCard = screen.getByTestId('subscription-tier-renew');
     expect(renewCard).not.toHaveClass('subscription-tier-grayed');
     expect(within(renewCard).getByTestId('tier-cta-renew')).toBeEnabled();
-    expect(within(renewCard).getByTestId('tier-cta-renew')).toHaveTextContent('立即支付');
+    expect(within(renewCard).getByTestId('tier-cta-renew')).toHaveTextContent('Pay Now');
 
     // 「当前方案」角标仅挂当前持有档位（halfyear）那张卡（DP-2）。
-    expect(within(screen.getByTestId('subscription-tier-halfyear')).getByText('当前方案')).toBeInTheDocument();
-    expect(within(screen.getByTestId('subscription-tier-monthly')).queryByText('当前方案')).toBeNull();
-    expect(within(screen.getByTestId('subscription-tier-yearly')).queryByText('当前方案')).toBeNull();
-    expect(within(screen.getByTestId('subscription-tier-renew')).queryByText('当前方案')).toBeNull();
+    expect(within(screen.getByTestId('subscription-tier-halfyear')).getByText('Current plan')).toBeInTheDocument();
+    expect(within(screen.getByTestId('subscription-tier-monthly')).queryByText('Current plan')).toBeNull();
+    expect(within(screen.getByTestId('subscription-tier-yearly')).queryByText('Current plan')).toBeNull();
+    expect(within(screen.getByTestId('subscription-tier-renew')).queryByText('Current plan')).toBeNull();
 
     // 灰态四档齐渲（--tier-count=4）。
     expect(screen.getByTestId('subscription-tier-grid')).toHaveStyle({ '--tier-count': '4' });
@@ -492,12 +492,12 @@ describe('SubscriptionView', () => {
 
     await screen.findByTestId('subscription-tier-grid');
     const html = document.body.innerHTML;
-    expect(html).toContain('已订阅 · 有效期至');
-    expect(html).not.toContain('自动续费');
-    expect(html).not.toContain('连续包月');
-    expect(html).not.toContain('自动扣款');
-    expect(html).not.toContain('已充值');
-    expect(html).not.toContain('已续费成功');
+    expect(html).toContain('Subscribed · Valid until');
+    expect(html).not.toContain('Auto-renewal');
+    expect(html).not.toContain('continuous monthly billing');
+    expect(html).not.toContain('automatic charge');
+    expect(html).not.toContain('topped up');
+    expect(html).not.toContain('renewal succeeded');
   });
 
   it('load failure: empty state with a working retry', async () => {
@@ -509,8 +509,8 @@ describe('SubscriptionView', () => {
 
     render(<SubscriptionView />);
 
-    expect(await screen.findByText('订阅信息加载失败')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
+    expect(await screen.findByText('Failed to load subscription info.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   it('never renders the forbidden copy (自动续费 / 连续包月 / 自动扣款 / 取消订阅 / 恢复订阅)', async () => {
@@ -520,11 +520,11 @@ describe('SubscriptionView', () => {
 
     await screen.findByTestId('subscription-tier-grid');
     const html = document.body.innerHTML;
-    expect(html).not.toContain('自动续费');
-    expect(html).not.toContain('连续包月');
-    expect(html).not.toContain('自动扣款');
-    expect(html).not.toContain('取消订阅');
-    expect(html).not.toContain('恢复订阅');
+    expect(html).not.toContain('Auto-renewal');
+    expect(html).not.toContain('continuous monthly billing');
+    expect(html).not.toContain('automatic charge');
+    expect(html).not.toContain('Cancel Subscription');
+    expect(html).not.toContain('Resume Subscription');
   });
 
   it('reports status changes back to the shell', async () => {

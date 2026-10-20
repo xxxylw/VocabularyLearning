@@ -170,24 +170,24 @@ describe('subscription api', () => {
 });
 
 describe('formatPrice', () => {
-  it('splits the 5 yuan monthly tier into ¥ 5 + / 月', () => {
+  it('splits the 5 yuan monthly tier into ¥5 + / mo', () => {
     const parts = formatPrice(500, 'CNY', 30);
     expect(parts.currencySymbol).toBe('¥');
     expect(parts.integer).toBe('5');
     expect(parts.fraction).toBe('');
-    expect(parts.periodLabel).toBe('/ 月');
+    expect(parts.periodLabel).toBe('/ mo');
   });
 
   it('renders the 2.99 renew tier with a padded fraction', () => {
     const parts = formatPrice(299, 'CNY', 30);
     expect(parts.integer).toBe('2');
     expect(parts.fraction).toBe('.99');
-    expect(parts.periodLabel).toBe('/ 月');
+    expect(parts.periodLabel).toBe('/ mo');
   });
 
   it('labels the halfyear and yearly tiers by duration', () => {
-    expect(formatPrice(2100, 'CNY', 180).periodLabel).toBe('/ 半年');
-    expect(formatPrice(3000, 'CNY', 360).periodLabel).toBe('/ 1 年');
+    expect(formatPrice(2100, 'CNY', 180).periodLabel).toBe('/ 6 mo');
+    expect(formatPrice(3000, 'CNY', 360).periodLabel).toBe('/ 1 yr');
   });
 
   it('falls back to the raw currency code for unknown values', () => {

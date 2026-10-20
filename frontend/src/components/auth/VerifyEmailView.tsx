@@ -13,14 +13,14 @@ import { AuthCard } from './shared';
 export function VerifyEmailView({ email }: { email?: string }) {
   return (
     <AuthCard
-      eyebrow="FUSIO"
-      title="链接已失效"
-      subtitle="验证方式已升级为 6 位验证码"
+      eyebrow="VOCABULARYLEARNING"
+      title="Link Expired"
+      subtitle="Verification now uses a 6-digit code"
     >
       <p className="auth-inline-error auth-form-error" role="alert">
-        激活链接已停用，请使用邮件中的 6 位数字验证码
+        Activation links are no longer in use. Please enter the 6-digit code from the latest email.
       </p>
-      <p className="auth-note">最新邮件里直接印有验证码；旧邮件中的链接无法使用</p>
+      <p className="auth-note">The newest email contains the code; links in older emails won't work.</p>
       <button
         className="auth-ghost-cta"
         type="button"
@@ -30,14 +30,14 @@ export function VerifyEmailView({ email }: { email?: string }) {
             : navigate('/check-email')
         }
       >
-        重新获取验证码
+        Get a New Code
       </button>
       <button
         className="auth-text-link"
         type="button"
         onClick={() => navigate('/login')}
       >
-        去登录
+        Go to Log In
       </button>
     </AuthCard>
   );

@@ -61,42 +61,42 @@ const CHANNELS: Array<{
   name: string;
   hint: string;
 }> = [
-  { id: 'wechat', name: '微信支付', hint: '扫码支付' },
-  { id: 'alipay', name: '支付宝', hint: '跳转官方收银台' }
+  { id: 'wechat', name: 'WeChat Pay', hint: 'Scan QR to pay' },
+  { id: 'alipay', name: 'Alipay', hint: 'Opens the official checkout page' }
 ];
 
 function channelLabel(channel: string): string {
-  return channel === 'wechat' ? '微信支付' : channel === 'alipay' ? '支付宝' : channel;
+  return channel === 'wechat' ? 'WeChat Pay' : channel === 'alipay' ? 'Alipay' : channel;
 }
 
 const POLL_INTERVAL_MS = 3000;
 
 const BENEFITS = [
-  '云端同步学习进度，多设备无缝衔接',
-  '学习数据云端保存，换设备不丢失',
-  '支持项目持续开发，优先获得新功能'
+  'Sync your study progress across devices seamlessly',
+  'Study data is stored in the cloud — never lost when switching devices',
+  'Support ongoing development and get new features first'
 ];
 
 // 四档标签（V3-02）。label 仅做档位命名，价格一律后端下发。
 // 折扣标签（2026-09-10 拍板）：精确折扣、不带「约」——半年卡 21/30=7折、
 // 年卡 30/60=5折；单月与 2.99 续费档不打折。
 const TIER_META: Record<string, { name: string; note: string | null; primary: boolean }> = {
-  monthly: { name: '单月', note: null, primary: false },
-  renew: { name: '续费优惠', note: '到期前或到期后 7 天内可享', primary: false },
-  halfyear: { name: '半年卡', note: '7折', primary: false },
-  yearly: { name: '年卡', note: '5折', primary: true }
+  monthly: { name: 'Monthly', note: null, primary: false },
+  renew: { name: 'Renewal Offer', note: 'Within 7 days before or after expiry', primary: false },
+  halfyear: { name: '6-Month', note: '30% off', primary: false },
+  yearly: { name: '12-Month', note: '50% off', primary: true }
 };
 
 function formatExpiryDate(expiresAt: string | null): string {
   if (expiresAt === null) {
     // super 免订阅读路径：合成视图无到期时间。
-    return '长期有效';
+    return 'Lifetime access';
   }
   const date = new Date(expiresAt);
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
-  return `有效期至 ${year}-${month}-${day}`;
+  return `Valid until ${year}-${month}-${day}`;
 }
 
 // P2 #1（设计定稿 2026-09-07）：到期只读态主行统一过去时「已于 X 到期」。
@@ -105,21 +105,21 @@ function formatExpiryDate(expiresAt: string | null): string {
 // 「订阅已到期」。铁律：已到期状态绝不出现未来日期；日期与状态文案
 // 之间必须有分隔（禁止「有效期至 2026-10-06到期」这类无分隔拼接）。
 function formatExpiredLine(expiresAt: string | null): string {
-  const suffix = ' · 书架、进度与统计仍可浏览';
+  const suffix = ' — bookshelf, progress and stats remain viewable';
   if (expiresAt !== null) {
     const date = new Date(expiresAt);
     if (!Number.isNaN(date.getTime()) && date.getTime() <= Date.now()) {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const day = String(date.getDate()).padStart(2, '0');
-      return `已于 ${year}-${month}-${day} 到期${suffix}`;
+      return `Expired on ${year}-${month}-${day}${suffix}`;
     }
   }
-  return `订阅已到期${suffix}`;
+  return `Your subscription has expired${suffix}`;
 }
 
 function formatAmountCents(amountCents: number): string {
-  return `${(amountCents / 100).toFixed(2)} 元`;
+  return `¥${(amountCents / 100).toFixed(2)}`;
 }
 
 function countdownSeconds(expiresAt: string | null, now: number): number | null {
@@ -201,7 +201,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
           // 已入账：刷新状态卡，收银台收起。
           applyStatus(subscription);
           setCheckout({ phase: 'idle' });
-          showToast('支付成功，已恢复全部学习功能');
+          showToast('Payment successful. Full study features restored.');
           return;
         }
         setCheckout((current) => {
@@ -209,7 +209,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
             return current;
           }
           if (order === null || order.status === 'closed' || order.status === 'failed') {
-            showToast('订单已关闭，请重新下单');
+            showToast('Order closed. Please place a new order.');
             return { phase: 'idle' };
           }
           return { ...current, order };
@@ -246,11 +246,11 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
       return;
     }
     if (!load.plans.paymentEnabled) {
-      showToast('支付通道尚未开通，暂时无法下单');
+      showToast('Payment channels are not enabled yet; ordering is temporarily unavailable.');
       return;
     }
     if (!load.plans.channels[channel]) {
-      showToast('该支付渠道尚未开通，请选择其他支付方式');
+      showToast('This payment channel is not available. Please choose another one.');
       return;
     }
     setCheckout({ phase: 'creating', plan, channel });
@@ -266,7 +266,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
         return;
       }
       setCheckout({ phase: 'idle' });
-      showToast(error instanceof Error ? error.message : '下单失败，请稍后重试');
+      showToast(error instanceof Error ? error.message : 'Failed to place the order. Please try again later.');
     }
   }
 
@@ -286,7 +286,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
       if (mounted.current) {
         setCheckout({ phase: 'idle' });
         pollLatest();
-        showToast(error instanceof Error ? error.message : '订单已取消');
+        showToast(error instanceof Error ? error.message : 'Order canceled');
       }
     } finally {
       if (mounted.current) {
@@ -307,7 +307,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
       }
     } catch {
       if (mounted.current) {
-        showToast('设置失败，请稍后重试');
+        showToast('Failed to save the setting. Please try again later.');
       }
     } finally {
       if (mounted.current) {
@@ -321,7 +321,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
       <main className="auth-page">
         <section className="auth-card subscription-card" aria-busy="true">
           <p className="eyebrow">SUBSCRIPTION</p>
-          <h1 className="auth-title">开通订阅</h1>
+          <h1 className="auth-title">Subscribe to Fusio</h1>
           <div className="subscription-price-skeleton" aria-hidden="true" />
           <div className="subscription-benefits-skeleton" aria-hidden="true">
             <span />
@@ -329,7 +329,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
             <span />
           </div>
           <button type="button" className="auth-cta" disabled>
-            立即支付
+            Pay Now
           </button>
         </section>
       </main>
@@ -341,11 +341,11 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
       <main className="auth-page">
         <section className="auth-card subscription-card">
           <p className="eyebrow">SUBSCRIPTION</p>
-          <h1 className="auth-title">开通订阅</h1>
-          <p className="subscription-empty">订阅信息加载失败</p>
+          <h1 className="auth-title">Subscribe to Fusio</h1>
+          <p className="subscription-empty">Failed to load subscription info.</p>
           <div className="subscription-empty-actions">
             <button type="button" className="auth-cta subscription-retry" onClick={loadAll}>
-              重试
+              Retry
             </button>
           </div>
         </section>
@@ -367,7 +367,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
   // ¥2.99 续费档保留可点；「当前方案」角标仅挂当前持有档位那张卡。
   // 到期后 me 翻 expired → 字段变 False，三档恢复可点（灰态非永久）。
   const hasPaid = status.hasActivePaidSubscription === true;
-  const grayLabel = `已订阅 · ${formatExpiryDate(status.expiresAt)}`;
+  const grayLabel = `Subscribed · ${formatExpiryDate(status.expiresAt)}`;
 
   return (
     <main className="auth-page">
@@ -377,44 +377,44 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
         {status.subscribed || status.readOnly ? (
           // 状态卡（PM 附则：trialing / active / expired 三态）。
           <>
-            <h1 className="auth-title">订阅状态</h1>
+            <h1 className="auth-title">Subscription Status</h1>
             {status.status === 'trialing' ? (
               <>
                 <span className="subscription-badge subscription-badge-trial" data-testid="subscription-badge">
-                  试用中
+                  Trial
                 </span>
                 <p className="subscription-expiry">
-                  试用剩余 {status.trialDaysLeft ?? '—'} 天 · {formatExpiryDate(status.expiresAt)}
+                  Trial: {status.trialDaysLeft ?? '—'} days left · {formatExpiryDate(status.expiresAt)}
                 </p>
                 {status.trialDaysLeft !== null && status.trialDaysLeft <= 3 ? (
                   <p className="subscription-trial-urgent" data-testid="trial-urgent">
-                    试用即将结束，续费后保留全部学习进度
+                    Your trial is ending soon. Renew to keep all study progress.
                   </p>
                 ) : null}
               </>
             ) : status.readOnly ? (
               <>
                 <span className="subscription-badge subscription-badge-expired" data-testid="subscription-badge">
-                  已到期 · 只读模式
+                  Expired · Read-only
                 </span>
                 <p className="subscription-expiry" data-testid="subscription-expiry">
                   {formatExpiredLine(status.expiresAt)}
                 </p>
                 {status.renewEligible && status.renewDeadline !== null ? (
                   <p className="subscription-renew-window">
-                    续费优惠价剩 {Math.max(0, Math.ceil((new Date(status.renewDeadline).getTime() - nowMs) / 86400000))} 天（到期后 7 天内）
+                    Renewal price valid for {Math.max(0, Math.ceil((new Date(status.renewDeadline).getTime() - nowMs) / 86400000))} more days (within 7 days after expiry)
                   </p>
                 ) : null}
               </>
             ) : status.subscribed ? (
               <>
                 <span className="subscription-badge" data-testid="subscription-badge">
-                  订阅生效中
+                  Subscription Active
                 </span>
                 <p className="subscription-expiry">{formatExpiryDate(status.expiresAt)}</p>
                 {status.renewEligible && status.renewDeadline !== null ? (
                   <p className="subscription-renew-window">
-                    2.99 续费优惠剩 {Math.max(0, Math.ceil((new Date(status.renewDeadline).getTime() - nowMs) / 86400000))} 天
+                    Renewal offer ¥2.99: {Math.max(0, Math.ceil((new Date(status.renewDeadline).getTime() - nowMs) / 86400000))} days left
                   </p>
                 ) : null}
               </>
@@ -429,7 +429,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                   void toggleReminder(event.target.checked);
                 }}
               />
-              <span>到期前提醒我续费</span>
+              <span>Remind me to renew before expiry</span>
             </label>
             {plans.paymentEnabled ? (
               <button
@@ -442,7 +442,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                     ?.scrollIntoView({ behavior: 'smooth' });
                 }}
               >
-                续费
+                Renew
               </button>
             ) : null}
           </>
@@ -451,11 +451,11 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
         {/* 价格四档（数据驱动，desktop 4 列 / mobile 2 列）。 */}
         <div id="subscription-tiers" className="subscription-tiers">
           <h2 className="subscription-tiers-title">
-            {status.subscribed ? '选择续费档位' : '选择订阅档位'}
+            {status.subscribed ? 'Choose a renewal plan' : 'Choose a plan'}
           </h2>
           {!plans.paymentEnabled ? (
             <p className="subscription-payment-disabled" data-testid="payment-disabled">
-              支付通道尚未开通：管理员还未配置支付网关密钥，暂时无法下单；书架与已有进度不受影响。
+              Payment channels are not enabled yet (no gateway keys configured), so ordering is temporarily unavailable. Your bookshelf and existing progress are not affected.
             </p>
           ) : null}
           {/* 2026-09-10 对齐修复（设计师规格）：列数跟随实际渲染档位数注入
@@ -510,7 +510,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
         {/* 渠道选择（官方双通道：微信扫码 / 支付宝跳转收银台）。 */}
         {checkout.phase === 'selecting' ? (
           <div className="subscription-checkout" data-testid="subscription-channel-picker">
-            <h2 className="subscription-checkout-title">选择支付方式</h2>
+            <h2 className="subscription-checkout-title">Choose a payment method</h2>
             <div className="subscription-channel-grid">
               {CHANNELS.map((channel) => {
                 const available = plans.channels[channel.id] ?? false;
@@ -527,7 +527,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                   >
                     <span className="subscription-channel-name">{channel.name}</span>
                     <span className="subscription-channel-hint">
-                      {available ? channel.hint : '暂未开通'}
+                      {available ? channel.hint : 'Not available yet'}
                     </span>
                   </button>
                 );
@@ -540,7 +540,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                 setCheckout({ phase: 'idle' });
               }}
             >
-              返回
+              Back
             </button>
           </div>
         ) : null}
@@ -549,7 +549,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
         {checkout.phase === 'paying' ? (
           <div className="subscription-checkout" data-testid="subscription-checkout">
             <h2 className="subscription-checkout-title">
-              {checkout.order.channel === 'wechat' ? '微信扫码支付' : '支付宝支付'}
+              {checkout.order.channel === 'wechat' ? 'WeChat Pay (scan QR)' : 'Alipay'}
             </h2>
             <p className="subscription-checkout-amount">
               {formatAmountCents(checkout.order.amountCents)}
@@ -559,12 +559,12 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
             ) : null}
             <p className="subscription-checkout-hint">
               {checkout.order.channel === 'wechat'
-                ? '请使用微信「扫一扫」扫描上方二维码；支付完成本页会自动刷新'
-                : '点击下方按钮跳转支付宝官方收银台完成支付；支付后返回本页自动刷新'}
+                ? 'Use WeChat to scan the QR code above; this page refreshes automatically once payment completes'
+                : 'Click the button below to open the Alipay checkout; this page refreshes automatically after payment'}
             </p>
             {countdownSeconds(checkout.order.expiresAt, nowMs) !== null ? (
               <p className="subscription-checkout-countdown" data-testid="checkout-countdown">
-                订单保留 {formatCountdown(countdownSeconds(checkout.order.expiresAt, nowMs) ?? 0)}
+                Order held for {formatCountdown(countdownSeconds(checkout.order.expiresAt, nowMs) ?? 0)}
               </p>
             ) : null}
             <div className="subscription-checkout-actions">
@@ -575,7 +575,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                   target="_blank"
                   rel="noreferrer"
                 >
-                  打开支付宝收银台
+                  Open Alipay Checkout
                 </a>
               ) : null}
               <button
@@ -586,11 +586,11 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
                   void cancelCheckout();
                 }}
               >
-                {isCancelingOrder ? '取消中…' : '取消支付'}
+                {isCancelingOrder ? 'Canceling…' : 'Cancel Payment'}
               </button>
             </div>
             <p className="subscription-checkout-channel">
-              支付渠道：{channelLabel(checkout.order.channel)}
+              Payment method: {channelLabel(checkout.order.channel)}
             </p>
           </div>
         ) : null}
@@ -600,7 +600,7 @@ export function SubscriptionView({ onSubscriptionChange }: SubscriptionViewProps
           className="auth-text-link subscription-skip-link"
           onClick={() => navigate('/today')}
         >
-          {status.readOnly ? '返回浏览（只读模式）' : '暂不订阅，先去背单词'}
+          {status.readOnly ? 'Back to browsing (read-only)' : 'Not now — start studying'}
         </button>
       </section>
       <Toast message={toastMessage} />
@@ -655,7 +655,7 @@ function WechatQrCode({ content }: { content: string | null }) {
     <div
       className="subscription-checkout-qr"
       role="img"
-      aria-label="微信支付二维码"
+      aria-label="WeChat Pay QR code"
       data-testid="wechat-qr"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
@@ -690,7 +690,7 @@ function TierCard({
       }`}
       data-testid={`subscription-tier-${tier.plan}`}
     >
-      {currentPlan ? <p className="subscription-tier-current">当前方案</p> : null}
+      {currentPlan ? <p className="subscription-tier-current">Current plan</p> : null}
       <p className="subscription-tier-name">{meta.name}</p>
       <p className="subscription-price">
         <span className="subscription-price-currency">{price.currencySymbol}</span>
@@ -731,10 +731,10 @@ function TierCard({
           </>
         ) : isPaying ? (
           <>
-            <Spinner /> 下单中…
+            <Spinner /> Placing order…
           </>
         ) : (
-          '立即支付'
+          'Pay Now'
         )}
       </button>
     </div>

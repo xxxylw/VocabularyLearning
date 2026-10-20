@@ -308,7 +308,7 @@ export function StudySession({
           definition: card.definition,
           definitionSource: card.definitionSource,
           examples: card.examples,
-          chineseNote: card.chineseNote
+          chineseNote: null
         }
       ];
 
@@ -448,7 +448,6 @@ export function StudySession({
                       </div>
                     ) : null}
 
-                    {sense.chineseNote ? <p className="chinese-note">{sense.chineseNote}</p> : null}
                   </section>
                 );
               })}

@@ -133,7 +133,7 @@ export const PASSWORD_MIN_LENGTH = 8;
 // C-01 / batch-2 D3: the backend policy (auth.password_policy_error)
 // now requires letters AND digits on every password-setting path; this
 // mirror keeps the client-side gate and the inline hint in sync with it.
-export const PASSWORD_POLICY_HINT = '至少 8 位，且需包含字母和数字';
+export const PASSWORD_POLICY_HINT = 'At least 8 characters, with letters and numbers';
 
 export function isValidPassword(password: string): boolean {
   return (
@@ -185,7 +185,7 @@ export function PasswordField({
       <button
         className="auth-password-toggle"
         type="button"
-        aria-label={visible ? '隐藏密码' : '显示密码'}
+        aria-label={visible ? 'Hide password' : 'Show password'}
         aria-pressed={visible}
         disabled={disabled}
         onClick={() => setVisible((current) => !current)}
@@ -366,7 +366,7 @@ export function CodeInput({
           value={value[index] ?? ''}
           disabled={disabled}
           autoFocus={index === 0}
-          aria-label={`验证码第 ${index + 1} 位`}
+          aria-label={`Code digit ${index + 1}`}
           onChange={(event) => handleBoxChange(index, event.target.value)}
           onKeyDown={(event) => handleKeyDown(index, event)}
           onPaste={handlePaste}

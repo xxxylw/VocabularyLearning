@@ -639,18 +639,18 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 
 function periodLabelForDuration(durationDays: number): string {
   if (durationDays === 30) {
-    return '/ 月';
+    return '/ mo';
   }
   if (durationDays % 360 === 0) {
-    return `/ ${durationDays / 360} 年`;
+    return `/ ${durationDays / 360} yr`;
   }
   if (durationDays % 180 === 0) {
-    return '/ 半年';
+    return '/ 6 mo';
   }
   if (durationDays % 30 === 0) {
-    return `/ ${durationDays / 30} 月`;
+    return `/ ${durationDays / 30} mo`;
   }
-  return `/ ${durationDays} 天`;
+  return `/ ${durationDays} d`;
 }
 
 export function formatPrice(

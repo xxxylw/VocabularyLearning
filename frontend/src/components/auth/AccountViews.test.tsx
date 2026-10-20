@@ -29,13 +29,13 @@ describe('LoginView', () => {
     const user = userEvent.setup();
     render(<LoginView onLoginSuccess={vi.fn()} />);
 
-    const cta = screen.getByRole('button', { name: '登录' });
+    const cta = screen.getByRole('button', { name: 'Log In' });
     expect(cta).toBeDisabled();
 
-    await user.type(screen.getByLabelText('邮箱'), 'user@example.com');
+    await user.type(screen.getByLabelText('Email'), 'user@example.com');
     expect(cta).toBeDisabled();
 
-    await user.type(screen.getByLabelText('密码'), 'secret123');
+    await user.type(screen.getByLabelText('Password'), 'secret123');
     expect(cta).toBeEnabled();
   });
 
@@ -43,11 +43,11 @@ describe('LoginView', () => {
     const user = userEvent.setup();
     render(<LoginView onLoginSuccess={vi.fn()} />);
 
-    const email = screen.getByLabelText('邮箱');
+    const email = screen.getByLabelText('Email');
     await user.type(email, 'not-an-email');
     fireEvent.blur(email);
 
-    expect(await screen.findByText('邮箱格式不正确')).toBeInTheDocument();
+    expect(await screen.findByText('Invalid email address')).toBeInTheDocument();
   });
 
   it('submits the credentials and hands the session to the shell', async () => {
@@ -59,9 +59,9 @@ describe('LoginView', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<LoginView onLoginSuccess={onLoginSuccess} />);
-    await user.type(screen.getByLabelText('邮箱'), 'user@example.com');
-    await user.type(screen.getByLabelText('密码'), 'secret123');
-    await user.click(screen.getByRole('button', { name: '登录' }));
+    await user.type(screen.getByLabelText('Email'), 'user@example.com');
+    await user.type(screen.getByLabelText('Password'), 'secret123');
+    await user.click(screen.getByRole('button', { name: 'Log In' }));
 
     await waitFor(() => expect(onLoginSuccess).toHaveBeenCalledWith('tok-1', testUser));
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/login', {
@@ -82,16 +82,16 @@ describe('LoginView', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<LoginView onLoginSuccess={vi.fn()} />);
-    await user.type(screen.getByLabelText('邮箱'), 'user@example.com');
-    await user.type(screen.getByLabelText('密码'), 'secret123');
-    await user.click(screen.getByRole('button', { name: '登录' }));
+    await user.type(screen.getByLabelText('Email'), 'user@example.com');
+    await user.type(screen.getByLabelText('Password'), 'secret123');
+    await user.click(screen.getByRole('button', { name: 'Log In' }));
 
-    expect(await screen.findByText(/该邮箱尚未激活，请查收验证邮件/)).toBeInTheDocument();
+    expect(await screen.findByText(/isn't verified yet/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '去查收' }));
+    await user.click(screen.getByRole('button', { name: 'View Email' }));
     expect(window.location.hash).toBe('#/check-email?email=user%40example.com');
 
-    await user.click(screen.getByRole('button', { name: '重发' }));
+    await user.click(screen.getByRole('button', { name: 'Resend' }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/resend-verification', {
         method: 'POST',
@@ -109,47 +109,47 @@ describe('LoginView', () => {
     );
 
     render(<LoginView onLoginSuccess={vi.fn()} />);
-    await user.type(screen.getByLabelText('邮箱'), 'user@example.com');
-    await user.type(screen.getByLabelText('密码'), 'secret123');
-    await user.click(screen.getByRole('button', { name: '登录' }));
+    await user.type(screen.getByLabelText('Email'), 'user@example.com');
+    await user.type(screen.getByLabelText('Password'), 'secret123');
+    await user.click(screen.getByRole('button', { name: 'Log In' }));
 
-    expect(await screen.findByText('邮箱或密码不正确')).toBeInTheDocument();
+    expect(await screen.findByText('Incorrect email or password.')).toBeInTheDocument();
   });
 
   it('toggles the password visibility through the trailing eye button', async () => {
     const user = userEvent.setup();
     render(<LoginView onLoginSuccess={vi.fn()} />);
 
-    const password = screen.getByLabelText('密码');
+    const password = screen.getByLabelText('Password');
     await user.type(password, 'secret123');
     expect(password).toHaveAttribute('type', 'password');
 
-    const toggle = screen.getByRole('button', { name: '显示密码' });
+    const toggle = screen.getByRole('button', { name: 'Show password' });
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
 
     await user.click(toggle);
     expect(password).toHaveAttribute('type', 'text');
-    expect(screen.getByRole('button', { name: '隐藏密码' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true');
 
-    await user.click(screen.getByRole('button', { name: '隐藏密码' }));
+    await user.click(screen.getByRole('button', { name: 'Hide password' }));
     expect(password).toHaveAttribute('type', 'password');
   });
 
   it('auto-focuses the password field when arriving from verify/reset', () => {
     render(<LoginView initialEmail="user@example.com" autoFocusPassword onLoginSuccess={vi.fn()} />);
 
-    expect(screen.getByLabelText('密码')).toHaveFocus();
+    expect(screen.getByLabelText('Password')).toHaveFocus();
   });
 
   it('links to forgot-password and register', async () => {
     const user = userEvent.setup();
     render(<LoginView onLoginSuccess={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: '忘记密码？' }));
+    await user.click(screen.getByRole('button', { name: 'Forgot your password?' }));
     expect(window.location.hash).toBe('#/forgot-password');
 
     window.location.hash = '';
-    await user.click(screen.getByRole('button', { name: '注册' }));
+    await user.click(screen.getByRole('button', { name: 'Sign Up' }));
     expect(window.location.hash).toBe('#/register');
   });
 });
@@ -167,23 +167,23 @@ describe('RegisterView', () => {
     const user = userEvent.setup();
     render(<RegisterView />);
 
-    const cta = screen.getByRole('button', { name: '创建账号' });
+    const cta = screen.getByRole('button', { name: 'Create Account' });
     expect(cta).toBeDisabled();
 
-    await user.type(screen.getByLabelText('邮箱'), 'new@example.com');
-    await user.type(screen.getByLabelText('密码'), 'short');
+    await user.type(screen.getByLabelText('Email'), 'new@example.com');
+    await user.type(screen.getByLabelText('Password'), 'short');
     expect(cta).toBeDisabled();
 
     // letters-only misses the new letter+digit policy
-    await user.clear(screen.getByLabelText('密码'));
-    await user.type(screen.getByLabelText('密码'), 'onlyletterstoolong');
+    await user.clear(screen.getByLabelText('Password'));
+    await user.type(screen.getByLabelText('Password'), 'onlyletterstoolong');
     expect(cta).toBeDisabled();
 
-    await user.clear(screen.getByLabelText('密码'));
-    await user.type(screen.getByLabelText('密码'), 'longenough1');
+    await user.clear(screen.getByLabelText('Password'));
+    await user.type(screen.getByLabelText('Password'), 'longenough1');
     expect(cta).toBeDisabled();
 
-    await user.type(screen.getByLabelText('确认密码'), 'longenough1');
+    await user.type(screen.getByLabelText('Confirm Password'), 'longenough1');
     expect(cta).toBeEnabled();
   });
 
@@ -192,16 +192,16 @@ describe('RegisterView', () => {
     render(<RegisterView />);
 
     // standing hint below the field
-    expect(screen.getByText('至少 8 位，且需包含字母和数字')).toBeInTheDocument();
+    expect(screen.getByText('At least 8 characters, with letters and numbers')).toBeInTheDocument();
 
-    const password = screen.getByLabelText('密码');
+    const password = screen.getByLabelText('Password');
     await user.type(password, 'onlyletters');
     fireEvent.blur(password);
 
     // after blur the inline error repeats the policy copy inside the field
     const field = password.closest('.auth-field');
     expect(field?.querySelector('.auth-inline-error')?.textContent).toBe(
-      '至少 8 位，且需包含字母和数字'
+      'At least 8 characters, with letters and numbers'
     );
   });
 
@@ -209,11 +209,11 @@ describe('RegisterView', () => {
     const user = userEvent.setup();
     render(<RegisterView />);
 
-    const confirm = screen.getByLabelText('确认密码');
+    const confirm = screen.getByLabelText('Confirm Password');
     await user.type(confirm, 'different-password');
     fireEvent.blur(confirm);
 
-    expect(await screen.findByText('两次输入的密码不一致')).toBeInTheDocument();
+    expect(await screen.findByText('Passwords do not match.')).toBeInTheDocument();
   });
 
   it('registers and hands off to /check-email without auto-login', async () => {
@@ -224,10 +224,10 @@ describe('RegisterView', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<RegisterView />);
-    await user.type(screen.getByLabelText('邮箱'), 'new@example.com');
-    await user.type(screen.getByLabelText('密码'), 'longenough1');
-    await user.type(screen.getByLabelText('确认密码'), 'longenough1');
-    await user.click(screen.getByRole('button', { name: '创建账号' }));
+    await user.type(screen.getByLabelText('Email'), 'new@example.com');
+    await user.type(screen.getByLabelText('Password'), 'longenough1');
+    await user.type(screen.getByLabelText('Confirm Password'), 'longenough1');
+    await user.click(screen.getByRole('button', { name: 'Create Account' }));
 
     await waitFor(() =>
       expect(window.location.hash).toBe('#/check-email?email=new%40example.com&from=register')
@@ -247,13 +247,13 @@ describe('RegisterView', () => {
     );
 
     render(<RegisterView />);
-    await user.type(screen.getByLabelText('邮箱'), 'taken@example.com');
-    await user.type(screen.getByLabelText('密码'), 'longenough1');
-    await user.type(screen.getByLabelText('确认密码'), 'longenough1');
-    await user.click(screen.getByRole('button', { name: '创建账号' }));
+    await user.type(screen.getByLabelText('Email'), 'taken@example.com');
+    await user.type(screen.getByLabelText('Password'), 'longenough1');
+    await user.type(screen.getByLabelText('Confirm Password'), 'longenough1');
+    await user.click(screen.getByRole('button', { name: 'Create Account' }));
 
-    expect(await screen.findByText('该邮箱已注册')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '去登录' }));
+    expect(await screen.findByText('This email is already registered.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Go to Log In' }));
     expect(window.location.hash).toBe('#/login?email=taken%40example.com');
   });
 
@@ -268,16 +268,16 @@ describe('RegisterView', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<RegisterView />);
-    await user.type(screen.getByLabelText('邮箱'), 'new@example.com');
-    await user.type(screen.getByLabelText('密码'), 'longenough1');
-    await user.type(screen.getByLabelText('确认密码'), 'longenough1');
-    await user.click(screen.getByRole('button', { name: '创建账号' }));
+    await user.type(screen.getByLabelText('Email'), 'new@example.com');
+    await user.type(screen.getByLabelText('Password'), 'longenough1');
+    await user.type(screen.getByLabelText('Confirm Password'), 'longenough1');
+    await user.click(screen.getByRole('button', { name: 'Create Account' }));
 
-    expect(await screen.findByText('验证邮件发送失败，请稍后重试')).toBeInTheDocument();
+    expect(await screen.findByText('Failed to send the verification email. Please try again later.')).toBeInTheDocument();
 
     // The backend rolls the half-created account back on 503, so the
     // retry must re-run registration (not a bare resend).
-    await user.click(screen.getByRole('button', { name: '再发一次' }));
+    await user.click(screen.getByRole('button', { name: 'Resend' }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/auth/register', {
         method: 'POST',

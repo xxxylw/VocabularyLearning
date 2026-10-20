@@ -51,16 +51,16 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
     setIsSubmitting(true);
     try {
       await resetPassword(email.trim(), code, newPassword);
-      showToast('密码已重置');
+      showToast('Password has been reset.');
       navigate(`/login?from=reset&email=${encodeURIComponent(email.trim())}`);
     } catch (error) {
       if (error instanceof ApiError) {
-        setFormError(error.message !== '' ? error.message : '重置失败，请稍后重试');
+        setFormError(error.message !== '' ? error.message : 'Failed to reset the password. Please try again later.');
         // A rejected code (wrong / expired / exhausted) clears the boxes
         // so the user retypes; the address and password fields stay.
         setCode('');
       } else {
-        setFormError('网络异常，请稍后重试');
+        setFormError('Network error. Please try again later.');
       }
     } finally {
       setIsSubmitting(false);
@@ -69,13 +69,13 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
 
   return (
     <AuthCard
-      eyebrow="FUSIO"
-      title="设置新密码"
-      subtitle="输入邮件中的 6 位数字验证码，并设置新密码"
+      eyebrow="VOCABULARYLEARNING"
+      title="Set a New Password"
+      subtitle="Enter the 6-digit code from the email and set a new password"
     >
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <div className="auth-field">
-          <label htmlFor="reset-email">邮箱</label>
+          <label htmlFor="reset-email">Email</label>
           <input
             id="reset-email"
             className={fieldErrors.email !== undefined ? 'auth-input has-error' : 'auth-input'}
@@ -89,7 +89,7 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
             onBlur={() =>
               setFieldErrors((prev) => ({
                 ...prev,
-                email: email !== '' && !emailValid ? '邮箱格式不正确' : undefined
+                email: email !== '' && !emailValid ? 'Invalid email address' : undefined
               }))
             }
           />
@@ -99,7 +99,7 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
         </div>
 
         <div className="auth-field">
-          <label htmlFor="reset-code-0">验证码</label>
+          <label htmlFor="reset-code-0">Code</label>
           <CodeInput
             idPrefix="reset"
             value={code}
@@ -107,15 +107,15 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
             disabled={isSubmitting}
             hasError={formError !== null}
           />
-          <p className="auth-field-hint">邮件中的 6 位数字验证码，10 分钟内有效</p>
+          <p className="auth-field-hint">The 6-digit code from the email; valid for 10 minutes</p>
         </div>
 
         <div className="auth-field">
-          <label htmlFor="reset-new-password">新密码</label>
+          <label htmlFor="reset-new-password">New Password</label>
           <PasswordField
             id="reset-new-password"
             autoComplete="new-password"
-            placeholder="设置新密码（至少 8 位，含字母和数字）"
+            placeholder="Set a password (min 8 chars, letters and numbers)"
             value={newPassword}
             hasError={fieldErrors.password !== undefined}
             disabled={isSubmitting}
@@ -137,11 +137,11 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
         </div>
 
         <div className="auth-field">
-          <label htmlFor="reset-confirm-password">确认新密码</label>
+          <label htmlFor="reset-confirm-password">Confirm New Password</label>
           <PasswordField
             id="reset-confirm-password"
             autoComplete="new-password"
-            placeholder="再次输入新密码"
+            placeholder="Re-enter your new password"
             value={confirmPassword}
             hasError={fieldErrors.confirm !== undefined}
             disabled={isSubmitting}
@@ -149,7 +149,7 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
             onBlur={() =>
               setFieldErrors((prev) => ({
                 ...prev,
-                confirm: confirmPassword !== '' && !passwordsMatch ? '两次输入的密码不一致' : undefined
+                confirm: confirmPassword !== '' && !passwordsMatch ? 'Passwords do not match.' : undefined
               }))
             }
           />
@@ -167,18 +167,18 @@ export function ResetPasswordView({ initialEmail }: ResetPasswordViewProps) {
         <button className="auth-cta" type="submit" disabled={!canSubmit}>
           {isSubmitting ? (
             <>
-              <Spinner /> 重置中…
+              <Spinner /> Resetting…
             </>
           ) : (
-            '重置密码'
+            'Reset Password'
           )}
         </button>
       </form>
 
       <p className="auth-switch">
-        没收到验证码？
+        Didn't receive the code?
         <button className="auth-text-link" type="button" onClick={() => navigate('/forgot-password')}>
-          重新获取
+          Get a New Code
         </button>
       </p>
       <Toast message={toastMessage} />
