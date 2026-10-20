@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import sqlite3
+
+# P1 vocabulary books: every book_words row belongs to exactly one book and
+# the study flows (today session, prepare jobs, progress stats) run against
+# the *current* book (PRD ch.9). The current book is a per-user pointer
+# stored in the user_settings table (v2 cloud batch 2, C-05/C-06) —
+# switching only rewrites the caller's own pointer and never touches
+# reviews / cards / snapshots or any other user's pointer (切换零改写).
+DEFAULT_BOOK_ID = "default-book"
+DEFAULT_BOOK_TITLE = "雅思词汇真经"
+
+# PRD ch.10 (内置第二本词书): the second built-in book. The id is a stable
+# contract shared with the import pipeline, the builtin packaging checks and
+# the frontend cover palette (红色系程序化封面).
+RED_BOOK_ID = "kaoyan-hongbaoshu-2027"
+RED_BOOK_TITLE = "考研英语红宝书"
+
+# v3 书架三书 (V3-05): the third book, 考研词汇闪过, is *data-driven* —
+# the shelf slot appears only after its word list is imported on the server
+# (scripts/import_book_csv.py). The id is a stable contract shared with the
+# import pipeline and the frontend cover palette (蓝色系程序化封面).
+SHAN_BOOK_ID = "kaoyan-shanguo-2027"
+SHAN_BOOK_TITLE = "考研词汇闪过"
+
+# 2026-09-12 内置第四~第八本词书 (PRD ch.15 托福词汇真经 + ch.16 六级/四级
+# 词汇闪过 + 专四/专八如鱼得水记单词): same data-driven contract as above —
+# book rows appear when their word lists land via
+# backend/scripts/import_builtin_books.py; the ids are shared with the import
+# pipeline, the builtin packaging checks and the frontend cover palettes.
+# 注意与生产库既有「大学英语六级大纲词汇」「专四英语大纲词汇」等书是不同书，
+# id 命名已避开（shanguo/ruyudeshui ≠ dagang）。
+TOEFL_BOOK_ID = "toefl-zhenjing-2026"
+TOEFL_BOOK_TITLE = "托福词汇真经"
+
+CET6_SHANGUO_BOOK_ID = "cet6-shanguo-2026"
+CET6_SHANGUO_BOOK_TITLE = "六级词汇闪过"
+
+CET4_SHANGUO_BOOK_ID = "cet4-shanguo-2026"
+CET4_SHANGUO_BOOK_TITLE = "四级词汇闪过"
+
+# PRD ch.16 书名口径修正: 该系列书名核验为《如鱼得水记单词》，专四/专八以
+# 副标注区分（title 带副标注）。
+TEM4_RUYUDESHUI_BOOK_ID = "tem4-ruyudeshui-2026"
+TEM4_RUYUDESHUI_BOOK_TITLE = "如鱼得水记单词 · 专四"
+
+TEM8_RUYUDESHUI_BOOK_ID = "tem8-ruyudeshui-2026"
+TEM8_RUYUDESHUI_BOOK_TITLE = "如鱼得水记单词 · 专八"
+
+CURRENT_BOOK_SETTING_KEY = "current_book_id"
+
+# 2026-10-15 需求一（学习流程零中文）：内置词书的英文展示名。书名渲染在
+# 今日封面卡 / 书架 / 换书确认框，属于用户可见文本；DB 行不动，仅
+# services 序列化层换名（_display_book_title）。id → 英文名为权威映射
+# （生产库 13 本全覆盖）；按中文标题兜底防止旧库换书行漏网。
+ENGLISH_BOOK_TITLES: dict[str, str] = {
+    DEFAULT_BOOK_ID: "IELTS Vocabulary Essentials",
+    RED_BOOK_ID: "Postgraduate English Vocabulary (Red Book)",
+    SHAN_BOOK_ID: "Postgraduate Vocabulary Sprint",
+    TOEFL_BOOK_ID: "TOEFL Vocabulary Essentials",
+    CET6_SHANGUO_BOOK_ID: "CET-6 Vocabulary Sprint",
+    CET4_SHANGUO_BOOK_ID: "CET-4 Vocabulary Sprint",
+    TEM4_RUYUDESHUI_BOOK_ID: "TEM-4 Words Made Easy",
+    TEM8_RUYUDESHUI_BOOK_ID: "TEM-8 Words Made Easy",
+    "cet6-dagang-2026": "CET-6 Syllabus Vocabulary",
+    "gaokao-kechengbiao-2026": "Senior High English Curriculum 3500",
+    "gre-3000": "GRE Core 3000",
+    "tem4-dagang-2026": "TEM-4 Syllabus Vocabulary",
+    "ielts-advanced-2026": "IELTS Advanced Vocabulary",
+    # 中文标题 → 英文名（按 title 兜底）
+    DEFAULT_BOOK_TITLE: "IELTS Vocabulary Essentials",
+    RED_BOOK_TITLE: "Postgraduate English Vocabulary (Red Book)",
+    SHAN_BOOK_TITLE: "Postgraduate Vocabulary Sprint",
+    TOEFL_BOOK_TITLE: "TOEFL Vocabulary Essentials",
+    CET6_SHANGUO_BOOK_TITLE: "CET-6 Vocabulary Sprint",
+    CET4_SHANGUO_BOOK_TITLE: "CET-4 Vocabulary Sprint",
+    TEM4_RUYUDESHUI_BOOK_TITLE: "TEM-4 Words Made Easy",
+    TEM8_RUYUDESHUI_BOOK_TITLE: "TEM-8 Words Made Easy",
+    "大学英语六级大纲词汇": "CET-6 Syllabus Vocabulary",
+    "高中英语课标词汇3500": "Senior High English Curriculum 3500",
+    "GRE核心词汇3000": "GRE Core 3000",
+    "专四英语大纲词汇": "TEM-4 Syllabus Vocabulary",
+    "雅思进阶词汇": "IELTS Advanced Vocabulary",
+}
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def ensure_default_book(
+    connection: sqlite3.Connection, now: str | None = None
+) -> sqlite3.Row:
+    timestamp = now or utc_now()
+    connection.execute(
+        """
+        insert or ignore into vocabulary_books (
+            id, title, description, source, created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?)
+        """,
+        (DEFAULT_BOOK_ID, DEFAULT_BOOK_TITLE, None, None, timestamp, timestamp),
+    )
+    return connection.execute(
+        "select * from vocabulary_books where id = ?",
+        (DEFAULT_BOOK_ID,),
+    ).fetchone()
+
+
+def read_current_book_pointer(
+    connection: sqlite3.Connection, user_id: str
+) -> str | None:
+    row = connection.execute(
+        "select value from user_settings where user_id = ? and key = ?",
+        (user_id, CURRENT_BOOK_SETTING_KEY),
+    ).fetchone()
+    return row["value"] if row is not None else None
+
+
+def set_current_book_pointer(
+    connection: sqlite3.Connection, user_id: str, book_id: str
+) -> None:
+    connection.execute(
+        "insert or replace into user_settings (user_id, key, value)"
+        " values (?, ?, ?)",
+        (user_id, CURRENT_BOOK_SETTING_KEY, book_id),
+    )
+
+
+def book_exists(connection: sqlite3.Connection, book_id: str) -> bool:
+    row = connection.execute(
+        "select 1 from vocabulary_books where id = ? limit 1",
+        (book_id,),
+    ).fetchone()
+    return row is not None
+
+
+def upsert_book(
+    connection: sqlite3.Connection,
+    book_id: str,
+    *,
+    title: str,
+    description: str | None = None,
+    source: str | None = None,
+    now: str | None = None,
+) -> sqlite3.Row:
+    """Insert or refresh a vocabulary_books row (idempotent).
+
+    Used by the word-list import pipeline for built-in books beyond the
+    default one (PRD ch.10: the 考研英语红宝书 row + its import stay one
+    transaction). created_at is kept stable across re-runs; title /
+    description / source are refreshed so re-imports can update the word
+    counts embedded in the description.
+    """
+    timestamp = now or utc_now()
+    existing = connection.execute(
+        "select * from vocabulary_books where id = ?",
+        (book_id,),
+    ).fetchone()
+    if existing is None:
+        connection.execute(
+            """
+            insert into vocabulary_books (
+                id, title, description, source, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (book_id, title, description, source, timestamp, timestamp),
+        )
+    else:
+        connection.execute(
+            """
+            update vocabulary_books
+            set title = ?, description = ?, source = ?, updated_at = ?
+            where id = ?
+            """,
+            (title, description, source, timestamp, book_id),
+        )
+    return connection.execute(
+        "select * from vocabulary_books where id = ?",
+        (book_id,),
+    ).fetchone()
+
+
+def resolve_current_book(
+    connection: sqlite3.Connection, user_id: str
+) -> tuple[sqlite3.Row, bool]:
+    """Return (current book row, fallback_happened) for one user.
+
+    The pointer lives in ``user_settings``; when unset the default book is
+    used. When the pointer references a missing book (PRD ch.9 异常兜底)
+    it is reset to the default book so the app never white-screens or
+    loses data.
+    """
+    pointer = read_current_book_pointer(connection, user_id)
+    if pointer is not None:
+        row = connection.execute(
+            "select * from vocabulary_books where id = ?",
+            (pointer,),
+        ).fetchone()
+        if row is not None:
+            return row, False
+        set_current_book_pointer(connection, user_id, DEFAULT_BOOK_ID)
+    return ensure_default_book(connection), pointer is not None
+
+
+def get_current_book_id(connection: sqlite3.Connection, user_id: str) -> str:
+    return str(resolve_current_book(connection, user_id)[0]["id"])

@@ -1,0 +1,8 @@
+.superpowers/
+data/
+__pycache__/
+.pytest_cache/
+node_modules/
+dist/
+.venv/
+build/
