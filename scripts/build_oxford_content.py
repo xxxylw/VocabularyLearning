@@ -153,7 +153,12 @@ def load_oxford(path: str) -> dict:
             if not line:
                 continue
             d = json.loads(line)
-            if d.get("status") == "ok" and d.get("senses"):
+            # P1 fix (acceptance follow-up): keep rows that resolved IPA/audio
+            # but no senses (e.g. `sake`, fetched via numbered-homonym retry).
+            # Previously such rows were dropped here, so the pronunciation
+            # step never ran and a stale legacy pronunciation_cache row kept
+            # rendering (sake.ipaUk was "seik").
+            if d.get("status") == "ok" and (d.get("senses") or d.get("ipaUk") or d.get("ipaUs")):
                 data[d["word"].strip().lower()] = d
     return data
 
@@ -177,6 +182,7 @@ def table_counts(conn) -> dict:
 
 def switch_to_oxford(conn, oxford: dict, wn: WordNet, audio_dir: str | None, apply: bool) -> dict:
     stats = {"oxford": 0, "wordnet": 0, "wiktionary": 0,
+             "pron_only": 0,
              "entries_updated": 0, "entries_inserted": 0, "leftover_untouched": 0,
              "examples_deleted": 0, "examples_inserted": 0,
              "pron_updated": 0, "pron_inserted": 0,
@@ -200,17 +206,22 @@ def switch_to_oxford(conn, oxford: dict, wn: WordNet, audio_dir: str | None, app
                        "examples": (s.get("examples") or [])[:OXFORD_MAX_EXAMPLES_PER_SENSE]}
                       for s in ox["senses"] if s.get("definition")]
             source = "oxford_api" if senses else None
-            if not senses:
-                ox = None
+            # P1 fix: DO NOT null `ox` when senses is empty — the oxford
+            # record still carries IPA/audio for the pronunciation step.
         if not senses:
             wn_senses = wn.senses(key)
             if wn_senses:
                 senses = wn_senses
                 source = "imported"
-        if not senses:
+        if not senses and not ox:
             stats["wiktionary"] += 1
             continue
-        stats["oxford" if source == "oxford_api" else "wordnet"] += 1
+        if senses:
+            stats["oxford" if source == "oxford_api" else "wordnet"] += 1
+        else:
+            # Oxford pronunciation/audio only; definitions fall back to the
+            # untouched wiktionary entries below (m=0 -> no entry writes).
+            stats["pron_only"] += 1
 
         rows = tx.execute(
             "select id, created_at from entries where word_id=? order by sense_order", (wid,)
