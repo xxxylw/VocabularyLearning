@@ -6,8 +6,9 @@ import type { Pronunciation } from '../api';
 import { PronunciationPanel } from './PronunciationPanel';
 import { WordHeadline } from './WordHeadline';
 
-// 当日重复池（task 7684082688076025051，规格规则 2 / D2 拍板）：评 New
-// 的卡从当前位置后移 3 张重新出现（剩余不足 3 张时落队尾）。
+// 当日重复池（task 7684082688076025051；2026-10-29 规格扩展）：非
+// Got it 评级（Maybe / New）的卡从当前位置后移 3 张重新出现（剩余
+// 不足 3 张时落队尾）—— new 卡与到期复习卡都适用，Got it 才移除。
 const REPEAT_INSERT_INTERVAL = 3;
 
 type StudySessionProps = {
@@ -70,15 +71,16 @@ export function StudySession({
   const submittingRef = useRef(false);
   const completedRef = useRef(false);
   // 当日重复池（task 7684082688076025051）：会话内工作流。queue 是
-  // 「剩余待展示卡」—— 普通队列卡消费后 splice 移除、评 unknown 的
-  // new 卡 / 仍 pending 的重复卡在 3 张之后以 isRepeat 副本重新插回
-  // （规格规则 2：间隔 3 张）。服务端 today_repeat_pool 是持久权威，
-  // 这里的本地重插只保证同一会话内即时可见，重进由服务端确定性重算。
+  // 「剩余待展示卡」—— 普通队列卡消费后 splice 移除、评非 Got it
+  // （Maybe / New，new 卡与复习卡都算）/ 仍 pending 的重复卡在 3 张
+  // 之后以 isRepeat 副本重新插回（规格规则 2：间隔 3 张）。服务端
+  // today_repeat_pool 是持久权威，这里的本地重插只保证同一会话内
+  // 即时可见，重进由服务端确定性重算。
   const [queue, setQueue] = useState<StudyCard[]>(cards);
-  // 规格规则 6：进度分子只计已完成卡 —— Got it / Maybe 的队列卡、
-  // 池内已 Got it（cleared）与达上限移出（capped）的卡；评 New 未清空
-  // 的卡不计入（停滞、不回退，清空 / 达上限时 +1）。复习卡评 New 不进
-  // 池（D1），照常计入。
+  // 规格规则 6（2026-10-29 扩展）：进度分子只计已完成卡 —— Got it
+  // 的普通队列卡、池内已 Got it（cleared）与达上限移出（capped）的
+  // 卡；评 Maybe / New 未清空的卡不计入（停滞、不回退，清空 / 达
+  // 上限时 +1）。
   const [repeatCompleted, setRepeatCompleted] = useState(0);
   // 已展示的原始队列卡张数：currentPosition 的兜底计数。重复卡
   // isRepeat 副本不计入——副本是同一张卡的重现，若每次重现都推进
@@ -135,9 +137,12 @@ export function StudySession({
           ? ((result as { status?: 'pending' | 'cleared' | 'capped' } | undefined)
               ?.status ?? null)
           : null;
+        // 2026-10-29 规格扩展：非 Got it 评级（Maybe / New）一律本地重
+        // 插 —— new 卡与到期复习卡都算（服务端 _enter_repeat_pool 同
+        // 口径入池），Got it 才真正完成。
         const shouldReinsert = card.isRepeat
           ? poolStatus === 'pending'
-          : rating === 'unknown' && card.queueType === 'new';
+          : rating !== 'known';
         setQueue((prev) => {
           const next = prev.slice();
           next.splice(0, 1);
@@ -146,7 +151,8 @@ export function StudySession({
               ...card,
               isRepeat: true,
               queuePosition: null,
-              queueType: 'new'
+              // 沿用原始卡型（复习卡的重复副本仍标 review）。
+              queueType: card.queueType
             };
             // 间隔 3 张：副本前有 3 张未学卡时重插（不足 3 张落队尾，
             // 规格规则 2 边界态）。
@@ -156,7 +162,7 @@ export function StudySession({
           return next;
         });
         if (
-          (!card.isRepeat && (rating !== 'unknown' || card.queueType !== 'new')) ||
+          (!card.isRepeat && rating === 'known') ||
           (card.isRepeat && (poolStatus === 'cleared' || poolStatus === 'capped'))
         ) {
           setRepeatCompleted((count) => count + 1);

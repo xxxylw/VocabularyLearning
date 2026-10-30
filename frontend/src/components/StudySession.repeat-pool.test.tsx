@@ -4,9 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { StudySession } from './StudySession';
 import type { StudyCard } from '../api';
 
-// 当日重复池（task 7684082688076025051）前端行为：评 New 的 new 卡间隔
-// 3 张以 isRepeat 副本重新出现、Got it 一次才移除、进度条停滞不回退、
-// 复习卡评 New 不重插（规格规则 2 / 3 / 6 / D1）。
+// 当日重复池（task 7684082688076025051；2026-10-29 规格扩展）前端
+// 行为：非 Got it 评级（Maybe / New）的卡（new 卡与复习卡都算）间隔
+// 3 张以 isRepeat 副本重新出现、Got it 一次才移除、进度条停滞不回退
+// （规格规则 2 / 3 / 6；2 评级 × 2 卡型矩阵）。
 
 function makeCard(id: string, word: string, queueType: 'new' | 'review' = 'new'): StudyCard {
   return {
@@ -199,24 +200,98 @@ describe('StudySession 当日重复池', () => {
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
   });
 
-  it('does not reinsert review cards rated New (D1: only new cards enter the pool)', async () => {
+  it('reinserts a new card rated Maybe three cards later (uncertain × new)', async () => {
     const user = userEvent.setup();
-    const cards = [
-      makeCard('card-1', 'alpha', 'review'),
-      makeCard('card-2', 'bravo', 'review')
-    ];
-    const onReview = vi.fn().mockResolvedValue(undefined);
+    const cards = makeCards(['alpha', 'bravo', 'charlie', 'delta', 'echo']);
+    const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
+      card.isRepeat
+        ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
+        : Promise.resolve(undefined)
+    );
+    render(<StudySession cards={cards} onReview={onReview} onExit={vi.fn()} />);
+
+    await revealAndRate(user, /maybe/i); // alpha 评 Maybe：同样重插
+    await revealAndRate(user, /got it/i); // bravo
+    await revealAndRate(user, /got it/i); // charlie
+    await revealAndRate(user, /got it/i); // delta
+
+    // 第 5 次展示：alpha 的重复副本（间隔 3 张）先于 echo 出现。
+    await revealAndRate(user, /got it/i);
+    expect(onReview).toHaveBeenCalledTimes(5);
+    expect(onReview.mock.calls[4][0].word).toBe('alpha');
+    expect(onReview.mock.calls[4][0].isRepeat).toBe(true);
+
+    await revealAndRate(user, /got it/i); // echo：队列清空，会话完成
+    expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
+  });
+
+  it('reinserts a review card rated New and keeps the review label (unknown × review)', async () => {
+    const user = userEvent.setup();
+    const cards = makeCards(['alpha', 'bravo', 'charlie', 'delta', 'echo'], 'review');
+    const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
+      card.isRepeat
+        ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
+        : Promise.resolve(undefined)
+    );
+    render(<StudySession cards={cards} totalCards={5} onReview={onReview} onExit={vi.fn()} />);
+
+    await revealAndRate(user, /^new$/i); // alpha（复习卡）评 New：重插、进度停滞
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '0'
+    );
+
+    await revealAndRate(user, /got it/i); // bravo
+    await revealAndRate(user, /got it/i); // charlie
+    await revealAndRate(user, /got it/i); // delta
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '3'
+    );
+
+    // 第 5 次展示：alpha 的重复副本，仍标 review（queueType 沿用原卡）。
+    await revealAndRate(user, /got it/i);
+    expect(onReview).toHaveBeenCalledTimes(5);
+    expect(onReview.mock.calls[4][0].word).toBe('alpha');
+    expect(onReview.mock.calls[4][0].isRepeat).toBe(true);
+    expect(onReview.mock.calls[4][0].queueType).toBe('review');
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '4'
+    );
+
+    await revealAndRate(user, /got it/i); // echo：完成
+    expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
+  });
+
+  it('reinserts a review card rated Maybe and stalls progress until cleared (uncertain × review)', async () => {
+    const user = userEvent.setup();
+    const cards = makeCards(['alpha', 'bravo'], 'review');
+    const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
+      card.isRepeat
+        ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
+        : Promise.resolve(undefined)
+    );
     render(<StudySession cards={cards} totalCards={2} onReview={onReview} onExit={vi.fn()} />);
 
-    await revealAndRate(user, /^new$/i); // 复习卡评 New：计入完成、不重插
+    await revealAndRate(user, /maybe/i); // alpha（复习卡）评 Maybe：重插、不计入
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '0'
+    );
+
+    await revealAndRate(user, /got it/i); // bravo：+1
     expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
       'aria-valuenow',
       '1'
     );
 
-    await revealAndRate(user, /got it/i);
+    await revealAndRate(user, /got it/i); // alpha 副本（不足 3 张落队尾）：清空 +1
+    expect(onReview).toHaveBeenCalledTimes(3);
+    expect(onReview.mock.calls[2][0].word).toBe('alpha');
+    expect(onReview.mock.calls[2][0].isRepeat).toBe(true);
+    expect(onReview.mock.calls[2][0].queueType).toBe('review');
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
-    expect(onReview).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the position indicator within the day-queue denominator across repeat re-shows', async () => {

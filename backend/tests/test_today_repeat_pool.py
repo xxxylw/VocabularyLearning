@@ -3,21 +3,24 @@
 
 覆盖规格第五章验收标准的后端部分：
 1. 当日队列内新卡评 New 后间隔 3 张重新出现（不足 3 张时队尾）；
-   Got it 后当日不再出现。
+   Got it 后当日不再出现。2026-10-29 规格扩展：非 Got it 评级
+   （Maybe / New）的 new 卡与到期复习卡都入池、都当日重现，
+   Got it 一次才移除。
 2. SM-2 零污染：重复卡操作不写 reviews、不改 EF / 间隔 / due_at；
-   重复 Got it 幂等、不改次日调度。
+   重复 Got it 幂等、不改次日调度。初评照常写 reviews / 推调度。
 3. 次日到期：池内 Got it 过的卡次日按 New 评分出现在新学习日
    到期复习集合。
 4. 重复上限：第 3 次重复仍非 Got it 自动移出、进度计入完成。
 5. 完成态：原队列评完 + 池清空才 dayCompleted；池非空不触发。
-6. 进度条：评 New 未清空分子停滞不回退、分母不因重复增大；
-   清空后 +1；全部完成 N/N。
+6. 进度条：评 Maybe / New 未清空分子停滞不回退、分母不因重复
+   增大；清空后 +1；全部完成 N/N。
 7. 断点续传：重进（幂等 start）保留池、重复卡继续出现、
    已评卡（池内除外）不出现。
 8. 02:00 联动：跨 02:00 池状态归旧学习日照常更新；02:00 后
    重进旧池作废、未 Got it 卡出现在新学习日到期集合。
-9. D1 边界：Maybe 不进池；复习卡评 New 不进池；队列外评分不进池
-   且不推进池计数。
+9. 边界（2026-10-29 扩展，2 评级 × 2 卡型矩阵）：Maybe 与 New 的
+   new 卡 / 复习卡都进池；队列外评分不进池且不推进池计数；
+   复习卡重复副本 queueType 仍标 review。
 10. 409 隔离：同卡同日重复 review 仍 409、池状态不受影响；池端点
     对非池卡 404；repeatCount 数据面可查。
 
@@ -537,11 +540,15 @@ def test_cross_0200_pending_pool_card_returns_next_day(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# D1 边界：Maybe 不进池；复习卡评 New 不进池；队列外评分不进池不推进
+# 边界矩阵（2026-10-29 扩展）：Maybe / New × new / review 都进池；
+# 队列外评分不进池且不推进池计数
 # ---------------------------------------------------------------------------
 
 
-def test_maybe_does_not_enter_pool(tmp_path, monkeypatch):
+def test_maybe_enters_pool_and_reappears(tmp_path, monkeypatch):
+    """2026-10-29 规格扩展（uncertain × new）：Maybe 也入池 ——
+    用户原话口径「不是 Got it 的评级应在今天继续重现，直到 Got it」。
+    pending 期间进度分子停滞；Got it 清空后计入。"""
     day = date(2026, 9, 11)
     _pin(monkeypatch, day, 10, 0)
     client = _setup(tmp_path, monkeypatch)
@@ -549,17 +556,37 @@ def test_maybe_does_not_enter_pool(tmp_path, monkeypatch):
     _prepare(client, 2)
     _backdate_unreviewed_cards(day)
     session = _start(client, target=2)
+    alpha_id = session["cards"][0]["cardId"]
 
     at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
-    assert _review(client, session["cards"][0]["cardId"], at, "uncertain") == 200
+    assert _review(client, alpha_id, at, "uncertain") == 200
 
-    # Maybe 不进池：当日不再出现、池表无行。
+    # Maybe 入池：pending、间隔 3 张；进度分子停滞。
+    row = _pool_row(alpha_id)
+    assert (row["status"], row["repeat_count"], row["defer_remaining"]) == (
+        "pending", 0, 3,
+    )
+    assert _summary(client)["reviewedCards"] == 0
+
+    # 重进：bravo 先出，alpha 以 isRepeat 副本重现（队列耗尽落队尾）。
     session = _start(client, target=2)
-    assert _words_in(session) == ["bravo"]
-    assert _pool_row(session["cards"][0]["cardId"]) is None
+    repeat_alpha = next(c for c in session["cards"] if c["word"] == "alpha")
+    assert repeat_alpha["isRepeat"] is True
+    assert repeat_alpha["queueType"] == "new"
+    assert session["cards"][0]["word"] == "bravo"
+
+    # Got it 一次清空：进度 +1、当日不再出现。
+    status, _ = _pool_review(client, alpha_id, "known")
+    assert status == 200
+    assert _summary(client)["reviewedCards"] == 1
+    session = _start(client, target=2)
+    assert "alpha" not in _words_in(session)
 
 
-def test_review_card_rated_new_does_not_enter_pool(tmp_path, monkeypatch):
+def test_review_card_rated_new_enters_pool_and_reappears(tmp_path, monkeypatch):
+    """2026-10-29 规格扩展（unknown × review）：到期复习卡评 New
+    也入池、当日重现；副本 queueType 仍标 review；SM-2 照常记录
+    初评（reviews +1、due_at 推进）。"""
     day = date(2026, 9, 11)
     _pin(monkeypatch, day, 10, 0)
     client = _setup(tmp_path, monkeypatch)
@@ -578,12 +605,62 @@ def test_review_card_rated_new_does_not_enter_pool(tmp_path, monkeypatch):
     alpha_next = [c for c in session["cards"] if c["word"] == "alpha"]
     assert len(alpha_next) == 1 and alpha_next[0]["queueType"] == "review"
 
-    # 复习卡评 New（D1）：不进池。
+    # 复习卡评 New（原 D1 排除，现入池）：池行 pending。
     at = datetime.combine(next_day, dtime(10, 1), tzinfo=_BEIJING)
+    due_before = _card_row(alpha["cardId"])["due_at"]
     assert _review(client, alpha_next[0]["cardId"], at, "unknown") == 200
-    assert _pool_row(alpha["cardId"]) is None
+    row = _pool_row(alpha["cardId"])
+    assert row["status"] == "pending"
+    # SM-2 照常记录初评：reviews +1、due_at 推进（跨天调度不受重插影响）。
+    assert _review_count(alpha["cardId"], next_day.isoformat()) == 1
+    assert _card_row(alpha["cardId"])["due_at"] != due_before
+
+    # 重进：bravo 先出，alpha 副本重现且 queueType 仍标 review。
+    session = _start(client, target=2)
+    repeat_alpha = next(c for c in session["cards"] if c["word"] == "alpha")
+    assert repeat_alpha["isRepeat"] is True
+    assert repeat_alpha["queueType"] == "review"
+    assert session["cards"][0]["word"] == "bravo"
+    # 进度分子：复习卡 pending 期间不计入（未完成当日份内工作）。
+    assert _summary(client)["reviewedCards"] == 0
+
+    # 重复卡 Got it → cleared；复习卡照 SM-2 次日调度回归。
+    status, _ = _pool_review(client, alpha["cardId"], "known")
+    assert status == 200
+    assert _summary(client)["reviewedCards"] == 1
     session = _start(client, target=2)
     assert "alpha" not in _words_in(session)
+
+
+def test_review_card_rated_maybe_enters_pool(tmp_path, monkeypatch):
+    """2026-10-29 规格扩展（uncertain × review）：复习卡评 Maybe
+    也入池 —— 2 评级 × 2 卡型矩阵的最后一块。"""
+    day = date(2026, 9, 11)
+    _pin(monkeypatch, day, 10, 0)
+    client = _setup(tmp_path, monkeypatch)
+    _import_words(client, ["alpha", "bravo"])
+    _prepare(client, 2)
+    _backdate_unreviewed_cards(day)
+    session = _start(client, target=2)
+    alpha = session["cards"][0]
+
+    at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
+    assert _review(client, alpha["cardId"], at, "known") == 200
+    next_day = day + timedelta(days=1)
+    _pin(monkeypatch, next_day, 10, 0)
+    session = _start(client, target=2)
+    alpha_next = [c for c in session["cards"] if c["word"] == "alpha"]
+    assert alpha_next[0]["queueType"] == "review"
+
+    at = datetime.combine(next_day, dtime(10, 1), tzinfo=_BEIJING)
+    assert _review(client, alpha_next[0]["cardId"], at, "uncertain") == 200
+    row = _pool_row(alpha["cardId"])
+    assert (row["status"], row["defer_remaining"]) == ("pending", 3)
+
+    # 重进：副本以 review 标记重现。
+    session = _start(client, target=2)
+    repeat_alpha = next(c for c in session["cards"] if c["word"] == "alpha")
+    assert (repeat_alpha["isRepeat"], repeat_alpha["queueType"]) == (True, "review")
 
 
 def test_out_of_queue_review_neither_enters_nor_advances(tmp_path, monkeypatch):

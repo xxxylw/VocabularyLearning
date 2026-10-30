@@ -175,11 +175,12 @@ CREATE TABLE IF NOT EXISTS today_queue (
     unique (user_id, book_id, study_date, position)
 );
 
--- 当日重复池（会话层循环，与跨天 SM-2 调度彻底分离）。当日队列中的
--- new 卡评 New（unknown）即入池，间隔 3 张重新出现，Got it 一次才
--- 移出；重复卡上的操作只更新本表，不写 reviews、不改 EF / 间隔 /
--- due_at。池随当日队列快照（user, book, study_date）持久化：刷新 /
--- 换设备不丢，跨 02:00 会话不中断；02:00 后重进随旧快照作废。
+-- 当日重复池（会话层循环，与跨天 SM-2 调度彻底分离）。当日队列卡
+-- （new 卡与到期复习卡）评非 Got it（Maybe=uncertain / New=unknown）
+-- 即入池，间隔 3 张重新出现，Got it 一次才移出；重复卡上的操作
+-- 只更新本表，不写 reviews、不改 EF / 间隔 / due_at。池随当日队列
+-- 快照（user, book, study_date）持久化：刷新 / 换设备不丢，跨 02:00
+-- 会话不中断；02:00 后重进随旧快照作废。
 --   repeat_count    数据面：该卡当日已重新出现且再评非 Got it 的次数
 --                   （初评为 0；达 3 上限置 capped 自动移出，D3）；
 --   defer_remaining 会话层插入间隔（D2：间隔 3 张）：还要再展示多少

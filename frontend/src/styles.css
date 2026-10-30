@@ -1682,3 +1682,25 @@ button:where(:not(:disabled)):active {
 .spelling-card.entering {
   animation: card-in 240ms var(--ease-out);
 }
+
+/* ICP filing footer — regulatory requirement (fusio.com.cn).
+   In-flow at document bottom; every page shell is min-height:100vh,
+   so it never overlaps content. Only Chinese element in the EN UI. */
+.icp-footer {
+  padding: 10px 16px 14px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #a89f93;
+  background: transparent;
+}
+
+.icp-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.icp-footer a:hover {
+  color: #8a8175;
+  text-decoration: underline;
+}

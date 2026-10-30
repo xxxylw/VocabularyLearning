@@ -332,7 +332,7 @@ export function reviewCard(cardId: string, rating: ReviewRating): Promise<unknow
 // 当日重复池（task 7684082688076025051）：重复卡（isRepeat）上的三按钮
 // 只更新池状态 —— known → cleared（Got it 一次才移出）、uncertain /
 // unknown → 仍 pending（间隔 3 张再次插入）、达 3 次上限 capped。不写
-// reviews、不改 SM-2。多义项兄弟卡可能不在池内（不在当日 new 队列），
+// reviews、不改 SM-2。多义项兄弟卡可能不在池内（不在当日队列），
 // 404 视为幂等跳过，不阻断词级评分。
 // ---------------------------------------------------------------------------
 
