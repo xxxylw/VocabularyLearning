@@ -23,6 +23,7 @@ import {
   saveCheckIn
 } from './checkins';
 import { BookShelfView } from './components/BookShelfView';
+import { IcpFooter } from './components/IcpFooter';
 import { SpellingSession } from './components/SpellingSession';
 import { StudySession } from './components/StudySession';
 import { TodayView } from './components/TodayView';
@@ -359,60 +360,63 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
   }
 
   return (
-    <main className="app-shell">
-      <TodayView
-        onStart={(target) => void handleStart(target)}
-        onAnotherGroup={() => void handleAnotherGroup()}
-        isLoading={isLoading}
-        newWordTarget={newWordTarget}
-        onNewWordTargetChange={setNewWordTarget}
-        dayCompleted={todaySummary?.dayCompleted ?? false}
-        canPracticeSpelling={
-          (todaySummary?.completedCards?.length ?? 0) > 0 ||
-          lastCompletedCards.length > 0
-        }
-        onPracticeSpelling={() => startSpellingPractice(lastCompletedCards)}
-        checkIns={checkIns}
-        error={error}
-        bookTitle={bookTitle}
-        bookTotalWords={bookTotalWords}
-        bookLearnedWords={bookLearnedWords}
-        onOpenBookShelf={() => void openBookShelf()}
-        userEmail={userEmail}
-        readOnly={readOnly}
-        onGoSubscribe={onGoSubscribe}
-      />
-      {screen === 'empty' ? (
-        <section className="empty-state" aria-live="polite">
-          {emptyReason === 'no-book-words' ? (
-            <>
-              <p className="eyebrow">Book setup</p>
-              <h2>No book words imported yet.</h2>
-              <p>Import the book word list first, then Start today cards will prepare the next words in order.</p>
-            </>
-          ) : (
-            <>
-              <p className="eyebrow">All clear</p>
-              <h2>Today&apos;s card queue is clear.</h2>
-              <p>New words are done for the day. You can keep it light or run a spelling pass.</p>
-              {lastCompletedCards.length > 0 ? (
-                <div className="empty-actions">
-                  <button
-                    className="primary-action"
-                    type="button"
-                    onClick={() => startSpellingPractice(lastCompletedCards)}
-                  >
-                    Practice spelling now
-                  </button>
-                  <button className="ghost-button" type="button" onClick={() => setScreen('today')}>
-                    Back home
-                  </button>
-                </div>
-              ) : null}
-            </>
-          )}
-        </section>
-      ) : null}
-    </main>
+    <>
+      <main className="app-shell">
+        <TodayView
+          onStart={(target) => void handleStart(target)}
+          onAnotherGroup={() => void handleAnotherGroup()}
+          isLoading={isLoading}
+          newWordTarget={newWordTarget}
+          onNewWordTargetChange={setNewWordTarget}
+          dayCompleted={todaySummary?.dayCompleted ?? false}
+          canPracticeSpelling={
+            (todaySummary?.completedCards?.length ?? 0) > 0 ||
+            lastCompletedCards.length > 0
+          }
+          onPracticeSpelling={() => startSpellingPractice(lastCompletedCards)}
+          checkIns={checkIns}
+          error={error}
+          bookTitle={bookTitle}
+          bookTotalWords={bookTotalWords}
+          bookLearnedWords={bookLearnedWords}
+          onOpenBookShelf={() => void openBookShelf()}
+          userEmail={userEmail}
+          readOnly={readOnly}
+          onGoSubscribe={onGoSubscribe}
+        />
+        {screen === 'empty' ? (
+          <section className="empty-state" aria-live="polite">
+            {emptyReason === 'no-book-words' ? (
+              <>
+                <p className="eyebrow">Book setup</p>
+                <h2>No book words imported yet.</h2>
+                <p>Import the book word list first, then Start today cards will prepare the next words in order.</p>
+              </>
+            ) : (
+              <>
+                <p className="eyebrow">All clear</p>
+                <h2>Today&apos;s card queue is clear.</h2>
+                <p>New words are done for the day. You can keep it light or run a spelling pass.</p>
+                {lastCompletedCards.length > 0 ? (
+                  <div className="empty-actions">
+                    <button
+                      className="primary-action"
+                      type="button"
+                      onClick={() => startSpellingPractice(lastCompletedCards)}
+                    >
+                      Practice spelling now
+                    </button>
+                    <button className="ghost-button" type="button" onClick={() => setScreen('today')}>
+                      Back home
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        ) : null}
+      </main>
+      <IcpFooter />
+    </>
   );
 }

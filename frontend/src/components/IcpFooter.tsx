@@ -1,15 +1,4 @@
-/**
- * Regulatory filing footer, required by Chinese regulation for fusio.com.cn:
- * the MIIT ICP filing and the public-security (公安) networked filing.
- * Rendered once at the app root so it shows on every public view
- * (login/register and the signed-in app). Intentionally the only
- * Chinese-language element in the English UI.
- *
- * index.html carries a static copy of this markup inside #root as a
- * pre-React placeholder (keeps the record numbers visible to curl /
- * crawlers); React replaces it with this component on mount. Keep the
- * two in sync when editing.
- */
+/** ICP and public-security filing links for the Fusio home screen. */
 export function IcpFooter() {
   return (
     <footer className="icp-footer">

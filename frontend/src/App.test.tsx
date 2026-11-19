@@ -67,12 +67,16 @@ describe('App', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
+    const filing = /陇ICP备2026010404号/;
+    expect(screen.getByRole('link', { name: filing })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /start today cards/i }));
     await user.click(await screen.findByRole('button', { name: /reveal/i }));
+    expect(screen.queryByRole('link', { name: filing })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /got it/i }));
     await user.click(await screen.findByRole('button', { name: /practice spelling/i }));
 
     expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: filing })).not.toBeInTheDocument();
     // F-01: the chinese note contains the answer, so the prompt must use
     // the safe definition sentence instead.
     expect(screen.queryByText('El Nino phenomenon')).not.toBeInTheDocument();
