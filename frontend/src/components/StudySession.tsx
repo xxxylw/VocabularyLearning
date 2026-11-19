@@ -21,11 +21,16 @@ type StudySessionProps = {
   onPracticeSpelling?: (cards: StudyCard[]) => void;
   onReviewDueWords?: (cards: StudyCard[]) => void;
   // PRD ch.8: day-level progress anchors. totalCards is the day queue's
-  // size (denominator); reviewedCards counts queue entries already
-  // reviewed before this session started (numerator offset). Both fall
-  // back to session-local values when absent (e.g. ad-hoc re-review).
+  // size (denominator). 2026-10-30 学习页两段式进度条：
+  // - gotItCards = 深绿分子 —— 当日队列里评过 Got it 的卡数（顶部
+  //   进度数字同源）。旧调用方只传 reviewedCards 时回退（口径略宽，
+  //   含达上限 capped 的卡）；ad-hoc 复习 / 旧后端不传时从 0 起算。
+  // - seenUnmasteredCards = 浅绿段基数 —— 见过但还没 Got it 的卡数
+  //   （重复池 pending 与达 3 次上限移出的卡都算）。
   totalCards?: number;
+  gotItCards?: number;
   reviewedCards?: number;
+  seenUnmasteredCards?: number;
 };
 
 const ratingLabels: Array<{ rating: ReviewRating; label: string; shortcut: string }> = [
@@ -61,7 +66,9 @@ export function StudySession({
   onPracticeSpelling,
   onReviewDueWords,
   totalCards,
-  reviewedCards = 0
+  gotItCards,
+  reviewedCards,
+  seenUnmasteredCards
 }: StudySessionProps) {
   const [isRevealed, setIsRevealed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -77,40 +84,45 @@ export function StudySession({
   // today_repeat_pool 是持久权威，这里的本地重插只保证同一会话内
   // 即时可见，重进由服务端确定性重算。
   const [queue, setQueue] = useState<StudyCard[]>(cards);
-  // 规格规则 6（2026-10-29 扩展）：进度分子只计已完成卡 —— Got it
-  // 的普通队列卡、池内已 Got it（cleared）与达上限移出（capped）的
-  // 卡；评 Maybe / New 未清空的卡不计入（停滞、不回退，清空 / 达
-  // 上限时 +1）。
-  const [repeatCompleted, setRepeatCompleted] = useState(0);
-  // 已展示的原始队列卡张数：currentPosition 的兜底计数。重复卡
-  // isRepeat 副本不计入——副本是同一张卡的重现，若每次重现都推进
-  // 游标，位置显示会在当日重复场景超过 day queue 分母（6/5、7/5）。
-  const [shownCount, setShownCount] = useState(0);
+  // 规格规则 6 → 2026-10-30 两段式进度条改版：会话内增量分两色
+  // 记账 —— Got it 计入深绿（gotItDelta）；评 Maybe / New 入池的卡
+  // 计入浅绿（seenDelta），重复副本 Got it 清空时从浅绿转深绿
+  // （seen -1、gotIt +1）；达 3 次上限移出（capped）的卡停在浅绿，
+  // 不再计入深绿（旧口径曾把 capped 算完成，本版按「只要没 Got it
+  // 就算见过未掌握」修正）。深绿只增、浅绿只在转深绿时收缩且
+  // 总进度不降 —— 两段合起来单调不回退。
+  const [gotItDelta, setGotItDelta] = useState(0);
+  const [seenDelta, setSeenDelta] = useState(0);
 
   useEffect(() => {
     // cards prop 只在服务端重新拉会话时换引用（重进 Today / 再来一组 /
-    // ad-hoc 复习），同步工作流并复位会话内进度。
+    // ad-hoc 复习），同步工作流并复位会话内进度（两段基数由服务端
+    // gotItCards / seenUnmasteredCards 权威重算）。
     setQueue(cards);
-    setRepeatCompleted(0);
-    setShownCount(0);
+    setGotItDelta(0);
+    setSeenDelta(0);
     completedRef.current = false;
   }, [cards]);
 
   const card = queue[0];
   // PRD ch.8: the progress bar is anchored to the day queue, not the
   // in-session list, so it never resets after re-entering Today.
+  // 2026-10-30 两段式进度条：深绿 = 评过 Got it 的卡（顶部数字同源
+  // ——「数字显示 completed 的数量」）；浅绿 = 见过但还没 Got it
+  // 的卡（入池 pending 与达上限 capped 都算）。两段间用同色系深浅
+  // 渐变丝滑过渡。旧调用方只传 reviewedCards 时回退为深绿基数
+  // （口径略宽），ad-hoc 复习不传时从 0 起算。
   const denominator = totalCards ?? cards.length;
-  const dayCompletedCount = reviewedCards + repeatCompleted;
-  const completionPercent =
-    denominator === 0 ? 0 : (dayCompletedCount / denominator) * 100;
-  // 位置游标口径：重复卡 isRepeat 副本是同一张卡的重现，不推进
-  // shownCount（服务端 flow 计算同口径——池卡不算展示消耗）。副本
-  // 显示最近一张原始卡的位置（下限 1），原始卡显示下一槽位——位置
-  // 恒 ≤ 分母，不再出现 6/5、7/5。
-  const fallbackPosition = reviewedCards + shownCount;
-  const currentPosition =
-    card?.queuePosition ??
-    (card?.isRepeat ? Math.max(1, fallbackPosition) : fallbackPosition + 1);
+  const dayCompletedCount = (gotItCards ?? reviewedCards ?? 0) + gotItDelta;
+  // 浅绿允许 delta 为负：重进场景服务端基数已把池内 pending 卡计入
+  // 浅绿，副本 cleared 时要 -1 才能正确「浅绿转深绿」；总量再钳 0。
+  const daySeenCount = Math.max(0, (seenUnmasteredCards ?? 0) + seenDelta);
+  const clampPercent = (value: number) =>
+    denominator === 0
+      ? 0
+      : Math.min(100, Math.max(0, Math.round((value / denominator) * 100)));
+  const completedPercent = clampPercent(dayCompletedCount);
+  const seenPercent = clampPercent(dayCompletedCount + daySeenCount);
   // 消费即从工作流头移除，队列清空（含重复副本全部解决）才会话完成
   // —— 与服务端「dayCompleted 追加池清空条件」同构（规格规则 5）。
   const isComplete = cards.length > 0 && queue.length === 0;
@@ -161,13 +173,21 @@ export function StudySession({
           }
           return next;
         });
-        if (
-          (!card.isRepeat && rating === 'known') ||
-          (card.isRepeat && (poolStatus === 'cleared' || poolStatus === 'capped'))
-        ) {
-          setRepeatCompleted((count) => count + 1);
+        if (!card.isRepeat && rating === 'known') {
+          // 普通队列卡 Got it：深绿 +1（卡此前未见过，浅绿无变化）。
+          setGotItDelta((count) => count + 1);
+        } else if (!card.isRepeat) {
+          // Maybe / New 入池：见过但未掌握，浅绿 +1。
+          setSeenDelta((count) => count + 1);
+        } else if (poolStatus === 'cleared') {
+          // 重复副本 Got it 清空：浅绿转深绿（seen -1、gotIt +1）。
+          // 不钳 0 —— 重进场景服务端基数已把池内卡计入浅绿，需要
+          // 负 delta 抵消（总量在 daySeenCount 处再钳 0）。
+          setSeenDelta((count) => count - 1);
+          setGotItDelta((count) => count + 1);
         }
-        setShownCount((count) => (card.isRepeat ? count : count + 1));
+        // 重复副本 pending（再现 Maybe / New）与 capped（达上限移出）
+        // 都停在浅绿：已在入池时计入，不重复、不转深绿。
         setIsRevealed(false);
         setLookupState({ status: 'idle' });
         setShowAllDefinitions(false);
@@ -365,8 +385,12 @@ export function StudySession({
           Exit
         </button>
         <div className="study-progress">
+          {/* 2026-10-30 两段式进度条：数字 = completed（Got it 卡数）；
+              深绿段 = Got it，其后浅绿段 = 见过但未掌握（入池 pending
+              与达上限 capped 都算），两段以同色系深浅渐变丝滑过渡。
+              进度条下方不再单独显示 completed 文案。 */}
           <div className="progress-text" aria-label="Progress">
-            {currentPosition} / {denominator}
+            {dayCompletedCount} / {denominator}
           </div>
           <div
             className="progress-bar"
@@ -375,10 +399,11 @@ export function StudySession({
             aria-valuemin={0}
             aria-valuemax={denominator}
             aria-valuenow={dayCompletedCount}
+            aria-valuetext={`${dayCompletedCount} of ${denominator} words completed`}
           >
-            <div className="progress-bar-fill" style={{ width: `${completionPercent}%` }} />
+            <div className="progress-fill progress-fill-seen" style={{ width: `${seenPercent}%` }} />
+            <div className="progress-fill progress-fill-done" style={{ width: `${completedPercent}%` }} />
           </div>
-          <div className="completed-text">{dayCompletedCount} / {denominator} completed</div>
         </div>
       </header>
 

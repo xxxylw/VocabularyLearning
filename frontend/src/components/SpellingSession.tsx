@@ -213,6 +213,24 @@ export function SpellingSession({
           {/* DP-B1/F-08：主提示为安全首句、h2 级字号，不再用 h1。 */}
           <h2 id="spelling-title">{prompt}</h2>
           <p className="spelling-pos">{card.partOfSpeech}{card.senseLabel ? ` · ${card.senseLabel}` : ''}</p>
+
+          {/*
+           * 2026-11-02 拼写页增强（用户原话：「这里单词拼写的时候我希望有
+           * 音标还有发音的音频，辅助我拼写。」）：出题阶段即提供英美音标 +
+           * 发音播放（听音拼词），进入新题自动播放一次（autoplay 被拦由
+           * PronunciationPanel 静默降级）。concealWord 把答案从所有可访问名
+           * 中隐去（F-01 口径延伸到 aria-label）；无音频的词沿用面板既有
+           * 降级——音标照显、按钮不渲染。面板在答题全程常驻原位，答题后
+           * 不再于结果区重复挂载。
+           */}
+          {onLookupPronunciation ? (
+            <PronunciationPanel
+              word={card.word}
+              onLookupPronunciation={onLookupPronunciation}
+              autoPlay
+              concealWord
+            />
+          ) : null}
         </div>
 
         <div className="spelling-answer-panel">
@@ -270,9 +288,10 @@ export function SpellingSession({
             </p>
           ) : null}
 
-          {isResolved && onLookupPronunciation ? (
-            <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} />
-          ) : null}
+          {/*
+           * 发音面板已上移到出题区常驻（2026-11-02 拼写页增强）——答题后
+           * 不再于此处重复渲染，避免同一词双面板与二次查询。
+           */}
           <p className="completed-text">{completedCount} / {denominator} completed</p>
         </div>
       </section>

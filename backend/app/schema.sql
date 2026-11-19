@@ -231,12 +231,16 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Opaque session tokens (C-02): only SHA-256 hashes are stored; the
 -- raw token lives in the client's Authorization header.
+-- superseded_at（2026-11-11 单点登录）：新登录把旧会话标记为被取代
+-- （不删除），旧端下次请求据此返回 401 session_superseded 与明确
+-- 提示，区别于自然过期/登出；行在自然到期后由 create_session 清理。
 CREATE TABLE IF NOT EXISTS sessions (
     id text primary key,
     user_id text not null references users(id),
     token_hash text not null unique,
     created_at text not null,
-    expires_at text not null
+    expires_at text not null,
+    superseded_at text null
 );
 
 -- Verify/reset tokens (C-05): 1h expiry, single use (used_at), stored

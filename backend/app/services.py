@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 import json
 import os
+import random
 import re
 from uuid import uuid4
 
@@ -58,12 +59,33 @@ class ReviewConflictError(ValueError):
 # due_at，与「同卡同日不可重复评分（409）」零冲突。
 # ---------------------------------------------------------------------------
 
-# D2 拍板：评 New 的卡从当前位置后移 3 张重新出现（间隔 3 张未学卡）。
-REPEAT_INSERT_INTERVAL = 3
+# 2026-10-30 规格调整（task 7702336036965239809，用户原话「固定的
+# 三个后插入不太好，复习的出现位置再随机一点，靠后点没关系的」）：
+# 重插间隔从固定 3 张改为每次独立随机 4~8 张 —— 宁可靠后也别太近。
+# 随机值只在两个时点生成并立即持久化到 today_repeat_pool.defer_
+# remaining（入池 / 池内副本再推迟）；之后的推进是确定性的 -1 递减，
+# 重进后的会话重算只读持久化值，不受随机化影响。同一张卡多次重插
+# 时每次独立随机。
+REPEAT_INSERT_INTERVAL_MIN = 4
+REPEAT_INSERT_INTERVAL_MAX = 8
+
+
+def _random_insert_interval() -> int:
+    return random.randint(REPEAT_INSERT_INTERVAL_MIN, REPEAT_INSERT_INTERVAL_MAX)
 
 # D3 拍板：每卡当日最多重复 3 次（初次 + 3 次重复共 4 次接触），达上限
 # 自动移出、由 SM-2 次日重学兜底。
 MAX_REPEATS = 3
+
+# 每日队列总量软上限（2026-11-11 用户需求「每天复习的词汇不要太多，
+# 最多 150 个左右」）：自动装配的当日队列（到期复习 + 配额新词）总量
+# 不超过该值。到期复习卡优先 —— 快照按 due_at 升序（最过期者优先）
+# 取前 CAP 张，装不下的复习卡当日不入队：它们的 due_at 不变（不丢卡、
+# 不重置进度），次日自然仍然到期、按同一排序补进次日队列。配额新词
+# 只补到 CAP 剩余空位。例外：「再来一组」（extraNewWords）是用户显式
+# 加练，不受 CAP 限制（见 _merge_new_cards_into_today_queue）。
+# 可用 VOCAB_DAILY_QUEUE_CAP 环境变量调整，默认 150。
+DAILY_QUEUE_CAP = int(os.environ.get("VOCAB_DAILY_QUEUE_CAP", "150"))
 
 
 def _decrement_repeat_pool_for_shown_card(
@@ -74,8 +96,9 @@ def _decrement_repeat_pool_for_shown_card(
     0）。作用域由「shown 卡在哪些书的当日队列里」决定 —— 队列外的
     自由复习、拼写回放不推进该计数（其评分不对应当日队列展示）。
     同词多义项例外：同一张学习卡（同词）的兄弟义项卡在同一次展示
-    中评分，不推进彼此的计数 —— 否则双义项卡会在间隔 2 张而非
-    3 张处重现（规格规则 2 的「间隔 3 张」按展示张数计）。"""
+    中评分，不推进彼此的计数 —— 否则双义项卡会在比其随机重插
+    间隔少 1 张处重现（重插间隔按展示张数计，随机化后仍是同
+    一口径）。"""
     connection.execute(
         """
         update today_repeat_pool
@@ -119,8 +142,9 @@ def _enter_repeat_pool(
     当日重复池 —— new 卡与到期复习卡都进池（2026-10-29 规格扩展，
     原 D1 只收 new 卡的 unknown）。insert ... select 限定在当日队列
     （today_queue）内，队列外评分天然不进池；insert or ignore 幂等
-    （唯一索引兜底，多义项重复提交 / 并发下不炸）。defer_remaining =
-    间隔 3 张。"""
+    （唯一索引兜底，多义项重复提交 / 并发下不炸）。defer_remaining
+    = 每次独立随机 4~8 张（2026-10-30 规格调整，入池时生成并立即
+    持久化，重进后的重算只读持久值）。"""
     connection.execute(
         """
         insert or ignore into today_repeat_pool (
@@ -137,7 +161,7 @@ def _enter_repeat_pool(
         (
             str(uuid4()),
             user_id,
-            REPEAT_INSERT_INTERVAL,
+            _random_insert_interval(),
             _utc_now(),
             _utc_now(),
             user_id,
@@ -152,9 +176,10 @@ def review_repeat_pool_card(
 ) -> RepeatPoolReviewResponse:
     """重复卡上的三按钮（规格规则 3/4）：只更新当日池状态，不写
     reviews、不改 SM-2。known → cleared（Got it 一次才移除）；
-    uncertain / unknown → repeat_count +1 且 defer 重置（按规则 2 再次
-    后移），达 MAX_REPEATS 上限置 capped 自动移出（D3）。本卡已被
-    展示：其余 pending 池卡各前进一步。多设备并发以先落库为准，
+    uncertain / unknown → repeat_count +1 且 defer 重新随机生成
+    （4~8 张独立抽一次，2026-10-30 规格调整），达 MAX_REPEATS 上限
+    置 capped 自动移出（D3）。本卡已被展示：其余 pending 池卡各前进
+    一步。多设备并发以先落库为准，
     后到方对已终态（cleared/capped）的行幂等返回现状。"""
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -226,7 +251,9 @@ def review_repeat_pool_card(
             """,
             (
                 repeat_count,
-                REPEAT_INSERT_INTERVAL,
+                # 2026-10-30 规格调整：再推迟的 defer 每次独立随机 4~8
+                # 张（生成后立即持久化，重进重算只读持久值）。
+                _random_insert_interval(),
                 now,
                 user_id,
                 card_id,
@@ -834,13 +861,17 @@ def _create_today_queue_snapshot(
     daily_new_word_target: int,
     extra_new_words: int = 0,
 ) -> None:
-    review_cards = sorted(
+    review_candidates = sorted(
         # PRD ch.8 rule 2: review cards by due_at ascending (overdue
         # first); the stable sort keeps the book-sequence order as the
         # tie-breaker for cards sharing a due date.
         _get_due_review_cards(study_date, user_id),
         key=lambda card: card.dueAt,
     )
+    # DAILY_QUEUE_CAP（2026-11-11 → 2026-11-12 修正）：到期复习**不再**
+    # 优先占满上限 —— 复习容量 = CAP − 新词保底数（见下方）。装不下的
+    # 复习卡当日不入队，due_at 保持原值（顺延，不丢卡、不重置进度），
+    # 次日快照自然再选中它们。
 
     # P0 2026-09-08 「再来一组」：extra is folded into the new-word
     # allowance. On a fresh day (no reviews yet) this is simply
@@ -849,39 +880,84 @@ def _create_today_queue_snapshot(
     # start call completes. Quota bookkeeping still derives from the
     # study date's review history (see _count_new_words_studied_on),
     # so cross-day residue stays zero.
-    new_word_target_remaining = max(
+    #
+    # 2026-11-12 需求二（用户原话「每日单词上限是150个左右，然后还是
+    # 最后x个是背的新词的数量，不能因为限制次数了就把新词剔出去，
+    # 没来得及复习的，可以在明天下次背诵中安排复习」）：新词配额
+    # **保底**占队列尾部，到期复习只取剩余容量。
+    #   x = min(今日剩余新词配额, 实际可取新词数) → 这 x 张新词固定
+    #       排在队列最后；
+    #   reviews = 到期复习按 due_at 升序取前 (CAP − x) 张；
+    #   装不下的到期复习 due_at 不动（不丢卡、不重置进度），次日快照
+    #       自然再选中它们 —— 即「没来得及复习的，明天安排复习」。
+    #   extra（用户显式「再来一组」）不受 CAP 限制，也不占用复习容量。
+    quota_remaining = max(
         daily_new_word_target
-        + extra_new_words
         - _count_new_words_studied_on(user_id, study_date),
         0,
     )
-    new_cards = (
-        _get_due_new_cards(study_date, new_word_target_remaining, user_id)
-        if new_word_target_remaining > 0
+    total_new_allowance = quota_remaining + extra_new_words
+    new_candidates = (
+        _get_due_new_cards(study_date, total_new_allowance, user_id)
+        if total_new_allowance > 0
         else []
     )
-    if len(new_cards) < new_word_target_remaining:
+    if len(new_candidates) < total_new_allowance:
         prepare_book_words(
             user_id,
             PrepareJobRequest(
                 scope="next",
-                count=new_word_target_remaining - len(new_cards),
+                count=total_new_allowance - len(new_candidates),
                 maxSensesPerWord=5,
                 overwriteExisting=False,
             ),
         )
-        new_cards = _get_due_new_cards(study_date, new_word_target_remaining, user_id)
+        new_candidates = _get_due_new_cards(
+            study_date, total_new_allowance, user_id
+        )
+
+    # 新词保底数 x = min(今日剩余新词配额, 实际可取新词数)。
+    quota_new_cards = new_candidates[:quota_remaining]
+    extra_new_cards = new_candidates[
+        quota_remaining : quota_remaining + extra_new_words
+    ]
+    reserved_new_count = len(quota_new_cards)
+
+    # 到期复习取剩余容量：CAP − x 张，按 due_at 升序（最过期者优先）。
+    review_capacity = max(DAILY_QUEUE_CAP - reserved_new_count, 0)
+    review_cards = review_candidates[:review_capacity]
 
     # A word whose senses span both the review and the new pool is queued
     # once, as a review card (its primary card id matches on both sides).
     review_card_ids = {card.cardId for card in review_cards}
-    new_cards = [card for card in new_cards if card.cardId not in review_card_ids]
+    quota_new_cards = [
+        card for card in quota_new_cards if card.cardId not in review_card_ids
+    ]
+    extra_new_cards = [
+        card for card in extra_new_cards if card.cardId not in review_card_ids
+    ]
+
+    # 去重让出新词保底名额时，空出来的位置回填到期复习（不硬凑：回填后
+    # 仍不足 CAP 就以队列实际词数为准）。
+    freed = reserved_new_count - len(quota_new_cards)
+    if freed > 0:
+        taken_card_ids = {card.cardId for card in quota_new_cards} | {
+            card.cardId for card in extra_new_cards
+        }
+        for card in review_candidates[review_capacity:]:
+            if freed <= 0:
+                break
+            if card.cardId in taken_card_ids:
+                continue
+            review_cards.append(card)
+            taken_card_ids.add(card.cardId)
+            freed -= 1
 
     _append_today_queue_rows(
         user_id,
         study_date,
         review_cards=review_cards,
-        new_cards=new_cards,
+        new_cards=quota_new_cards + extra_new_cards,
         create_snapshot=True,
     )
 
@@ -953,7 +1029,18 @@ def _merge_new_cards_into_today_queue(
         - (len(queued_new_card_ids) - reviewed_queued_new),
         0,
     )
-    total_to_add = quota_remaining + extra_new_words
+    # DAILY_QUEUE_CAP（2026-11-11）：配额新词最多补到「上限 − 当前队列
+    # 总量」的空位（到期复习在快照阶段已按 due_at 升序优先入队）。
+    # extra（用户显式「再来一组」）不受 CAP 限制，照旧全额追加。
+    with connect() as connection:
+        book_id = get_current_book_id(connection, user_id)
+        queue_size = connection.execute(
+            "select count(*) as total from today_queue"
+            " where user_id = ? and book_id = ? and study_date = ?",
+            (user_id, book_id, study_date.isoformat()),
+        ).fetchone()["total"]
+    queue_room = max(DAILY_QUEUE_CAP - queue_size, 0)
+    total_to_add = min(quota_remaining, queue_room) + extra_new_words
     if total_to_add <= 0:
         return
 
@@ -1085,7 +1172,7 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
             (user_id, book_id, study_date.isoformat()),
         ).fetchall()
         if not queue_rows:
-            return TodaySessionResponse(totalCards=0, cards=[], reviewedCards=0)
+            return TodaySessionResponse(totalCards=0, cards=[], reviewedCards=0, positionOffset=0)
 
         queue_card_ids = [row["card_id"] for row in queue_rows]
         placeholders = ", ".join("?" for _ in queue_card_ids)
@@ -1096,19 +1183,19 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
                 tuple(queue_card_ids),
             ).fetchall()
         }
+        reviewed_rows = connection.execute(
+            f"""
+            select distinct card_id, rating
+            from reviews
+            where card_id in ({placeholders})
+              -- P1 2026-09-08：UTC 日界竞态修复——改用 study_date
+              -- 列（服务器本地日期，与 today_queue.study_date 同口径）。
+              and reviews.study_date = ?
+            """,
+            (*queue_card_ids, study_date.isoformat()),
+        ).fetchall()
         reviewed_rating = {
-            row["card_id"]: row["rating"]
-            for row in connection.execute(
-                f"""
-                select distinct card_id, rating
-                from reviews
-                where card_id in ({placeholders})
-                  -- P1 2026-09-08：UTC 日界竞态修复——改用 study_date
-                  -- 列（服务器本地日期，与 today_queue.study_date 同口径）。
-                  and reviews.study_date = ?
-                """,
-                (*queue_card_ids, study_date.isoformat()),
-            ).fetchall()
+            row["card_id"]: row["rating"] for row in reviewed_rows
         }
 
         # 当日重复池（规格规则 7）：已评卡不再进入待学流，池内 pending
@@ -1132,6 +1219,22 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
             (user_id, book_id, study_date.isoformat()),
         ).fetchall()
         pending_pool_ids = {row["card_id"] for row in pool_rows}
+        # 2026-10-30 两段式口径补充：重复副本上的评分只更新池状态、
+        # 不写 reviews（见 routes.py 该路由注释），所以「最终 Got it」
+        # 的池内卡在 reviews 里没有 known 行 —— 但池状态 cleared 本身
+        # 就等价于「副本上评过 Got it」（唯一清空途径）。capped 的卡
+        # 保持浅绿（没 Got it 就不算完成）。
+        cleared_pool_ids = {
+            row["card_id"]
+            for row in connection.execute(
+                """
+                select card_id from today_repeat_pool
+                where user_id = ? and book_id = ? and study_date = ?
+                  and status = 'cleared'
+                """,
+                (user_id, book_id, study_date.isoformat()),
+            ).fetchall()
+        }
 
         total_cards = sum(1 for card_id in queue_card_ids if card_id in existing_ids)
         # 进度条分子口径（规格规则 6，2026-10-29 扩展）：分母 = 队列快照
@@ -1144,6 +1247,41 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
             if card_id in existing_ids
             and card_id in reviewed_rating
             and card_id not in pending_pool_ids
+        )
+        # 2026-10-30 重进进度回退修复：位置游标口径 —— 队列里已评分
+        # 的卡数（任意评级，含池内 pending 的卡）。服务端只能观测到
+        # 「评过分的卡」，未评分的队列卡无论是否展示过都用其
+        # queuePosition 绝对定位；池内 isRepeat 副本没有 queuePosition，
+        # 前端用 positionOffset + 会话内 shownCount 做游标基数 —— 与
+        # 单会话内 reviewedCards + shownCount 的值同构（单会话内
+        # Maybe/New 评分都进 shownCount），因此重进前后位置显示一致，
+        # 不再回退。
+        position_offset = sum(
+            1
+            for card_id in queue_card_ids
+            if card_id in existing_ids and card_id in reviewed_rating
+        )
+        # 2026-10-30 学习页两段式进度条（gotItCards / seenUnmastered
+        # Cards）：深绿分子 = 评过 Got it（known）的卡数 ∪ 池内已清空
+        # 的卡（cleared ⇔ 副本上评过 Got it，reviews 无 known 行）；
+        # 浅绿 = 见过但未掌握 —— 当日有评分但从未 Got it 的卡数（池内
+        # pending 与达上限 capped 移出的卡都算）。gotIt +
+        # seenUnmastered = positionOffset（已评分口径），重进后两段
+        # 都不回退；数字显示用 gotItCards。
+        got_it_ids = {
+            row["card_id"] for row in reviewed_rows if row["rating"] == "known"
+        } | cleared_pool_ids
+        got_it_cards = sum(
+            1
+            for card_id in queue_card_ids
+            if card_id in existing_ids and card_id in got_it_ids
+        )
+        seen_unmastered_cards = sum(
+            1
+            for card_id in queue_card_ids
+            if card_id in existing_ids
+            and card_id in reviewed_rating
+            and card_id not in got_it_ids
         )
         pending_rows = [
             row
@@ -1180,7 +1318,8 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
             # 重算而非持久化位置）：defer_remaining 是「还要再展示多少
             # 张卡」的持久计数，每张当日流卡片的评分（review / 池操作）
             # 各减 1。这里模拟当日流的推进：defer 到 0 的池卡插在下一张
-            # 待学卡之前；未到的随队列推进逐张递减；剩余未学卡不足 3
+            # 待学卡之前；未到的随队列推进逐张递减；剩余未学卡不足
+            # 该池卡的 defer 值（2026-10-30 起为入池时随机生成的 4~8）
             # 张（队列耗尽）时剩余池卡按入池顺序依次出现在队尾。
             # 同词多义项去重（规格边界态：多义项以卡为粒度各自进池，
             # 但学习卡按词渲染）—— 同词的多张池卡只注入一张重复卡
@@ -1205,7 +1344,7 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
                 if pool_pending and pool_pending[0]["defer"] <= 0:
                     entry = pool_pending.pop(0)
                     flow.append(("pool", entry["card_id"]))
-                    # 池卡弹出不算「再展示 3 张」的展示消耗（它已展示
+                    # 池卡弹出不算「再展示若干张」的展示消耗（它已展示
                     # 过、现在只是重看）。只前进来自队列卡（待学 new /
                     # review）的展示消耗 —— 释义 B 才是规格原意。
                     continue
@@ -1245,6 +1384,9 @@ def _read_today_queue_session(user_id: str, study_date: date) -> TodaySessionRes
             totalCards=total_cards,
             cards=cards,
             reviewedCards=reviewed_cards,
+            positionOffset=position_offset,
+            gotItCards=got_it_cards,
+            seenUnmasteredCards=seen_unmastered_cards,
         )
 
 
@@ -1474,6 +1616,62 @@ select study_date, count(*) as new_cards from (
 group by study_date
 """
 
+# 2026-11-12 需求一（用户原话「首页的日期上，每日已背的词汇应该最多是
+# 那个要学的卡片的数量，不是翻了多少次卡片」）：打卡计数改为**当天队列
+# 口径** ——
+#   - completedCards = 当天队列里已清除（Got it 且不再 pending 于重复池）
+#     的唯一卡数。清除 = 当日 review 评级为 known（队列卡直接 Got it）
+#     ∪ 当日重复池状态 cleared（重复副本上评过 Got it；副本评分不写
+#     reviews，所以池状态本身就是「副本上 Got it 过」的证据）；
+#   - 硬上限 = 当天队列卡数（重复池 re-entry 副本只算一张原卡，跨书
+#     共享词同理），因此「已背 x / 共 y」里 x 永远 ≤ y；
+#   - 同一张卡因重复池重现被多次评分只计 1 次（首次清除时计）；
+#   - 队列外的自由复习（当天队列装不下的到期复习等）不计入；
+#   - newCards / reviewCards 仍按「当天队列里已评分的卡」拆分（首次
+#     review 落在当日 → new），保证「背完时间预估」的新词速度口径不变。
+# 没有当日队列的历史日期沿用旧口径（reviews distinct），避免历史打卡与
+# 连续天数回退。
+_CHECK_IN_QUEUE_SQL = """
+select
+    q.study_date as study_date,
+    count(distinct q.card_id) as queue_cards,
+    count(distinct case
+        when r.rating = 'known' or p.card_id is not null
+        then q.card_id end) as completed_cards,
+    count(distinct case
+        when r.card_id is not null
+        then q.card_id end) as reviewed_cards,
+    count(distinct case
+        when r.card_id is not null and fr.first_date = q.study_date
+        then q.card_id end) as new_cards
+from (
+    select distinct user_id, study_date, card_id
+    from today_queue
+    where user_id = ?
+) q
+-- 只统计**真实存在**的卡：历史遗留的 today_queue 行可能指向已被清理的
+-- card_id（无外键约束的旧设计），这些行不构成「当天的学习队列」，
+-- 该日期按旧口径回落，避免历史打卡亮点凭空归零。
+inner join cards c
+    on c.id = q.card_id
+left join reviews r
+    on r.user_id = q.user_id
+   and r.card_id = q.card_id
+   and r.study_date = q.study_date
+left join today_repeat_pool p
+    on p.user_id = q.user_id
+   and p.card_id = q.card_id
+   and p.study_date = q.study_date
+   and p.status = 'cleared'
+left join (
+    select card_id, min(study_date) as first_date
+    from reviews
+    where user_id = ?
+    group by card_id
+) fr on fr.card_id = q.card_id
+group by q.study_date
+"""
+
 # 本地历史打卡的上传承载：只存「服务端当天没有 reviews」的日期（本地
 # 独有历史，如旧本地版应用迁移过来的记录）。派生数据（reviews 聚合）
 # 永远优先于该 override —— reviews 是完成判定的唯一权威。
@@ -1519,10 +1717,14 @@ def _load_check_in_overrides(connection, user_id: str) -> dict[str, dict]:
 def _derived_check_in_days(connection, user_id: str) -> list[CheckInDayPayload]:
     """从 reviews 按 study_date 聚合派生每日打卡记录。
 
-    - completedCards = 当日 distinct card_id 数（服务端同一卡同日只允许
-      一条 review，distinct 兜底未来口径变化）；
-    - newCards = 首次 review 落在该日的卡数；
-    - reviewCards = completedCards - newCards；
+    2026-11-12 需求一（当天队列口径）：
+    - 有当日队列的日期：completedCards = 当天队列里已清除（Got it 且
+      不再 pending 于重复池）的唯一卡数，硬上限 = 当天队列卡数；队列外
+      的自由复习不计入；同一张卡多次评分只计 1 次。
+    - 没有当日队列的日期（历史数据 / 队列外学习）：沿用旧口径
+      （当日 distinct card_id 数），避免历史打卡与连续天数回退。
+    - newCards / reviewCards：有队列的日期按「当天队列里已评分的卡」
+      拆分（首次 review 落在当日 → new），无队列的日期按旧口径拆分。
     - completedAt = 当日 max(reviewed_at)（ISO 字符串）。
     """
     derived_rows = connection.execute(
@@ -1542,18 +1744,41 @@ def _derived_check_in_days(connection, user_id: str) -> list[CheckInDayPayload]:
     new_cards_by_date = {
         row["study_date"]: int(row["new_cards"]) for row in new_card_rows
     }
+    queue_rows = connection.execute(
+        _CHECK_IN_QUEUE_SQL, (user_id, user_id)
+    ).fetchall()
+    queue_by_date = {row["study_date"]: row for row in queue_rows}
 
     records: list[CheckInDayPayload] = []
     for row in derived_rows:
         study_date = row["study_date"]
-        completed = int(row["completed_cards"])
-        new_cards = int(new_cards_by_date.get(study_date, 0))
+        queue_row = queue_by_date.get(study_date)
+        if queue_row is None:
+            # 无当日队列 → 旧口径（当日 distinct card_id 数）。
+            completed = int(row["completed_cards"])
+            new_cards = int(new_cards_by_date.get(study_date, 0))
+            records.append(
+                CheckInDayPayload(
+                    date=study_date,
+                    completedCards=completed,
+                    newCards=new_cards,
+                    reviewCards=max(0, completed - new_cards),
+                    completedAt=row["completed_at"] or "",
+                )
+            )
+            continue
+
+        # 有当日队列 → 队列口径（已清除的唯一卡数，硬上限 = 队列卡数）。
+        queue_cards = int(queue_row["queue_cards"])
+        completed = min(int(queue_row["completed_cards"]), queue_cards)
+        reviewed = int(queue_row["reviewed_cards"])
+        new_cards = min(int(queue_row["new_cards"]), reviewed)
         records.append(
             CheckInDayPayload(
                 date=study_date,
                 completedCards=completed,
                 newCards=new_cards,
-                reviewCards=max(0, completed - new_cards),
+                reviewCards=max(0, reviewed - new_cards),
                 completedAt=row["completed_at"] or "",
             )
         )

@@ -1,4 +1,4 @@
-import { getSessionToken } from './session';
+import { getSessionToken, handleKickedSession } from './session';
 import type { CheckInRecord } from './checkins';
 
 export type DefinitionSource =
@@ -49,6 +49,19 @@ export type TodaySession = {
   // PRD ch.8: entries of the day's queue snapshot already reviewed on the
   // study date — the numerator offset so the progress bar never restarts.
   reviewedCards: number;
+  // 2026-10-30 重进进度回退修复：当日队列里已评分的卡数（任意评级，
+  // 含仍在重复池 pending 的卡）。重复卡 isRepeat 副本的位置游标基数
+  // —— 与 reviewedCards 的「已完成」口径不同，这个「已消费」口径
+  // 不因重进回退。旧后端未返回时前端回退到 reviewedCards。
+  positionOffset?: number;
+  // 2026-10-30 学习页两段式进度条：gotItCards = 深绿分子（当日
+  // 队列里评过 Got it 的卡数，进度数字同源）；seenUnmasteredCards
+  // = 浅绿段（见过但还没 Got it 的卡数，含重复池 pending 与达
+  // 上限移出的卡）。gotIt + seenUnmastered = positionOffset（已
+  // 评分口径），重进后两段都不回退。旧后端未返回时前端回退：
+  // gotIt → reviewedCards，seenUnmastered → 0。
+  gotItCards?: number;
+  seenUnmasteredCards?: number;
 };
 
 // P0 2026-09-08 跨设备完成态恢复：只读 summary，用作 Today 页
@@ -155,6 +168,11 @@ async function sendJson<T>(method: 'POST' | 'PUT', url: string, body: unknown): 
 
   if (!response.ok) {
     const { text: errorBody, code } = await readErrorInfo(response);
+    // 单点登录（2026-11-11 需求一）：被新登录顶下线 → 清 token 并跳
+    // 登录页展示英文提示，不无声失败。
+    if (response.status === 401 && code === 'session_superseded') {
+      handleKickedSession();
+    }
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
 
@@ -191,6 +209,10 @@ async function getJson<T>(url: string): Promise<T> {
 
   if (!response.ok) {
     const { text: errorBody, code } = await readErrorInfo(response);
+    // 单点登录（2026-11-11 需求一）：同 sendJson 的被顶下线处理。
+    if (response.status === 401 && code === 'session_superseded') {
+      handleKickedSession();
+    }
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const detail = errorBody ? `: ${errorBody}` : '';
 
@@ -458,6 +480,17 @@ async function authJson<T>(method: 'GET' | 'POST' | 'PUT', url: string, body?: u
   }
 
   if (!response.ok) {
+    // 单点登录（2026-11-11 需求一）：同 sendJson/getJson 的被顶下线
+    // 处理 —— authJson 自行解析 body，这里直接从 detail 取 code。
+    const errorDetail = (parsed as { detail?: unknown } | null)?.detail;
+    if (
+      response.status === 401 &&
+      errorDetail !== null &&
+      typeof errorDetail === 'object' &&
+      (errorDetail as { code?: unknown }).code === 'session_superseded'
+    ) {
+      handleKickedSession();
+    }
     throw toApiError(
       response.status,
       parsed,

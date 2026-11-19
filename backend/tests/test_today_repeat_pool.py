@@ -2,10 +2,11 @@
 一次才移除；PM 定稿 recvuPXKUX970L）.
 
 覆盖规格第五章验收标准的后端部分：
-1. 当日队列内新卡评 New 后间隔 3 张重新出现（不足 3 张时队尾）；
-   Got it 后当日不再出现。2026-10-29 规格扩展：非 Got it 评级
-   （Maybe / New）的 new 卡与到期复习卡都入池、都当日重现，
-   Got it 一次才移除。
+1. 当日队列内新卡评 New 后间隔若干张重新出现（2026-10-30 规格调整：
+   间隔从固定 3 张改为入池/再推迟时独立随机 4~8 张并持久化，
+   不足时落队尾）；Got it 后当日不再出现。2026-10-29 规格扩展：
+   非 Got it 评级（Maybe / New）的 new 卡与到期复习卡都入池、
+   都当日重现，Got it 一次才移除。
 2. SM-2 零污染：重复卡操作不写 reviews、不改 EF / 间隔 / due_at；
    重复 Got it 幂等、不改次日调度。初评照常写 reviews / 推调度。
 3. 次日到期：池内 Got it 过的卡次日按 New 评分出现在新学习日
@@ -34,14 +35,21 @@ from __future__ import annotations
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from uuid import uuid4
 
+import random
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app import services as _services
 from app import study_clock
 from app.db import _migrated_paths, connect
 from app.main import create_app
 
 _BEIJING = timezone(timedelta(hours=8))
+
+# 2026-10-30 随机间隔规格前的真实随机实现（入池/再推迟时生成 defer）。
+# _setup 默认钉住间隔为固定 3，见 _setup 内注释。
+_REAL_INTERVAL = _services._random_insert_interval
 
 
 def _clear_migrate_cache() -> None:
@@ -58,6 +66,13 @@ def _pin(monkeypatch, natural_day: date, hh: int, mm: int = 0, ss: int = 0) -> N
 def _setup(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
     _clear_migrate_cache()
+    # 2026-10-30 规格调整：重插间隔改为每次独立随机 4~8 张
+    # （services._random_insert_interval）。既有结构测试（顺序 /
+    # 递减 / 上限 / 重算）的断言编码了 defer=3 的确定顺序 —— 它们
+    # 验证的是与间隔取值无关的结构逻辑，故默认钉住间隔 3 保持可
+    # 复现；间隔本身的随机范围与独立生成由专项测试
+    # test_insert_interval_random_* 覆盖。
+    monkeypatch.setattr(_services, "_random_insert_interval", lambda: 3)
     return TestClient(create_app())
 
 
@@ -264,9 +279,115 @@ def test_reinsert_at_tail_when_fewer_than_3_left(tmp_path, monkeypatch):
     assert _review(client, session["cards"][0]["cardId"], at, "unknown") == 200
 
     session = _start(client, target=2)
-    # 只剩 1 张待学卡（不足 3）→ alpha 出现在队尾。
+    # 只剩 1 张待学卡（不足间隔）→ alpha 出现在队尾。
     assert _words_in(session) == ["bravo", "alpha"]
     assert _repeat_words_in(session) == ["alpha"]
+
+
+# ---------------------------------------------------------------------------
+# 随机间隔专项（2026-10-30 规格调整，task 7702336036965239809）：
+# 入池 / 再推迟时 defer 独立随机 4~8 张并持久化
+# ---------------------------------------------------------------------------
+
+
+def test_insert_interval_random_in_range_on_entry(tmp_path, monkeypatch):
+    """入池时生成的 defer_remaining 每次独立随机、恒落在 4~8（用户
+    原话「固定的三个后插入不太好……靠后点没关系的」）。多次采样：
+    固定种子下确定，断言全部在区间内且出现至少两个不同值。"""
+    day = date(2026, 9, 11)
+    _pin(monkeypatch, day, 10, 0)
+    client = _setup(tmp_path, monkeypatch)  # 钉住间隔 3
+    # 恢复真实随机实现，固定种子使采样确定。
+    monkeypatch.setattr(_services, "_random_insert_interval", _REAL_INTERVAL)
+    random.seed(20261030)
+    assert (_services.REPEAT_INSERT_INTERVAL_MIN, _services.REPEAT_INSERT_INTERVAL_MAX) == (
+        4, 8,
+    )
+
+    words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+    _import_words(client, words)
+    _prepare(client, len(words))
+    _backdate_unreviewed_cards(day)
+    session = _start(client, target=len(words))
+
+    at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
+    defers = []
+    for card in session["cards"]:
+        assert _review(client, card["cardId"], at, "unknown") == 200
+        # 逐张读取：刚入池的 defer 尚未被后续评分递减。
+        defers.append(int(_pool_row(card["cardId"])["defer_remaining"]))
+
+    assert len(defers) == len(words)
+    assert all(4 <= value <= 8 for value in defers), defers
+    assert len(set(defers)) >= 2, defers  # 多次采样体现「每次随机」
+
+
+def test_redefer_draws_fresh_random_interval_each_time(tmp_path, monkeypatch):
+    """池内副本再推迟（Maybe / New）时每次独立生成新的随机间隔，
+    不是复位到同一个固定值：序列 [4, 8, 5] 三次抽取逐次可观测。"""
+    day = date(2026, 9, 11)
+    _pin(monkeypatch, day, 10, 0)
+    client = _setup(tmp_path, monkeypatch)
+    draws = iter([4, 8, 5])
+    monkeypatch.setattr(
+        _services, "_random_insert_interval", lambda: next(draws)
+    )
+    _import_words(client, ["alpha", "bravo", "charlie", "delta", "echo"])
+    _prepare(client, 5)
+    _backdate_unreviewed_cards(day)
+    session = _start(client, target=5)
+    alpha_id = session["cards"][0]["cardId"]
+
+    at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
+    # 入池：第一次抽取 → defer 4。
+    assert _review(client, alpha_id, at, "unknown") == 200
+    assert _pool_row(alpha_id)["defer_remaining"] == 4
+
+    # 池内再推迟 1：第二次独立抽取 → 8（repeatCount 1、仍 pending）。
+    status, body = _pool_review(client, alpha_id, "uncertain")
+    assert status == 200
+    assert (body["status"], body["repeatCount"]) == ("pending", 1)
+    assert _pool_row(alpha_id)["defer_remaining"] == 8
+
+    # 池内再推迟 2：第三次独立抽取 → 5（repeatCount 2、仍 pending）。
+    status, body = _pool_review(client, alpha_id, "unknown")
+    assert status == 200
+    assert (body["status"], body["repeatCount"]) == ("pending", 2)
+    assert _pool_row(alpha_id)["defer_remaining"] == 5
+
+
+def test_random_interval_persisted_and_recalc_reads_stored_value(
+    tmp_path, monkeypatch
+):
+    """随机值在生成时即持久化（defer_remaining 落库）；重进后的会话
+    重算是确定性的 —— 只读持久值，不重新抽随机：同一 defer 下两次
+    重进的插入位置完全一致。"""
+    day = date(2026, 9, 11)
+    _pin(monkeypatch, day, 10, 0)
+    client = _setup(tmp_path, monkeypatch)
+    draws = iter([5])
+    monkeypatch.setattr(
+        _services, "_random_insert_interval", lambda: next(draws)
+    )
+    _import_words(client, ["alpha", "bravo", "charlie", "delta", "echo"])
+    _prepare(client, 5)
+    _backdate_unreviewed_cards(day)
+    session = _start(client, target=5)
+    alpha_id = session["cards"][0]["cardId"]
+
+    at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
+    assert _review(client, alpha_id, at, "unknown") == 200
+    assert _pool_row(alpha_id)["defer_remaining"] == 5
+
+    # 抽取序列已耗尽：后续任何再抽取都会抛 StopIteration —— 重进
+    # 读取路径若重新抽随机会直接炸测试，这也是「不重抽」的可证伪
+    # 验证。两次重进插入位置完全一致（defer 5 → 第 5 张前重现）。
+    first = _start(client, target=5)
+    second = _start(client, target=5)
+    assert _words_in(first) == _words_in(second)
+    assert _words_in(first) == [
+        "bravo", "charlie", "delta", "echo", "alpha",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +495,12 @@ def test_cap_three_repeats_removes_and_counts_progress(tmp_path, monkeypatch):
     session = _start(client, target=2)
     assert "alpha" not in _words_in(session)
     assert _repeat_words_in(session) == []
+    # 2026-10-30 两段式进度条口径：capped 的卡没 Got it 就不算完成
+    # （gotItCards 不含 alpha），但属于「见过未掌握」—— 浅绿段
+    # （seenUnmasteredCards）要算上它。
+    assert session["gotItCards"] == 0
+    assert session["seenUnmasteredCards"] == 1
+    assert session["positionOffset"] == 1
 
 
 def test_day_completed_requires_pool_empty(tmp_path, monkeypatch):
@@ -840,3 +967,130 @@ def test_multi_sense_siblings_dedup_and_no_mutual_advance(tmp_path, monkeypatch)
     assert status == 404  # 兄弟义项不在池里
     session = _start(client, target=5)
     assert _repeat_words_in(session) == ["bravo"]
+
+
+
+# ---------------------------------------------------------------------------
+# 验收 11（2026-10-30 重进进度回退修复）：positionOffset 位置游标口径
+# ---------------------------------------------------------------------------
+
+
+def test_start_position_offset_counts_rated_cards_including_pool_pending(
+    tmp_path, monkeypatch
+):
+    """位置游标与进度条分子是两个口径（2026-10-30 修复）。
+
+    reviewedCards（进度条分子）把「评过 Maybe/New 仍在池内 pending」
+    的卡剔除（规格规则 6 停滞语义）；重进后前端用它做重复卡副本的
+    位置游标基数会让 x/y 回退。positionOffset 是不剔除的「已消费」
+    口径（当日队列里已评分的卡数，任意评级），重进前后与单会话内
+    reviewedCards + shownCount 同构 —— 位置显示不回退。
+    """
+    day = date(2026, 10, 30)
+    _pin(monkeypatch, day, 10, 0)
+    client = _setup(tmp_path, monkeypatch)
+    _import_words(client, ["alpha", "bravo", "charlie", "delta", "echo"])
+    _prepare(client, 5)
+    _backdate_unreviewed_cards(day)
+    session = _start(client, target=5)
+    cards = {c["word"]: c for c in session["cards"]}
+    assert session["positionOffset"] == 0
+
+    at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
+    # alpha 评 New 入池（pending）；bravo Got it。
+    assert _review(client, cards["alpha"]["cardId"], at, "unknown") == 200
+    assert _review(client, cards["bravo"]["cardId"], at, "known") == 200
+
+    # 重进（幂等 start）：分子剔除池内 alpha，位置游标不剔除。
+    session = _start(client, target=5)
+    assert session["reviewedCards"] == 1
+    assert session["positionOffset"] == 2
+    assert _words_in(session) == ["charlie", "delta", "alpha", "echo"]
+
+    # charlie / delta Got it 后再重进：游标随消费推进到 4。
+    at = datetime.combine(day, dtime(10, 2), tzinfo=_BEIJING)
+    by_word = {c["word"]: c for c in session["cards"]}
+    assert _review(client, by_word["charlie"]["cardId"], at, "known") == 200
+    assert _review(client, by_word["delta"]["cardId"], at, "known") == 200
+    session = _start(client, target=5)
+    assert session["reviewedCards"] == 3
+    assert session["positionOffset"] == 4
+    assert _words_in(session) == ["alpha", "echo"]
+
+    # alpha 副本在队首（距上次展示已隔 bravo/charlie/delta 共 3 张）：
+    # 前端用 positionOffset(4) 做基数 → 显示 4/5，不回退到 3/5。
+    assert session["cards"][0]["isRepeat"] is True
+    assert session["cards"][0]["queuePosition"] is None
+
+    # alpha Got it 清空 → reviewedCards 追平 positionOffset。
+    status, body = _pool_review(client, cards["alpha"]["cardId"], "known")
+    assert status == 200 and body["status"] == "cleared"
+    session = _start(client, target=5)
+    assert session["reviewedCards"] == 4
+    assert session["positionOffset"] == 4
+    assert _words_in(session) == ["echo"]
+
+    # 收尾：echo 评完 → N/N 完成态。
+    at = datetime.combine(day, dtime(10, 3), tzinfo=_BEIJING)
+    assert _review(client, session["cards"][0]["cardId"], at, "known") == 200
+    summary = _summary(client)
+    assert (summary["reviewedCards"], summary["totalCards"]) == (5, 5)
+    assert summary["dayCompleted"] is True
+
+
+def test_start_two_segment_counts_got_it_and_seen_unmastered(
+    tmp_path, monkeypatch
+):
+    """2026-10-30 学习页两段式进度条：服务端两段口径。
+
+    gotItCards（深绿 / 进度数字）= 当日队列里评过 Got it（known）
+    的卡数；seenUnmasteredCards（浅绿）= 当日有评分但从未 Got it
+    的卡数（池内 pending 与达上限 capped 都算）。不变量：
+    gotItCards + seenUnmasteredCards == positionOffset（已评分口
+    径）；Got it 清空时浅绿转深绿（浅绿 -1、深绿 +1），两段之和
+    不变 —— 重进后不回退。
+    """
+    day = date(2026, 10, 30)
+    _pin(monkeypatch, day, 10, 0)
+    client = _setup(tmp_path, monkeypatch)
+    _import_words(client, ["alpha", "bravo", "charlie", "delta", "echo"])
+    _prepare(client, 5)
+    _backdate_unreviewed_cards(day)
+    session = _start(client, target=5)
+    cards = {c["word"]: c for c in session["cards"]}
+    assert (session["gotItCards"], session["seenUnmasteredCards"]) == (0, 0)
+
+    at = datetime.combine(day, dtime(10, 1), tzinfo=_BEIJING)
+    # alpha 评 New 入池（pending → 浅绿）；bravo Got it（→ 深绿）。
+    assert _review(client, cards["alpha"]["cardId"], at, "unknown") == 200
+    assert _review(client, cards["bravo"]["cardId"], at, "known") == 200
+
+    # 重进：深绿 1（bravo）、浅绿 1（alpha），两段之和 = positionOffset。
+    # 旧 reviewedCards 分子口径（剔除池内 pending）保持不变。
+    session = _start(client, target=5)
+    assert session["reviewedCards"] == 1
+    assert session["gotItCards"] == 1
+    assert session["seenUnmasteredCards"] == 1
+    assert session["positionOffset"] == 2
+    assert session["gotItCards"] + session["seenUnmasteredCards"] == session["positionOffset"]
+
+    # charlie / delta Got it → 深绿 3、浅绿 1（alpha 仍在池内）。
+    at = datetime.combine(day, dtime(10, 2), tzinfo=_BEIJING)
+    by_word = {c["word"]: c for c in session["cards"]}
+    assert _review(client, by_word["charlie"]["cardId"], at, "known") == 200
+    assert _review(client, by_word["delta"]["cardId"], at, "known") == 200
+    session = _start(client, target=5)
+    assert session["gotItCards"] == 3
+    assert session["seenUnmasteredCards"] == 1
+    assert session["positionOffset"] == 4
+
+    # alpha 副本 Got it 清空：浅绿 1 → 0、深绿 3 → 4（浅绿转深绿），
+    # gotItCards 追平 positionOffset，与 reviewedCards 一致。
+    status, body = _pool_review(client, cards["alpha"]["cardId"], "known")
+    assert status == 200 and body["status"] == "cleared"
+    session = _start(client, target=5)
+    assert session["gotItCards"] == 4
+    assert session["seenUnmasteredCards"] == 0
+    assert session["reviewedCards"] == 4
+    assert session["positionOffset"] == 4
+    assert _words_in(session) == ["echo"]

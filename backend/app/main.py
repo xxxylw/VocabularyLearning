@@ -17,6 +17,37 @@ from app.version import APP_VERSION
 logger = logging.getLogger(__name__)
 
 
+class CacheControlledStaticFiles(StaticFiles):
+    """StaticFiles with an explicit cache policy (2026-10-20).
+
+    Browsers heuristically cached index.html, so after a frontend cutover
+    users kept loading the old index.html + old hashed bundle and needed
+    Ctrl+Shift+R to see the new version. Policy:
+
+    - ``*.html`` responses (incl. ``index.html``): ``Cache-Control:
+      no-cache`` — the browser must revalidate with the origin on every
+      load (ETag/Last-Modified still allow cheap 304s), so a new deploy is
+      picked up on the next plain refresh.
+    - ``assets/*`` (Vite hash-fingerprinted bundles): long-lived immutable
+      cache — the filename changes on every build, so a fresh index.html
+      never references a stale bundle.
+    """
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            # NOTE: for "/" the ``path`` argument is "." — the index.html
+            # resolution happens inside super().get_response (html=True),
+            # so HTML must be detected via the response content-type.
+            if response.headers.get("content-type", "").startswith("text/html"):
+                response.headers["Cache-Control"] = "no-cache"
+            elif path.startswith("assets/"):
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                )
+        return response
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # 2026-09-07 事故修复：启动时完成 schema 迁移 + WAL 切换（connect() 里
@@ -96,7 +127,11 @@ def create_app() -> FastAPI:
     # for the root path.
     directory = static_dir()
     if directory is not None:
-        app.mount("/", StaticFiles(directory=directory, html=True), name="frontend")
+        app.mount(
+            "/",
+            CacheControlledStaticFiles(directory=directory, html=True),
+            name="frontend",
+        )
 
     return app
 

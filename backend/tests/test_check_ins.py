@@ -391,3 +391,163 @@ def test_check_ins_and_overrides_are_isolated_between_users(
     alice_records = _by_date(_check_ins(client, headers=alice_headers))
     assert alice_records[legacy_day.isoformat()]["completedCards"] == 6
     assert alice_records[today.isoformat()]["completedCards"] == 2
+
+
+
+# ---------------------------------------------------------------------------
+# 需求 1（task 7707203351260843028，2026-11-12）：首页日期格上的
+# 「每日已背」计数口径 —— 只数「当天队列里已清除（Got it 且不再
+# pending 于重复池）」的唯一卡：重复池同一张卡多次评分只计 1 次，
+# 且永远 ≤ 当天队列卡数（用户原话「每日已背的词汇应该最多是那个
+# 要学的卡片的数量，不是翻了多少次卡片」）。
+# ---------------------------------------------------------------------------
+
+
+def _prepare_all(client: TestClient, count: int) -> None:
+    response = client.post(
+        "/api/prepare-jobs",
+        json={"scope": "next", "count": count, "maxSensesPerWord": 5},
+    )
+    assert response.status_code == 200, response.text
+
+
+def _rate_card(
+    client: TestClient,
+    card_id: str,
+    day: date,
+    rating: str = "known",
+    headers: dict | None = None,
+) -> None:
+    response = client.post(
+        f"/api/cards/{card_id}/reviews",
+        json={
+            "rating": rating,
+            "reviewedAt": f"{day.isoformat()}T09:00:00+08:00",
+            "reviewedDate": day.isoformat(),
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _review_pool_card(
+    client: TestClient, card_id: str, rating: str, headers: dict | None = None
+) -> None:
+    response = client.post(
+        "/api/study/today/repeat-pool/reviews",
+        json={"cardId": card_id, "rating": rating},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def _mark_due_reviews(words: list[str], due: date) -> None:
+    """把指定单词的卡标成「已复习、已到期」—— 到期复习候选池。"""
+    with connect() as connection:
+        user_id = connection.execute(
+            "select id from users where is_super = 1 limit 1"
+        ).fetchone()["id"]
+        for word in words:
+            connection.execute(
+                """
+                update cards set status = 'learning', interval_days = 1,
+                    last_reviewed_at = ?, due_at = ?
+                where user_id = ? and entry_id in (
+                    select entries.id from entries
+                    join words on words.id = entries.word_id
+                    where words.normalized_text = ?
+                )
+                """,
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    due.isoformat(),
+                    user_id,
+                    word.lower(),
+                ),
+            )
+        connection.commit()
+
+
+def _card_id_of_word(word: str) -> str:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            select cards.id from cards
+            join entries on entries.id = cards.entry_id
+            join words on words.id = entries.word_id
+            where words.normalized_text = ?
+            """,
+            (word.lower(),),
+        ).fetchone()
+    assert row is not None
+    return str(row["id"])
+
+
+def test_check_ins_counts_repeat_pool_card_once_after_multiple_ratings(
+    tmp_path, monkeypatch
+):
+    """重复池同一张卡多次评分，「每日已背」只 +1：没 Got it 前不算，
+    Got it 后算 1，终态后再评分也不累加（不按「翻卡次数」计数）。"""
+    today = date.today()
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    _clear_migrate_cache()
+    client = TestClient(create_app())
+
+    _import_words(client, ["charge"])
+    session = _start(client, today, 1)
+    card_id = session["cards"][0]["cardId"]
+
+    # Maybe（uncertain）→ 进当日重复池 pending：还没掌握 → 已背 0。
+    _rate_card(client, card_id, today, "uncertain")
+    records = _by_date(_check_ins(client))
+    assert records[today.isoformat()]["completedCards"] == 0
+
+    # 重复副本上评 New（unknown）→ 仍未 Got it，已背仍 0。
+    _review_pool_card(client, card_id, "unknown")
+    assert _by_date(_check_ins(client))[today.isoformat()]["completedCards"] == 0
+
+    # 重复副本上评 Got it → 池状态 cleared → 已背 +1（只 +1）。
+    _review_pool_card(client, card_id, "known")
+    records = _by_date(_check_ins(client))
+    assert records[today.isoformat()]["completedCards"] == 1
+
+    # 终态后再评分（幂等返回现状）→ 已背不再增加。
+    _review_pool_card(client, card_id, "unknown")
+    assert _by_date(_check_ins(client))[today.isoformat()]["completedCards"] == 1
+
+
+def test_check_ins_count_never_exceeds_day_queue_size(tmp_path, monkeypatch):
+    """「每日已背」≤ 当天队列卡数：队列外的到期复习（当日队列装不下
+    的那批）不计入当天已背 —— 旧口径会把它们一起算进去，导致
+    已背数大于当天要学的卡片数。"""
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    monkeypatch.setenv("VOCAB_DB_PATH", str(tmp_path / "vocabulary.sqlite"))
+    _clear_migrate_cache()
+    client = TestClient(create_app())
+
+    from app import services
+
+    # 上限压到 2：4 张到期复习 + 1 张配额新词 → 当日队列 = 1 复习 + 1 新词。
+    monkeypatch.setattr(services, "DAILY_QUEUE_CAP", 2)
+
+    review_words = ["dueone", "duetwo", "duethree", "duefour"]
+    _import_words(client, review_words + ["freshone"])
+    _prepare_all(client, 5)
+    _mark_due_reviews(review_words, yesterday)
+
+    session = _start(client, today, 1)
+    assert session["totalCards"] == 2
+
+    # 队列里的两张都 Got it。
+    for card in session["cards"]:
+        _rate_card(client, card["cardId"], today, "known")
+
+    # 队列外的到期复习（队列装不下、没来得及复习的那批）→ 归到今天，
+    # 但不属于「当天要学的卡片」，不计入当天已背。
+    _rate_card(client, _card_id_of_word("duethree"), today, "known")
+
+    records = _by_date(_check_ins(client))
+    completed = records[today.isoformat()]["completedCards"]
+    assert completed == 2
+    assert completed <= session["totalCards"]

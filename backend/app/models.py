@@ -292,6 +292,22 @@ class TodaySessionResponse(BaseModel):
     # the study date (PRD ch.8 rule 6: numerator offset for the progress
     # bar so it never restarts from 1 after re-entering Today).
     reviewedCards: int = 0
+    # 2026-10-30 重进进度回退修复：当日队列里「已被展示并评分」的
+    # 卡数（任意评级 —— Got it / Maybe / New 都算，含仍在重复池
+    # pending 的卡）。这是重复卡 isRepeat 副本位置游标的基数：
+    # reviewedCards 分子口径把池内 pending 卡剔除（进度条停滞语义，
+    # 规格规则 6），重进后用它做位置游标会让 x/y 显示回退；位置
+    # 游标要用这个不剔除的消费口径。缺省 0 兼容旧调用方。
+    positionOffset: int = 0
+    # 2026-10-30 学习页两段式进度条：深绿分子 = 当日队列里评过
+    # Got it（known）的卡数；浅绿 = 见过但未掌握 —— 当日有评分但
+    # 从未 Got it 的卡数（重复池 pending 与达上限 capped 移出的
+    # 卡都算，只要没 Got it 就算浅绿）。gotItCards +
+    # seenUnmasteredCards = positionOffset（当日已评分口径），
+    # 重进后两段都不回退。缺省 0 兼容旧调用方（前端回退
+    # reviewedCards）。
+    gotItCards: int = 0
+    seenUnmasteredCards: int = 0
 
 
 # P0 2026-09-08 跨设备完成态恢复：read-only summary of today's queue so

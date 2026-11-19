@@ -241,3 +241,64 @@ describe('PronunciationPanel auto-play (P1: play once when a new card starts)', 
     vi.restoreAllMocks();
   });
 });
+
+
+describe('PronunciationPanel source display (removed 2026-11-12)', () => {
+  it('does not render the dictionary source block even when full source data is present', async () => {
+    render(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(
+          readyPronunciation({
+            audioSourceUrl: 'https://commons.wikimedia.org/wiki/File:atmosphere.ogg',
+            attribution: 'Wiktionary contributors',
+            license: 'CC BY-SA',
+            licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/'
+          })
+        )}
+      />
+    );
+
+    // IPA and the play button still render — only the source line is gone.
+    expect(await screen.findByRole('button', { name: 'Play atmosphere pronunciation' })).toBeInTheDocument();
+    expect(screen.getByText('/ˈætməsfɪə(r)/ UK')).toBeInTheDocument();
+
+    // No Source summary, no attribution/license text, no link at all, and no
+    // leftover container that would reserve empty space below the card.
+    expect(screen.queryByText('Source')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Wiktionary|Oxford Learner|Wikimedia|CC BY-SA/)).not.toBeInTheDocument();
+    expect(document.querySelector('.pronunciation-source')).toBeNull();
+  });
+});
+
+describe('PronunciationPanel concealWord (spelling prompt stage, 2026-11-02)', () => {
+  it('keeps the word out of every accessible name while still showing the IPA and play button', async () => {
+    render(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation())}
+        concealWord
+      />
+    );
+
+    // 音标与播放按钮照常渲染，但可访问名一律不含答案词（拼写页 F-01 口径）。
+    expect(await screen.findByRole('button', { name: 'Play pronunciation' })).toBeInTheDocument();
+    expect(screen.getByText('/ˈætməsfɪə(r)/ UK')).toBeInTheDocument();
+    expect(screen.getByLabelText('Pronunciation')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /atmosphere/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/atmosphere/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the word-bearing accessible names by default (existing callers unchanged)', async () => {
+    render(
+      <PronunciationPanel
+        word="atmosphere"
+        onLookupPronunciation={vi.fn().mockResolvedValue(readyPronunciation())}
+      />
+    );
+
+    expect(await screen.findByRole('button', { name: 'Play atmosphere pronunciation' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Pronunciation of atmosphere')).toBeInTheDocument();
+  });
+});

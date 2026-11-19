@@ -209,7 +209,7 @@ describe('App', () => {
 
   it('resumes today progress from the day queue after re-entering (PRD ch.8)', async () => {
     const user = userEvent.setup();
-    const resumedCard = { ...studyCard(), queuePosition: 11 };
+    const resumedCard = studyCard();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
@@ -220,20 +220,70 @@ describe('App', () => {
         ok: true,
         text: () =>
           Promise.resolve(
-            JSON.stringify({ totalCards: 40, reviewedCards: 10, cards: [resumedCard] })
+            JSON.stringify({
+              totalCards: 40,
+              reviewedCards: 10,
+              gotItCards: 10,
+              seenUnmasteredCards: 2,
+              cards: [resumedCard]
+            })
           )
       })
       .mockResolvedValueOnce(pronunciationUnavailableResponse());
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<App />);
+    const { container } = render(<App />);
     await user.click(screen.getByRole('button', { name: /start today cards/i }));
 
-    expect(await screen.findByText('11 / 40')).toBeInTheDocument();
-    expect(screen.getByText('10 / 40 completed')).toBeInTheDocument();
+    // 数字 = completed（Got it 卡数）；进度条两段：深绿 10、浅绿 2。
+    // 进度条下方不再显示 completed 文案（2026-10-30 移除）。
+    expect(await screen.findByText('10 / 40')).toBeInTheDocument();
+    expect(screen.queryByText(/10 \/ 40 completed/)).not.toBeInTheDocument();
     const progress = screen.getByRole('progressbar', { name: /Today completed words/i });
     expect(progress).toHaveAttribute('aria-valuenow', '10');
     expect(progress).toHaveAttribute('aria-valuemax', '40');
+    expect(container.querySelector('.progress-fill-done')).toHaveStyle({ width: '25%' });
+    expect(container.querySelector('.progress-fill-seen')).toHaveStyle({ width: '30%' });
+  });
+
+  it('passes server gotItCards and seenUnmasteredCards counts into the study session (2026-10-30 two-segment bar)', async () => {
+    const user = userEvent.setup();
+    // 重进场景：alpha 评 Maybe 入池、bravo Got it 后离开 —— 重进
+    // 的 session 响应给出 gotItCards=1（bravo）、seenUnmasteredCards=1
+    // （alpha 在池内），两段之和 = positionOffset=2。队首是服务端
+    // 注入的重复副本：数字显示 completed=1 / 5，浅绿段含池内 alpha。
+    const repeatCopy = { ...studyCard(), word: 'alpha', isRepeat: true };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      .mockResolvedValueOnce(checkInsResponse([]))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              totalCards: 5,
+              reviewedCards: 1,
+              positionOffset: 2,
+              gotItCards: 1,
+              seenUnmasteredCards: 1,
+              cards: [repeatCopy]
+            })
+          )
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<App />);
+    await user.click(screen.getByRole('button', { name: /start today cards/i }));
+
+    // 数字 = 服务端 completed 口径（gotItCards=1），不因队首是副
+    // 本而回退或归零；进度条下方无 completed 文案。
+    expect(await screen.findByText('1 / 5')).toBeInTheDocument();
+    expect(screen.queryByText(/1 \/ 5 completed/)).not.toBeInTheDocument();
+    expect(container.querySelector('.progress-fill-done')).toHaveStyle({ width: '20%' });
+    expect(container.querySelector('.progress-fill-seen')).toHaveStyle({ width: '40%' });
   });
   it('switches the current book from the bookshelf and returns to Today (PRD ch.9)', async () => {
     const user = userEvent.setup();

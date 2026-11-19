@@ -249,3 +249,43 @@ describe('VocabApp subscription routing (batch 3)', () => {
     });
   });
 });
+
+
+describe('VocabApp kicked-session notice (2026-11-11 单点登录)', () => {
+  beforeEach(() => {
+    window.location.hash = '';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
+    window.location.hash = '';
+  });
+
+  it('shows the English kick notice on /login?kick=1', async () => {
+    // api.ts handleKickedSession 把被顶下线的端整页跳到 /login?kick=1；
+    // guest 态的登录页必须展示明确英文提示，不无声失败。
+    window.location.hash = '#/login?kick=1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({})));
+
+    render(<VocabApp />);
+
+    expect(
+      await screen.findByText('You signed in on another device. Please sign in again.')
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the verify/reset notices untouched when kick is absent', async () => {
+    window.location.hash = '#/login?from=verify';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({})));
+
+    render(<VocabApp />);
+
+    expect(
+      await screen.findByText('Your email is verified. Please log in.')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('You signed in on another device. Please sign in again.')
+    ).toBeNull();
+  });
+});

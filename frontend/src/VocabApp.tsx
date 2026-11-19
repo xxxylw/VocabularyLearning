@@ -173,11 +173,15 @@ export function VocabApp() {
           <LoginView
             initialEmail={query.get('email') ?? undefined}
             notice={
-              query.get('from') === 'verify'
-                ? 'Your email is verified. Please log in.'
-                : query.get('from') === 'reset'
-                  ? 'Please log in with your new password.'
-                  : null
+              // 单点登录（2026-11-11 需求一）：被新设备顶下线后整页跳到
+              // /login?kick=1（api.ts handleKickedSession），展示英文提示。
+              query.get('kick') === '1'
+                ? 'You signed in on another device. Please sign in again.'
+                : query.get('from') === 'verify'
+                  ? 'Your email is verified. Please log in.'
+                  : query.get('from') === 'reset'
+                    ? 'Please log in with your new password.'
+                    : null
             }
             next={query.get('next')}
             autoFocusPassword={

@@ -158,6 +158,17 @@ def migrate(connection: sqlite3.Connection) -> None:
             "ALTER TABLE email_tokens ADD COLUMN attempts integer not null default 0"
         )
 
+    # 单点登录（2026-11-11 需求一）：sessions 加 superseded_at 列。
+    # 存量库走 ALTER（CREATE TABLE IF NOT EXISTS 对旧表是 no-op），
+    # 新库已由 schema.sql 建出该列。
+    session_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(sessions)")
+    }
+    if "superseded_at" not in session_columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN superseded_at text null"
+        )
+
     # v3 (V3-08): subscriptions gains remark (mock 清退备注/审计) and
     # order_no (link to the paying order) columns. Legacy databases get
     # them via ALTER; fresh ones already have them from schema.sql.

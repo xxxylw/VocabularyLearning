@@ -33,9 +33,13 @@ type EmptyReason = 'no-cards' | 'no-book-words';
 // PRD ch.8: day-level progress anchors from the Today session — kept
 // across screens so both card mode and spelling mode resume the day
 // queue's progress instead of restarting from 1.
+// 2026-10-30 学习页两段式进度条：gotItCards = 深绿分子（进度数字
+// 同源）；seenUnmasteredCards = 浅绿段（见过但还没 Got it 的卡数）。
+// 旧响应缺新字段时 handleStart 已做回退（gotIt → reviewedCards）。
 type DayProgress = {
   totalCards: number;
-  reviewedCards: number;
+  gotItCards: number;
+  seenUnmasteredCards: number;
 };
 
 // V3-01 只读模式：readOnly=true 时 Today 的学习入口进入锁定态
@@ -187,9 +191,14 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
     try {
       const session = await startTodaySession(target, extraNewWords);
       setCards(session.cards);
+      // 2026-10-30 两段式进度条：深绿分子 = gotItCards（Got it 卡数，
+      // 进度数字同源）；浅绿 = seenUnmasteredCards（见过但未掌握）。
+      // 旧后端 / 旧响应缺新字段时回退：gotIt → reviewedCards（口径
+      // 略宽 —— 含达上限 capped 的卡），seen → 0。
       setDayProgress({
         totalCards: session.totalCards,
-        reviewedCards: session.reviewedCards ?? 0
+        gotItCards: session.gotItCards ?? session.reviewedCards ?? 0,
+        seenUnmasteredCards: session.seenUnmasteredCards ?? 0
       });
       if (session.cards.length > 0) {
         setScreen('study');
@@ -311,7 +320,8 @@ export function App({ readOnly = false, onGoSubscribe, userEmail }: { readOnly?:
       <StudySession
         cards={cards}
         totalCards={dayProgress?.totalCards}
-        reviewedCards={dayProgress?.reviewedCards}
+        gotItCards={dayProgress?.gotItCards}
+        seenUnmasteredCards={dayProgress?.seenUnmasteredCards}
         onReview={reviewWordCard}
         onExit={() => setScreen('today')}
         onLookupWord={lookupOxfordWord}

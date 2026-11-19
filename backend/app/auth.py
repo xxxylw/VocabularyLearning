@@ -61,6 +61,11 @@ PASSWORD_POLICY_MESSAGE = (
     "Password must be at least 8 characters and contain both letters and digits"
 )
 
+# 单点登录（2026-11-11 需求一）：旧端被新登录取代后的统一英文提示。
+SESSION_SUPERSEDED_MESSAGE = (
+    "You signed in on another device. Please sign in again."
+)
+
 
 def password_policy_error(password: str) -> str | None:
     """Return the policy violation message, or None when acceptable.
@@ -248,10 +253,30 @@ def update_user_password(user_id: str, new_password: str) -> None:
 
 
 def create_session(user_id: str) -> str:
+    """Issue a new session token — single-session sign-in (2026-11-11).
+
+    一个账号同一时间只允许一处登录：签发新会话前，把该用户所有现存
+    会话标记为 superseded（不删除 —— 旧端下次请求据此得到 401
+    ``session_superseded`` 与「You signed in on another device.」的
+    明确提示，区别于自然过期/登出的笼统 401）。被标记的行在自然到期
+    前一直保留，供旧端取提示；顺带清理已自然到期的行，表不膨胀。
+    整段在同一事务内完成，不存在「旧会话已废、新会话未签发」的中间态。
+    """
     from app.db import connect
     raw_token = secrets.token_urlsafe(32)
     now = _now()
     with connect() as connection:
+        connection.execute(
+            """
+            update sessions set superseded_at = ?
+            where user_id = ? and superseded_at is null
+            """,
+            (_iso(now), user_id),
+        )
+        connection.execute(
+            "delete from sessions where expires_at <= ?",
+            (_iso(now),),
+        )
         connection.execute(
             """
             insert into sessions (id, user_id, token_hash, created_at, expires_at)
@@ -273,7 +298,8 @@ def resolve_session(raw_token: str) -> dict[str, object] | None:
     with connect() as connection:
         row = connection.execute(
             """
-            select u.*, s.expires_at as session_expires_at
+            select u.*, s.expires_at as session_expires_at,
+                   s.superseded_at as session_superseded_at
             from sessions s join users u on u.id = s.user_id
             where s.token_hash = ?
             """,
@@ -282,9 +308,30 @@ def resolve_session(raw_token: str) -> dict[str, object] | None:
     if row is None:
         return None
     user = dict(row)
+    # 单点登录（2026-11-11）：被新登录取代的会话立即失效。
+    if user.pop("session_superseded_at", None) is not None:
+        return None
     if user.pop("session_expires_at", None) <= _iso(_now()):
         return None
     return user
+
+
+def session_superseded(raw_token: str) -> bool:
+    """True when the token belongs to a session kicked by a newer login.
+
+    区分「被新设备顶下线」与「自然过期 / 已登出 / 伪造 token」：前者
+    的旧端需要看到明确的英文提示而不是无声 401（2026-11-11 需求一）。
+    """
+    from app.db import connect
+    with connect() as connection:
+        row = connection.execute(
+            """
+            select 1 from sessions
+            where token_hash = ? and superseded_at is not null
+            """,
+            (_hash_token(raw_token),),
+        ).fetchone()
+    return row is not None
 
 
 def revoke_session(raw_token: str) -> None:
@@ -559,8 +606,20 @@ def require_user(request: Request) -> AuthContext:
     scheme, _, raw_token = header.partition(" ")
     if scheme.lower() != "bearer" or not raw_token.strip():
         raise HTTPException(status_code=401, detail="Authentication required")
-    user = resolve_session(raw_token.strip())
+    token = raw_token.strip()
+    user = resolve_session(token)
     if user is None:
+        # 单点登录（2026-11-11）：被新登录取代的会话给出明确的英文
+        # 提示（前端凭 code=session_superseded 跳登录页并展示该文案），
+        # 与自然过期 / 登出 / 无效 token 的笼统 401 区分开。
+        if session_superseded(token):
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "session_superseded",
+                    "message": SESSION_SUPERSEDED_MESSAGE,
+                },
+            )
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     return AuthContext(
         user_id=str(user["id"]), email=str(user["email"]),

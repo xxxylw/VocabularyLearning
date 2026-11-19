@@ -60,6 +60,17 @@ async function revealAndRate(
   await user.click(screen.getByRole('button', { name: rating }));
 }
 
+// 读取两段式进度条的宽度：浅绿段（见过未掌握，占总进度的宽度）
+// 与深绿段（Got it 完成）。返回形如 '20%' 的字符串。
+function getFillWidths(container: HTMLElement) {
+  const seen = container.querySelector<HTMLElement>('.progress-fill-seen');
+  const done = container.querySelector<HTMLElement>('.progress-fill-done');
+  return {
+    seen: seen?.style.width ?? null,
+    done: done?.style.width ?? null
+  };
+}
+
 describe('StudySession 当日重复池', () => {
   it('reinserts a new card rated New three cards later with the isRepeat flag', async () => {
     const user = userEvent.setup();
@@ -90,7 +101,7 @@ describe('StudySession 当日重复池', () => {
         ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
         : Promise.resolve(undefined)
     );
-    render(
+    const { container } = render(
       <StudySession
         cards={cards}
         totalCards={5}
@@ -99,11 +110,12 @@ describe('StudySession 当日重复池', () => {
       />
     );
 
-    await revealAndRate(user, /^new$/i); // alpha: 停滞，不计入
+    await revealAndRate(user, /^new$/i); // alpha：浅绿 +1，深绿不计入
     expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
       'aria-valuenow',
       '0'
     );
+    expect(getFillWidths(container)).toEqual({ seen: '20%', done: '0%' });
 
     await revealAndRate(user, /got it/i); // bravo
     await revealAndRate(user, /got it/i); // charlie
@@ -112,12 +124,14 @@ describe('StudySession 当日重复池', () => {
       'aria-valuenow',
       '3'
     );
+    expect(getFillWidths(container)).toEqual({ seen: '80%', done: '60%' });
 
-    await revealAndRate(user, /got it/i); // alpha 重复副本 Got it：+1
+    await revealAndRate(user, /got it/i); // alpha 重复副本 Got it：浅绿转深绿
     expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
       'aria-valuenow',
       '4'
     );
+    expect(getFillWidths(container)).toEqual({ seen: '80%', done: '80%' });
 
     await revealAndRate(user, /got it/i); // echo：队列清空，会话完成
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
@@ -126,7 +140,7 @@ describe('StudySession 当日重复池', () => {
   it('drops a repeat card for good when the pool reports it capped', async () => {
     const user = userEvent.setup();
     const alpha = { ...makeCard('card-1', 'alpha'), isRepeat: true };
-    const cards = [alpha, makeCard('card-2', 'bravo')];
+    const cards = [alpha, makeCard('card-2', 'bravo'), makeCard('card-3', 'charlie')];
     const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
       Promise.resolve(
         card.isRepeat
@@ -134,20 +148,29 @@ describe('StudySession 当日重复池', () => {
           : undefined
       )
     );
-    render(<StudySession cards={cards} totalCards={2} onReview={onReview} onExit={vi.fn()} />);
+    const { container } = render(<StudySession cards={cards} totalCards={3} onReview={onReview} onExit={vi.fn()} />);
 
     await revealAndRate(user, /maybe/i); // 重复卡评 Maybe → 服务端 capped
     expect(onReview.mock.calls[0][0].isRepeat).toBe(true);
 
-    // capped：+1 计入完成，且不再重插。
+    // capped：没 Got it 就不算完成（深绿不变），副本留在浅绿段，
+    // 且不再重插。旧口径把 capped 计入 completed——2026-10-30 起废除。
+    expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
+      'aria-valuenow',
+      '0'
+    );
+    expect(getFillWidths(container)).toEqual({ seen: '0%', done: '0%' });
+
+    await revealAndRate(user, /got it/i); // bravo
     expect(screen.getByRole('progressbar', { name: /Today completed words/i })).toHaveAttribute(
       'aria-valuenow',
       '1'
     );
+    expect(getFillWidths(container)).toEqual({ seen: '33%', done: '33%' });
 
-    await revealAndRate(user, /got it/i); // bravo
+    await revealAndRate(user, /got it/i); // charlie：队列清空，会话完成
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
-    expect(onReview).toHaveBeenCalledTimes(2);
+    expect(onReview).toHaveBeenCalledTimes(3);
   });
 
   it('reinserts a repeat card again when the pool keeps it pending', async () => {
@@ -294,76 +317,143 @@ describe('StudySession 当日重复池', () => {
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
   });
 
-  it('keeps the position indicator within the day-queue denominator across repeat re-shows', async () => {
+  it('falls back to reviewedCards and keeps both segments within the denominator across repeat re-shows', async () => {
     const user = userEvent.setup();
-    // 复现 bug 场景：当日队列 5 张、已学 3 张，剩余 alpha（槽 4）、
-    // bravo（槽 5）。alpha 评 New 本地重插后，重复副本的 queuePosition
-    // 为 null 走兜底计数——修复前依次显示 5/5 → 6/5 → 7/5。
+    // 旧后端未返回 gotItCards / seenUnmasteredCards 时前端回退：
+    // 深绿基数 = reviewedCards。当日队列 8 张、已完成 3 张，剩余
+    // alpha～echo 5 张。alpha 评 New → 副本 3 张后插入（delta 与
+    // echo 之间）；副本 Got it 清空时 echo 还在队列，能观察到浅绿
+    // 转深绿的稳定中间态。两段恒 ≤ 分母，数字 = completed。
     const cards = [
       { ...makeCard('card-1', 'alpha'), queuePosition: 4 },
-      { ...makeCard('card-2', 'bravo'), queuePosition: 5 }
+      { ...makeCard('card-2', 'bravo'), queuePosition: 5 },
+      { ...makeCard('card-3', 'charlie'), queuePosition: 6 },
+      { ...makeCard('card-4', 'delta'), queuePosition: 7 },
+      { ...makeCard('card-5', 'echo'), queuePosition: 8 }
     ];
     const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
       card.isRepeat
         ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
         : Promise.resolve(undefined)
     );
-    render(
+    const { container } = render(
       <StudySession
         cards={cards}
-        totalCards={5}
+        totalCards={8}
         reviewedCards={3}
         onReview={onReview}
         onExit={vi.fn()}
       />
     );
 
-    expect(screen.getByText('4 / 5')).toBeInTheDocument();
-    await revealAndRate(user, /^new$/i); // alpha 评 New → 剩余不足 3 张，副本落队尾
+    expect(screen.getByText('3 / 8')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '38%', done: '38%' });
 
-    expect(screen.getByText('5 / 5')).toBeInTheDocument(); // bravo（槽 5）
-    await revealAndRate(user, /got it/i);
+    await revealAndRate(user, /^new$/i); // alpha 评 New：浅绿 +1，深绿不动
+    expect(screen.getByText('3 / 8')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '50%', done: '38%' });
 
-    // alpha 副本重现：位置不推进、不超分母（修复前 6 / 5）。
-    expect(screen.getByText('5 / 5')).toBeInTheDocument();
-    expect(screen.queryByText('6 / 5')).not.toBeInTheDocument();
+    await revealAndRate(user, /got it/i); // bravo：深绿 +1
+    expect(screen.getByText('4 / 8')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '63%', done: '50%' });
 
-    await revealAndRate(user, /maybe/i); // 副本 pending → 再次重插（修复前 7 / 5）
-    expect(screen.getByText('5 / 5')).toBeInTheDocument();
-    expect(screen.queryByText('7 / 5')).not.toBeInTheDocument();
+    await revealAndRate(user, /got it/i); // charlie：深绿 +1
+    expect(screen.getByText('5 / 8')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '75%', done: '63%' });
 
-    await revealAndRate(user, /got it/i); // 副本清空 → 会话完成
+    await revealAndRate(user, /got it/i); // delta：深绿 +1，下一张是 alpha 副本
+    expect(screen.getByText('6 / 8')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '88%', done: '75%' });
+
+    await revealAndRate(user, /got it/i); // 副本清空：浅绿 1 → 0、深绿 +1
+    expect(onReview.mock.calls[4][0].word).toBe('alpha');
+    expect(onReview.mock.calls[4][0].isRepeat).toBe(true);
+    expect(screen.getByText('7 / 8')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '88%', done: '88%' });
+
+    await revealAndRate(user, /got it/i); // echo：队列清空，会话完成
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
   });
 
-  it('shows the last original-card position for a server-injected repeat copy (no zero display)', async () => {
+  it('shows the server completed count for a server-injected repeat copy (no zero display)', async () => {
     const user = userEvent.setup();
-    // 重进 Today 的服务端流：已学 2 张，队首直接是重复副本（queuePosition
-    // 为 null）。副本显示最近一张原始卡的位置，且恒 ≤ 分母。
+    // 重进 Today 的服务端流：当日 5 张，服务端已计 gotItCards=1、
+    // seenUnmasteredCards=1（alpha 评过 Maybe 在池内），队首直接是
+    // alpha 的重复副本。数字 = completed（1 / 5），副本在浅绿段里，
+    // 绝不因队首是副本而归零；副本 cleared 后浅绿转深绿。
     const cards = [
       { ...makeCard('card-1', 'alpha'), isRepeat: true },
       { ...makeCard('card-2', 'bravo'), queuePosition: 3 },
       { ...makeCard('card-3', 'charlie'), queuePosition: 4 }
     ];
     const onReview = vi.fn().mockResolvedValue({ status: 'cleared' });
-    render(
+    const { container } = render(
       <StudySession
         cards={cards}
-        totalCards={4}
-        reviewedCards={2}
+        totalCards={5}
+        gotItCards={1}
+        seenUnmasteredCards={1}
         onReview={onReview}
         onExit={vi.fn()}
       />
     );
 
-    // 副本在队首：显示 2 / 4（最近原始卡槽位），绝不 0、不超分母。
-    expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    // 副本在队首：数字显示服务端 completed 基数，浅绿段含池内 alpha。
+    expect(screen.getByText('1 / 5')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '40%', done: '20%' });
 
-    await revealAndRate(user, /got it/i); // 副本 cleared
-    expect(screen.getByText('3 / 4')).toBeInTheDocument(); // bravo（槽 3）
+    await revealAndRate(user, /got it/i); // 副本 cleared：浅绿转深绿
+    expect(screen.getByText('2 / 5')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '40%', done: '40%' });
+    await revealAndRate(user, /got it/i); // bravo
+    expect(screen.getByText('3 / 5')).toBeInTheDocument();
+    // charlie 是最后一张：评完队列清空直接切完成页，5/5 不再可见。
     await revealAndRate(user, /got it/i);
-    expect(screen.getByText('4 / 4')).toBeInTheDocument(); // charlie（槽 4）
+    expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
+  });
+
+  it('anchors the completed count to server gotItCards after re-entry (no regression)', async () => {
+    const user = userEvent.setup();
+    // 2026-10-30 场景：alpha 评 New 入池、bravo Got it 后离开 ——
+    // 重进时服务端 gotItCards=1（bravo）、seenUnmasteredCards=1
+    // （alpha 在池内），两段之和 = positionOffset=2。服务端重进流：
+    // charlie、delta、alpha 副本、echo。数字以服务端 completed 为
+    // 基数单调不回退；副本 cleared 时浅绿转深绿。
+    const cards = [
+      { ...makeCard('card-1', 'charlie'), queuePosition: 3 },
+      { ...makeCard('card-2', 'delta'), queuePosition: 4 },
+      { ...makeCard('card-3', 'alpha'), isRepeat: true },
+      { ...makeCard('card-4', 'echo'), queuePosition: 5 }
+    ];
+    const onReview = vi.fn().mockImplementation((card: StudyCard, rating: string) =>
+      card.isRepeat
+        ? Promise.resolve({ status: rating === 'known' ? 'cleared' : 'pending' })
+        : Promise.resolve(undefined)
+    );
+    const { container } = render(
+      <StudySession
+        cards={cards}
+        totalCards={5}
+        gotItCards={1}
+        seenUnmasteredCards={1}
+        onReview={onReview}
+        onExit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('1 / 5')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '40%', done: '20%' });
+    await revealAndRate(user, /got it/i); // charlie
+    expect(screen.getByText('2 / 5')).toBeInTheDocument();
+    await revealAndRate(user, /got it/i); // delta
+    expect(screen.getByText('3 / 5')).toBeInTheDocument();
+
+    // alpha 副本 cleared：浅绿 1 → 0、深绿 +1，总进度不回退。
     await revealAndRate(user, /got it/i);
+    expect(screen.getByText('4 / 5')).toBeInTheDocument();
+    expect(getFillWidths(container)).toEqual({ seen: '80%', done: '80%' });
+
+    await revealAndRate(user, /got it/i); // echo：最后一张，队列清空
     expect(await screen.findByText('Checked in for today.')).toBeInTheDocument();
   });
 });

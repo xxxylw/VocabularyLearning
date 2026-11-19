@@ -7,6 +7,11 @@ export type CheckInRecord = {
   newCards: number;
   reviewCards: number;
   completedAt: string;
+  // 2026-11-18 已背计数口径：cardId -> queueType 映射。同日多次完成
+  // （再来一组 / 重复池重刷 / ad-hoc 复习）按 cardId 并集去重计数，
+  // 同一张卡只计 1 次，已背数永远 ≤ 当天队列卡数。旧记录没有该
+  // 字段时，同日合并回退 Math.max（不再累加）。
+  cardTypes?: Record<string, StudyCard['queueType']>;
 };
 
 const CHECK_IN_STORAGE_KEY = 'vocabulary-learning-check-ins';
@@ -37,15 +42,24 @@ export function localDateString(date: Date): string {
 }
 
 export function buildCheckInRecord(cards: StudyCard[], completedAt = new Date()): CheckInRecord {
+  // 2026-11-18 已背计数口径：同一 cardId 因队列快照重复行 / 重复池
+  // 重现出现多次时只计 1 次 —— 先折叠成 cardId -> queueType 映射，
+  // 计数取唯一 cardId 数（后出现的 queueType 覆盖前行）。
+  const cardTypes: Record<string, StudyCard['queueType']> = {};
+  for (const card of cards) {
+    cardTypes[card.cardId] = card.queueType;
+  }
+  const uniqueCardIds = Object.keys(cardTypes);
   return {
     // 2026-09 学习日边界 02:00：本地回退记录按学习日归日（北京
     // 00:00–02:00 完成记到前一自然日），与服务端由 reviews.study_date
     // 派生的打卡口径一致；completedAt 时间戳仍存提交时刻。
     date: studyDayKey(completedAt),
-    completedCards: cards.length,
-    newCards: cards.filter((card) => card.queueType === 'new').length,
-    reviewCards: cards.filter((card) => card.queueType === 'review').length,
-    completedAt: completedAt.toISOString()
+    completedCards: uniqueCardIds.length,
+    newCards: uniqueCardIds.filter((cardId) => cardTypes[cardId] === 'new').length,
+    reviewCards: uniqueCardIds.filter((cardId) => cardTypes[cardId] === 'review').length,
+    completedAt: completedAt.toISOString(),
+    cardTypes
   };
 }
 
@@ -73,19 +87,38 @@ export function saveCheckIn(record: CheckInRecord, storage: Storage = window.loc
   const records = loadCheckIns(storage);
   const existing = records.find((item) => item.date === record.date);
 
-  const nextRecords = existing
-    ? records.map((item) =>
-        item.date === record.date
-          ? {
-              ...item,
-              completedCards: item.completedCards + record.completedCards,
-              newCards: item.newCards + record.newCards,
-              reviewCards: item.reviewCards + record.reviewCards,
-              completedAt: record.completedAt
-            }
-          : item
-      )
-    : [...records, record];
+  // 2026-11-18 已背计数口径：同日多次完成（再来一组 / 重复池重刷 /
+  // ad-hoc 复习）按 cardId 并集去重计数 —— 同一张卡重复完成只计
+  // 1 次，已背数永远 ≤ 当天队列卡数；旧记录（无 cardTypes）回退
+  // Math.max（不再累加），避免重刷把已背数顶过队列上限。
+  let nextRecords: CheckInRecord[];
+  if (!existing) {
+    nextRecords = [...records, record];
+  } else {
+    const cardTypes =
+      existing.cardTypes && record.cardTypes
+        ? { ...existing.cardTypes, ...record.cardTypes }
+        : null;
+    const uniqueCardIds = cardTypes ? Object.keys(cardTypes) : [];
+    nextRecords = records.map((item) =>
+      item.date === record.date
+        ? {
+            ...item,
+            completedCards: cardTypes
+              ? uniqueCardIds.length
+              : Math.max(item.completedCards, record.completedCards),
+            newCards: cardTypes
+              ? uniqueCardIds.filter((cardId) => cardTypes[cardId] === 'new').length
+              : Math.max(item.newCards, record.newCards),
+            reviewCards: cardTypes
+              ? uniqueCardIds.filter((cardId) => cardTypes[cardId] === 'review').length
+              : Math.max(item.reviewCards, record.reviewCards),
+            completedAt: record.completedAt,
+            cardTypes: cardTypes ?? item.cardTypes
+          }
+        : item
+    );
+  }
 
   nextRecords.sort((left, right) => left.date.localeCompare(right.date));
   storage.setItem(CHECK_IN_STORAGE_KEY, JSON.stringify(nextRecords));

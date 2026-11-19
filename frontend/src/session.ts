@@ -31,3 +31,16 @@ export function clearSessionToken(): void {
     // Nothing to clean up when storage is unavailable.
   }
 }
+
+// 单点登录（2026-11-11 需求一）：账号在另一台设备/浏览器登录后，本端
+// token 被服务端标记 superseded，任何 API 的 401 响应带
+// code=session_superseded。api.ts 的三个请求助手统一调这里：清掉本地
+// token、整页跳到登录页（kick=1 → LoginView 展示
+// "You signed in on another device. Please sign in again."），
+// 不无声失败。整页 reload 让 VocabApp 的会话态从头解析（guest），
+// 避免 React 里残留的 authed 状态继续放行受保护路由。
+export function handleKickedSession(): void {
+  clearSessionToken();
+  window.location.hash = '#/login?kick=1';
+  window.location.reload();
+}

@@ -768,3 +768,118 @@ def test_email_status_polling(cloud_env, email_spy):
     )
     assert pending.status_code == 200, pending.text
     assert pending.json()["verified"] is False
+
+
+
+# ---------------------------------------------------------------------------
+# 单点登录（2026-11-11 需求一）：同一账号同一时间只允许一个活跃会话。
+# 新登录把旧会话标记 superseded（不删除）；旧 token 的下一次请求拿到
+# 401 + code=session_superseded + 明确英文提示，区别于自然过期 / 登出 /
+# 伪造 token 的笼统 401。注册、验证码、登出、改密流程不受影响。
+# ---------------------------------------------------------------------------
+
+SESSION_SUPERSEDED_MESSAGE = "You signed in on another device. Please sign in again."
+
+
+def _login(client: TestClient, email: str, password: str) -> str:
+    response = client.post(
+        "/api/auth/login", json={"email": email, "password": password}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
+
+
+def test_new_login_supersedes_previous_session(cloud_env, email_spy):
+    """第二处登录成功后，旧 token 立即失效并给出明确的英文提示。"""
+    client = _client()
+    _register_and_verify(client, "single@example.com", "goodpass1", email_spy)
+
+    token_old = _login(client, "single@example.com", "goodpass1")
+    me_old = client.get("/api/auth/me", headers=_auth(token_old))
+    assert me_old.status_code == 200, me_old.text
+
+    token_new = _login(client, "single@example.com", "goodpass1")
+    assert token_new != token_old
+
+    # 旧端：401 + session_superseded + 全英文提示（不无声失败）。
+    kicked = client.get("/api/auth/me", headers=_auth(token_old))
+    assert kicked.status_code == 401, kicked.text
+    detail = kicked.json()["detail"]
+    assert detail["code"] == "session_superseded"
+    assert detail["message"] == SESSION_SUPERSEDED_MESSAGE
+
+    # 新端不受影响。
+    me_new = client.get("/api/auth/me", headers=_auth(token_new))
+    assert me_new.status_code == 200, me_new.text
+
+
+def test_superseded_session_401_on_study_endpoint(cloud_env, email_spy):
+    """被顶的 token 在学习端点（共享 require_user 守卫）同样拿到
+    session_superseded —— 前端凭该 code 跳登录页并展示提示。"""
+    client = _client()
+    _register_and_verify(client, "kick@example.com", "goodpass1", email_spy)
+
+    token_old = _login(client, "kick@example.com", "goodpass1")
+    _login(client, "kick@example.com", "goodpass1")  # 第二处登录顶掉旧端
+
+    response = client.get("/api/study/today/summary", headers=_auth(token_old))
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"]["code"] == "session_superseded"
+    assert response.json()["detail"]["message"] == SESSION_SUPERSEDED_MESSAGE
+
+
+def test_supersede_keeps_exactly_one_active_session(cloud_env, email_spy):
+    """连续三次登录后只剩最新一个活跃会话，旧会话全部 superseded。"""
+    from app.db import connect
+
+    client = _client()
+    _register_and_verify(client, "multi@example.com", "goodpass1", email_spy)
+    token1 = _login(client, "multi@example.com", "goodpass1")
+    token2 = _login(client, "multi@example.com", "goodpass1")
+    token3 = _login(client, "multi@example.com", "goodpass1")
+
+    assert client.get("/api/auth/me", headers=_auth(token1)).status_code == 401
+    assert client.get("/api/auth/me", headers=_auth(token2)).status_code == 401
+    assert client.get("/api/auth/me", headers=_auth(token3)).status_code == 200
+
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            select s.superseded_at from sessions s
+            join users u on u.id = s.user_id
+            where u.email = 'multi@example.com'
+            """
+        ).fetchall()
+    # _register_and_verify 内部还有 1 次登录，共 4 个会话行。
+    assert len(rows) == 4
+    superseded = [row for row in rows if row["superseded_at"] is not None]
+    assert len(superseded) == 3
+
+
+def test_logout_then_login_does_not_mark_superseded(cloud_env, email_spy):
+    """正常登出（删除会话行）再登录不产生 superseded 提示 —— 登出后旧
+    token 得到的是笼统 401，与新设备顶号明确区分。"""
+    client = _client()
+    _register_and_verify(client, "logout2@example.com", "goodpass1", email_spy)
+
+    token_old = _login(client, "logout2@example.com", "goodpass1")
+    out = client.post("/api/auth/logout", headers=_auth(token_old))
+    assert out.status_code == 200, out.text
+
+    token_new = _login(client, "logout2@example.com", "goodpass1")
+    # 旧 token 的行已被登出删除：笼统 401，不是 session_superseded。
+    kicked = client.get("/api/auth/me", headers=_auth(token_old))
+    assert kicked.status_code == 401, kicked.text
+    assert kicked.json()["detail"] == "Invalid or expired session"
+    # 新 token 正常。
+    assert client.get("/api/auth/me", headers=_auth(token_new)).status_code == 200
+
+
+def test_invalid_token_is_not_reported_as_superseded(cloud_env, email_spy):
+    """伪造 / 不存在的 token 永远得到笼统 401 —— superseded 提示只对
+    真实被顶的会话开放，不泄露会话是否存在过。"""
+    client = _client()
+    client.get("/api/health")
+    response = client.get("/api/auth/me", headers=_auth("forged-token"))
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"] == "Invalid or expired session"
