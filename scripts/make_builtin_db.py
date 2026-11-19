@@ -48,8 +48,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--min-words", type=int, default=3383)
-    # PRD 第十章 验收标准 5: v1 发布包内置两本书（雅思 + 考研红宝书）。
-    parser.add_argument("--expected-books", type=int, default=2)
+    # 2026-09-12: production shelves carry 13 books after the five-book
+    # import (PRD ch.15 托福词汇真经 + ch.16 六级/四级闪过 + 专四/专八如鱼得水
+    # on top of the eight pre-existing books). PRD ch.15/16 交互规则 10:
+    # the Windows builtin SQLite must contain every book in full — no
+    # half-finished books — so the gate expects the full shelf count.
+    # build_windows.ps1 does not pass this flag; override explicitly when
+    # packaging from a dev DB that legitimately holds a different set.
+    parser.add_argument("--expected-books", type=int, default=13)
     parser.add_argument("--min-entries", type=int, default=8000)
     # Verified full-content baseline on 2026-09-03 (Oxford pipeline output):
     # 3,383 words / 8,904 entries / 8,904 examples / 8,904 cards.

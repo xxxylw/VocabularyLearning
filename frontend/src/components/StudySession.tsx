@@ -6,6 +6,11 @@ import type { Pronunciation } from '../api';
 import { PronunciationPanel } from './PronunciationPanel';
 import { WordHeadline } from './WordHeadline';
 
+// 当日重复池（task 7684082688076025051；2026-10-29 规格扩展）：非
+// Got it 评级（Maybe / New）的卡从当前位置后移 3 张重新出现（剩余
+// 不足 3 张时落队尾）—— new 卡与到期复习卡都适用，Got it 才移除。
+const REPEAT_INSERT_INTERVAL = 3;
+
 type StudySessionProps = {
   cards: StudyCard[];
   onReview: (card: StudyCard, rating: ReviewRating) => Promise<unknown> | unknown;
@@ -16,11 +21,16 @@ type StudySessionProps = {
   onPracticeSpelling?: (cards: StudyCard[]) => void;
   onReviewDueWords?: (cards: StudyCard[]) => void;
   // PRD ch.8: day-level progress anchors. totalCards is the day queue's
-  // size (denominator); reviewedCards counts queue entries already
-  // reviewed before this session started (numerator offset). Both fall
-  // back to session-local values when absent (e.g. ad-hoc re-review).
+  // size (denominator). 2026-10-30 学习页两段式进度条：
+  // - gotItCards = 深绿分子 —— 当日队列里评过 Got it 的卡数（顶部
+  //   进度数字同源）。旧调用方只传 reviewedCards 时回退（口径略宽，
+  //   含达上限 capped 的卡）；ad-hoc 复习 / 旧后端不传时从 0 起算。
+  // - seenUnmasteredCards = 浅绿段基数 —— 见过但还没 Got it 的卡数
+  //   （重复池 pending 与达 3 次上限移出的卡都算）。
   totalCards?: number;
+  gotItCards?: number;
   reviewedCards?: number;
+  seenUnmasteredCards?: number;
 };
 
 const ratingLabels: Array<{ rating: ReviewRating; label: string; shortcut: string }> = [
@@ -56,9 +66,10 @@ export function StudySession({
   onPracticeSpelling,
   onReviewDueWords,
   totalCards,
-  reviewedCards = 0
+  gotItCards,
+  reviewedCards,
+  seenUnmasteredCards
 }: StudySessionProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,18 +77,55 @@ export function StudySession({
   const [showAllDefinitions, setShowAllDefinitions] = useState(false);
   const submittingRef = useRef(false);
   const completedRef = useRef(false);
+  // 当日重复池（task 7684082688076025051）：会话内工作流。queue 是
+  // 「剩余待展示卡」—— 普通队列卡消费后 splice 移除、评非 Got it
+  // （Maybe / New，new 卡与复习卡都算）/ 仍 pending 的重复卡在 3 张
+  // 之后以 isRepeat 副本重新插回（规格规则 2：间隔 3 张）。服务端
+  // today_repeat_pool 是持久权威，这里的本地重插只保证同一会话内
+  // 即时可见，重进由服务端确定性重算。
+  const [queue, setQueue] = useState<StudyCard[]>(cards);
+  // 规格规则 6 → 2026-10-30 两段式进度条改版：会话内增量分两色
+  // 记账 —— Got it 计入深绿（gotItDelta）；评 Maybe / New 入池的卡
+  // 计入浅绿（seenDelta），重复副本 Got it 清空时从浅绿转深绿
+  // （seen -1、gotIt +1）；达 3 次上限移出（capped）的卡停在浅绿，
+  // 不再计入深绿（旧口径曾把 capped 算完成，本版按「只要没 Got it
+  // 就算见过未掌握」修正）。深绿只增、浅绿只在转深绿时收缩且
+  // 总进度不降 —— 两段合起来单调不回退。
+  const [gotItDelta, setGotItDelta] = useState(0);
+  const [seenDelta, setSeenDelta] = useState(0);
 
-  const card = cards[currentIndex];
-  const completedCount = Math.min(currentIndex, cards.length);
+  useEffect(() => {
+    // cards prop 只在服务端重新拉会话时换引用（重进 Today / 再来一组 /
+    // ad-hoc 复习），同步工作流并复位会话内进度（两段基数由服务端
+    // gotItCards / seenUnmasteredCards 权威重算）。
+    setQueue(cards);
+    setGotItDelta(0);
+    setSeenDelta(0);
+    completedRef.current = false;
+  }, [cards]);
+
+  const card = queue[0];
   // PRD ch.8: the progress bar is anchored to the day queue, not the
   // in-session list, so it never resets after re-entering Today.
+  // 2026-10-30 两段式进度条：深绿 = 评过 Got it 的卡（顶部数字同源
+  // ——「数字显示 completed 的数量」）；浅绿 = 见过但还没 Got it
+  // 的卡（入池 pending 与达上限 capped 都算）。两段间用同色系深浅
+  // 渐变丝滑过渡。旧调用方只传 reviewedCards 时回退为深绿基数
+  // （口径略宽），ad-hoc 复习不传时从 0 起算。
   const denominator = totalCards ?? cards.length;
-  const dayCompletedCount = reviewedCards + completedCount;
-  const completionPercent =
-    denominator === 0 ? 0 : (dayCompletedCount / denominator) * 100;
-  const currentPosition =
-    card?.queuePosition ?? reviewedCards + currentIndex + 1;
-  const isComplete = cards.length > 0 && currentIndex >= cards.length;
+  const dayCompletedCount = (gotItCards ?? reviewedCards ?? 0) + gotItDelta;
+  // 浅绿允许 delta 为负：重进场景服务端基数已把池内 pending 卡计入
+  // 浅绿，副本 cleared 时要 -1 才能正确「浅绿转深绿」；总量再钳 0。
+  const daySeenCount = Math.max(0, (seenUnmasteredCards ?? 0) + seenDelta);
+  const clampPercent = (value: number) =>
+    denominator === 0
+      ? 0
+      : Math.min(100, Math.max(0, Math.round((value / denominator) * 100)));
+  const completedPercent = clampPercent(dayCompletedCount);
+  const seenPercent = clampPercent(dayCompletedCount + daySeenCount);
+  // 消费即从工作流头移除，队列清空（含重复副本全部解决）才会话完成
+  // —— 与服务端「dayCompleted 追加池清空条件」同构（规格规则 5）。
+  const isComplete = cards.length > 0 && queue.length === 0;
   const newCardsCompleted = cards.filter((item) => item.queueType === 'new').length;
   const reviewCardsCompleted = cards.filter((item) => item.queueType === 'review').length;
   const reviewCards = cards.filter((item) => item.queueType === 'review');
@@ -93,8 +141,53 @@ export function StudySession({
       setError(null);
 
       try {
-        await onReview(card, rating);
-        setCurrentIndex((index) => index + 1);
+        const result = await onReview(card, rating);
+        // 池端点返回的词级状态（App.reviewWordCard 聚合）：pending =
+        // 仍在池内（重插）；cleared = Got it 移出；capped = 达 3 次
+        // 上限自动移出。普通队列卡返回 undefined。
+        const poolStatus = card.isRepeat
+          ? ((result as { status?: 'pending' | 'cleared' | 'capped' } | undefined)
+              ?.status ?? null)
+          : null;
+        // 2026-10-29 规格扩展：非 Got it 评级（Maybe / New）一律本地重
+        // 插 —— new 卡与到期复习卡都算（服务端 _enter_repeat_pool 同
+        // 口径入池），Got it 才真正完成。
+        const shouldReinsert = card.isRepeat
+          ? poolStatus === 'pending'
+          : rating !== 'known';
+        setQueue((prev) => {
+          const next = prev.slice();
+          next.splice(0, 1);
+          if (shouldReinsert) {
+            const repeatCopy: StudyCard = {
+              ...card,
+              isRepeat: true,
+              queuePosition: null,
+              // 沿用原始卡型（复习卡的重复副本仍标 review）。
+              queueType: card.queueType
+            };
+            // 间隔 3 张：副本前有 3 张未学卡时重插（不足 3 张落队尾，
+            // 规格规则 2 边界态）。
+            const insertAt = Math.min(REPEAT_INSERT_INTERVAL, next.length);
+            next.splice(insertAt, 0, repeatCopy);
+          }
+          return next;
+        });
+        if (!card.isRepeat && rating === 'known') {
+          // 普通队列卡 Got it：深绿 +1（卡此前未见过，浅绿无变化）。
+          setGotItDelta((count) => count + 1);
+        } else if (!card.isRepeat) {
+          // Maybe / New 入池：见过但未掌握，浅绿 +1。
+          setSeenDelta((count) => count + 1);
+        } else if (poolStatus === 'cleared') {
+          // 重复副本 Got it 清空：浅绿转深绿（seen -1、gotIt +1）。
+          // 不钳 0 —— 重进场景服务端基数已把池内卡计入浅绿，需要
+          // 负 delta 抵消（总量在 daySeenCount 处再钳 0）。
+          setSeenDelta((count) => count - 1);
+          setGotItDelta((count) => count + 1);
+        }
+        // 重复副本 pending（再现 Maybe / New）与 capped（达上限移出）
+        // 都停在浅绿：已在入池时计入，不重复、不转深绿。
         setIsRevealed(false);
         setLookupState({ status: 'idle' });
         setShowAllDefinitions(false);
@@ -241,7 +334,7 @@ export function StudySession({
           definition: card.definition,
           definitionSource: card.definitionSource,
           examples: card.examples,
-          chineseNote: card.chineseNote
+          chineseNote: null
         }
       ];
 
@@ -292,8 +385,12 @@ export function StudySession({
           Exit
         </button>
         <div className="study-progress">
+          {/* 2026-10-30 两段式进度条：数字 = completed（Got it 卡数）；
+              深绿段 = Got it，其后浅绿段 = 见过但未掌握（入池 pending
+              与达上限 capped 都算），两段以同色系深浅渐变丝滑过渡。
+              进度条下方不再单独显示 completed 文案。 */}
           <div className="progress-text" aria-label="Progress">
-            {currentPosition} / {denominator}
+            {dayCompletedCount} / {denominator}
           </div>
           <div
             className="progress-bar"
@@ -302,10 +399,11 @@ export function StudySession({
             aria-valuemin={0}
             aria-valuemax={denominator}
             aria-valuenow={dayCompletedCount}
+            aria-valuetext={`${dayCompletedCount} of ${denominator} words completed`}
           >
-            <div className="progress-bar-fill" style={{ width: `${completionPercent}%` }} />
+            <div className="progress-fill progress-fill-seen" style={{ width: `${seenPercent}%` }} />
+            <div className="progress-fill progress-fill-done" style={{ width: `${completedPercent}%` }} />
           </div>
-          <div className="completed-text">{dayCompletedCount} / {denominator} completed</div>
         </div>
       </header>
 
@@ -319,7 +417,11 @@ export function StudySession({
           {/* PRD decision 1: render real UK/US IPA when data exists; when the
               panel has no real IPA it renders nothing (no placeholder copy). */}
           {onLookupPronunciation ? (
-            <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} />
+            <PronunciationPanel
+              word={card.word}
+              onLookupPronunciation={onLookupPronunciation}
+              autoPlay={!card.isRepeat}
+            />
           ) : null}
         </div>
 
@@ -377,7 +479,6 @@ export function StudySession({
                       </div>
                     ) : null}
 
-                    {sense.chineseNote ? <p className="chinese-note">{sense.chineseNote}</p> : null}
                   </section>
                 );
               })}

@@ -4,6 +4,8 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import super_user_id
+
 from app.db import connect
 from app.enrichment import PreparedSense
 from app.main import create_app
@@ -326,6 +328,7 @@ def test_prepare_schema_rejects_duplicate_entries_and_cards(
                 """
                 insert into cards (
                     id,
+                    user_id,
                     entry_id,
                     status,
                     stage,
@@ -336,6 +339,7 @@ def test_prepare_schema_rejects_duplicate_entries_and_cards(
                 values (
                     'card-duplicate',
                     ?,
+                    ?,
                     'learning',
                     0,
                     '2026-07-01',
@@ -343,7 +347,7 @@ def test_prepare_schema_rejects_duplicate_entries_and_cards(
                     null
                 )
                 """,
-                (entry["id"],),
+                (super_user_id(connection), entry["id"]),
             )
 
 
@@ -605,6 +609,7 @@ def test_today_session_groups_multiple_senses_into_one_word_card(
             """
             insert into cards (
                 id,
+                user_id,
                 entry_id,
                 status,
                 stage,
@@ -612,9 +617,9 @@ def test_today_session_groups_multiple_senses_into_one_word_card(
                 created_on,
                 last_reviewed_at
             )
-            values (?, ?, 'learning', 0, ?, ?, null)
+            values (?, ?, ?, 'learning', 0, ?, ?, null)
             """,
-            (card_id, entry_id, today.isoformat(), today.isoformat()),
+            (card_id, super_user_id(connection), entry_id, today.isoformat(), today.isoformat()),
         )
 
     session = client.post(
@@ -711,6 +716,7 @@ def test_today_session_shows_all_senses_for_a_due_word_card(
             """
             insert into cards (
                 id,
+                user_id,
                 entry_id,
                 status,
                 stage,
@@ -720,6 +726,7 @@ def test_today_session_shows_all_senses_for_a_due_word_card(
             )
             values (
                 'card-atmosphere-future',
+                ?,
                 'entry-atmosphere-future',
                 'learning',
                 0,
@@ -728,7 +735,7 @@ def test_today_session_shows_all_senses_for_a_due_word_card(
                 null
             )
             """,
-            (tomorrow.isoformat(), today.isoformat()),
+            (super_user_id(connection), tomorrow.isoformat(), today.isoformat()),
         )
 
     session = client.post(

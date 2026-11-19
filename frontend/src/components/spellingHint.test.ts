@@ -97,14 +97,13 @@ describe('buildSpellingHint (F-01: prompt must not leak the answer)', () => {
     }))).toBe('A chemical element');
   });
 
-  it('prefers a safe chinese note over the definition', () => {
+  it('degrades to the structured letter hint when the definition leaks the answer', () => {
     expect(buildSpellingHint(makeCard({
-      chineseNote: '氢气，最轻的气体元素',
       definition: 'Hydrogen is a gas.'
-    }))).toBe('氢气，最轻的气体元素');
+    }))).toBe('8 letters · starts with "h" · ends with "n"');
   });
 
-  it('skips a leaking chinese note and falls through to the definition', () => {
+  it('ignores the unused chinese note field and falls through to the definition', () => {
     expect(buildSpellingHint(makeCard({
       word: 'El Nino',
       chineseNote: 'El Nino phenomenon',

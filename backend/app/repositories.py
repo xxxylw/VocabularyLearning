@@ -188,9 +188,9 @@ def import_book_words_markdown(
     )
 
 
-def get_book_progress() -> BookProgressResponse:
+def get_book_progress(user_id: str) -> BookProgressResponse:
     with connect() as connection:
-        book_id = get_current_book_id(connection)
+        book_id = get_current_book_id(connection, user_id)
         row = connection.execute(
             """
             select

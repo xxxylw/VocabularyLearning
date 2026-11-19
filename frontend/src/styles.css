@@ -1,8 +1,30 @@
+@font-face {
+  font-family: 'Google Sans Flex';
+  src: url('./assets/fonts/GoogleSansFlex.var.woff2') format('woff2');
+  font-weight: 1 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Noto Sans IPA';
+  src: url('./assets/fonts/NotoSansIPA.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
+  /* Apple 风微效果 token（设计规格 2026-09-11）：两条缓动、≤320ms。 */
+  --dur-micro: 120ms;
+  --dur-quick: 200ms;
+  --dur-menu: 280ms;
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   color: #2f2a24;
   background: #f4eadc;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    'Google Sans Flex', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-synthesis: none;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
@@ -83,12 +105,22 @@ a {
   text-transform: uppercase;
 }
 
-.book-title {
+/* V3 P2 → 2026-09-08 调整：eyebrow 行只剩左「Today」，邮箱移至 today-note。 */
+.today-eyebrow-row {
   margin: 0 0 12px;
-  color: #4a3b52;
-  font-size: 0.95rem;
+}
+
+.today-eyebrow-row .eyebrow {
+  margin: 0;
+}
+
+.today-note-email {
+  margin-right: 6px;
+  color: #4a443c;
   font-weight: 600;
 }
+
+/* .book-title（「单词书：xxx」中文标签行）已随 DP-A6 删除（2026-09-11）。 */
 
 .desk-panel,
 .empty-state,
@@ -298,11 +330,22 @@ a {
   font-weight: 800;
 }
 
+/* 2026-11-12 单屏布局（任务 7707179893435468795，用户原话：背诵时
+ * 「就在一页面放下内容」「不用滑动下去点下面的 Got it，Maybe, New」）：
+ * 学习/拼写两页锁定动态视口高度（100dvh，旧浏览器回退 100vh —— iOS
+ * Safari 地址栏伸缩时高度跟着收放，不残留灰底），页面本体不滚动；
+ * 长内容一律在卡片内框滚动（.sense-list / .spelling-prompt /
+ * .spelling-answer-panel），评分与提交按钮钉在视口底部恒定可达。
+ * 底部 padding 叠加 env(safe-area-inset-bottom)，避开 iPhone 底部
+ * 小黑条；index.html 的 viewport 需带 viewport-fit=cover 该值才生效。 */
 .study-shell {
   display: grid;
-  grid-template-rows: auto 1fr;
-  min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
   padding: 24px;
+  padding-bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 16px));
+  overflow: hidden;
   background:
     linear-gradient(135deg, rgba(72, 111, 131, 0.16), transparent 35%),
     #f3e7d6;
@@ -310,12 +353,45 @@ a {
 
 .spelling-shell {
   display: grid;
-  grid-template-rows: auto 1fr;
-  min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
   padding: 24px;
+  padding-bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 16px));
+  overflow: hidden;
   background:
     linear-gradient(135deg, rgba(111, 139, 121, 0.18), transparent 36%),
     #f3e7d6;
+}
+
+/* 2026-11-12 单屏布局（任务 7707179893435468795）续补：study/spelling
+ * 是 App 的早退 return，直接挂在 #root 下，与 .icp-footer 是兄弟节点。
+ * shell 本身已是 100dvh，页脚再占 42px 会把 scrollingElement 顶出 42px
+ * —— 手机上仍能整页滚动，违反「外层页面不滚动」。这里把 #root 变成
+ * 100dvh 的 flex 列：页脚收进视口底部（备案合规必须可见），shell 改吃
+ * 剩余高度（height: auto 覆盖上面的 100dvh 声明）。仅 study/spelling
+ * 屏生效 —— Today / 登录等长页面保持正常的文档流滚动。
+ * 无 :has 的旧浏览器优雅降级为 shell 100dvh + 页脚在其下的旧行为
+ * （评分按钮仍在视口内，只是页面可再滚 42px 看到页脚）。 */
+#root:has(> .study-shell),
+#root:has(> .spelling-shell) {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+#root:has(> .study-shell) > .study-shell,
+#root:has(> .spelling-shell) > .spelling-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+#root:has(> .study-shell) > .icp-footer,
+#root:has(> .spelling-shell) > .icp-footer {
+  flex: 0 0 auto;
 }
 
 .study-topbar {
@@ -350,6 +426,7 @@ a {
 }
 
 .progress-bar {
+  position: relative;
   width: 100%;
   height: 8px;
   overflow: hidden;
@@ -361,7 +438,34 @@ a {
   height: 100%;
   border-radius: inherit;
   background: #6f8b79;
-  transition: width 180ms ease;
+  transition: width var(--dur-quick) var(--ease-standard);
+}
+
+/* 2026-10-30 学习页两段式进度条：深绿段 = 评过 Got it 的卡，其后
+   浅绿段 = 见过但未掌握的卡；两段之间用同色系（#6f8b79）深浅
+   渐变丝滑过渡 —— 深绿右缘 14px 内渐入浅绿色，与底层浅绿段无缝
+   衔接，没有生硬分界。浅绿 = 同一绿色的浅色化（alpha 0.42），
+   Apple 调性的克制配色。 */
+.progress-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+  transition: width var(--dur-quick) var(--ease-standard);
+}
+
+.progress-fill-seen {
+  background: rgba(111, 139, 121, 0.42);
+}
+
+.progress-fill-done {
+  background: linear-gradient(
+    90deg,
+    #6f8b79 0%,
+    #6f8b79 calc(100% - 14px),
+    rgba(111, 139, 121, 0.42) 100%
+  );
 }
 
 .completed-text {
@@ -371,11 +475,21 @@ a {
 }
 
 .study-card {
-  display: grid;
-  align-self: center;
+  /* 2026-11-12 单屏布局：卡片从「内容自高、垂直居中」改为拉伸铺满
+   * shell 的 1fr 行（宽度仍 min(920px, 100%) 居中）—— 只有卡片贴到
+   * 视口底部，卡片底部的 .rating-row / .reveal-action 才能钉在视口
+   * 底缘。内部改为 flex column：.card-back 占剩余空间、.sense-list
+   * 在内框滚动，评分按钮区永不参与滚动。min-height: 0 允许在 grid
+   * 行内收缩（minmax(0,1fr) 的收缩传导），overflow: hidden 只裁剪
+   * 卡内溢出，fixed 定位的查词弹层不受影响。 */
+  display: flex;
+  flex-direction: column;
   gap: 28px;
+  align-self: stretch;
+  min-height: 0;
   width: min(920px, 100%);
   margin: 24px auto;
+  overflow: hidden;
   border: 1px solid rgba(110, 91, 68, 0.14);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.9);
@@ -384,12 +498,19 @@ a {
 }
 
 .spelling-card {
-  display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(320px, 1.08fr);
-  align-self: center;
-  gap: clamp(20px, 4vw, 42px);
-  width: min(980px, 100%);
+  /* 2026-09-08 拼写重设计（DP-B1）：单列居中，废除左右分栏（F-08 失衡根源）。
+   * 2026-11-12 单屏布局：与 .study-card 同构 —— 拉伸铺满 shell 的 1fr
+   * 行、flex column，长释义在 .spelling-prompt / .spelling-answer-panel
+   * 内框滚动，Check / Next word 按钮（.spelling-actions margin-top:auto）
+   * 钉在面板底部恒定可达。 */
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
+  gap: clamp(20px, 4vw, 32px);
+  width: min(720px, 100%);
   margin: 24px auto;
+  overflow: hidden;
   border: 1px solid rgba(110, 91, 68, 0.14);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.92);
@@ -398,31 +519,55 @@ a {
 }
 
 .spelling-prompt {
+  /* 2026-11-12 单屏布局：超长释义在提示区内框滚动，不把输入框和
+   * 按钮挤出视口；flex: 0 1 auto —— 空间充足时自然高度，不足时收
+   * 缩出现内滚。 */
   display: grid;
   align-content: start;
-  gap: 14px;
-  border-right: 1px solid rgba(110, 91, 68, 0.12);
-  padding-right: clamp(18px, 3vw, 34px);
+  gap: 12px;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110, 91, 68, 0.28) transparent;
 }
 
-.spelling-prompt h1 {
+/* 主提示为安全首句、h2 级字号（约 24–28px），不再用 h1（DP-B1 / F-08）。 */
+.spelling-prompt h2 {
   margin: 0;
   color: #2f2a24;
-  font-size: clamp(2rem, 5vw, 4.2rem);
-  line-height: 1.05;
+  font-size: clamp(1.5rem, 2.6vw, 1.75rem);
+  line-height: 1.25;
   letter-spacing: 0;
 }
 
-.spelling-prompt p:last-child {
+/* 2026-11-02 拼写页增强：发音面板进入 .spelling-prompt 后 pos 行不再是
+ * last-child，样式锚点从位置选择器改为类选择器，避免面板渲染后 pos 失色。 */
+.spelling-pos {
   margin: 0;
   color: #756c61;
   font-weight: 800;
 }
 
+/* 拼写出题区为左对齐排版，发音面板随之靠左（学习卡内默认居中不变）。 */
+.spelling-prompt .pronunciation-panel {
+  justify-content: flex-start;
+}
+
 .spelling-answer-panel {
-  display: grid;
+  /* 2026-11-12 单屏布局：面板占卡片剩余空间并内框滚动（答题后的完整
+   * 释义/错词反馈都在这里滚）；.spelling-actions margin-top:auto 把
+   * Check / Next word 钉在面板底部 —— 内容短时按钮贴底、内容超长时
+   * auto margin 归零、按钮回到输入框正下方，两种形态按钮都首屏可达。 */
+  display: flex;
+  flex-direction: column;
   align-content: start;
   gap: 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110, 91, 68, 0.28) transparent;
 }
 
 .spelling-answer-panel label {
@@ -443,6 +588,8 @@ a {
   font-size: clamp(1.2rem, 3vw, 2rem);
   font-weight: 800;
   padding: 10px 14px;
+  transition: border-color var(--dur-quick) var(--ease-standard),
+              box-shadow var(--dur-quick) var(--ease-standard);
 }
 
 .spelling-input:focus {
@@ -455,6 +602,10 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  /* 2026-11-12 单屏布局：钉在答题面板底部（见 .spelling-answer-panel
+   * 注释）；flex: 0 0 auto 确保按钮行自身永不参与内滚。 */
+  margin-top: auto;
+  flex: 0 0 auto;
 }
 
 .spelling-actions .primary-action,
@@ -485,6 +636,67 @@ a {
   color: #3d5f70;
 }
 
+/* 2026-09-08 拼写重设计：揭示后的完整释义 + 完成态汇总/错词列表。 */
+.spelling-full-definition {
+  margin: 0;
+  color: #5d554b;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.spelling-summary-line {
+  margin: 12px 0 0;
+  color: #4b463f;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.spelling-wrong-list {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0 0 0 18px;
+  color: #6a6257;
+}
+
+.spelling-wrong-list strong {
+  color: #87453f;
+}
+
+.completion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+/* 需求 A「背完时间预估」：封面卡进度行下方的主位 + 书架辅位单行。
+   2026-09-11 设计稿（任务 7683946482969349077）：预估行整行英文，
+   且原 #7a6a52 压绿封面对比度仅约 3.0:1（不达 WCAG AA），
+   改为 rgba(251,246,237,.92)（约 8.6:1）。 */
+.book-cover-estimate {
+  color: rgba(251, 246, 237, 0.92);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+/* DP-A4：天数数字用 Markdown 行内 code 风格 pill（GitHub 风）：
+   等宽字体 + 半透白底 + 1px 描边 + 6px 圆角，数字本身不换行拆开。
+   色值取自设计稿截图实测（2x 缩放取样）。 */
+.book-cover-days {
+  padding: 0 6px;
+  border: 1px solid rgba(251, 246, 237, 0.45);
+  border-radius: 6px;
+  background: rgba(251, 246, 237, 0.15);
+  color: rgba(251, 246, 237, 0.95);
+  font-family: 'Google Sans Flex', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+
 .queue-pill {
   justify-self: start;
   border: 1px solid rgba(111, 139, 121, 0.25);
@@ -495,11 +707,21 @@ a {
 }
 
 .card-front {
+  /* 2026-11-12 单屏布局：正面态（无 card-back）flex-grow 占据 Reveal
+   * 之上的全部剩余空间，单词垂直居中在视口中部；背面态（:has 匹配
+   * 到 card-back）退回自然高度，把空间让给会内滚的释义区。不支持
+   * :has 的旧浏览器维持 flex-grow，背面只是单词区偏高，滚动/按钮
+   * 仍正常（优雅降级）。 */
   display: grid;
   gap: 12px;
   min-height: 190px;
+  flex: 1 1 auto;
   align-content: center;
   text-align: center;
+}
+
+.study-card:has(> .card-back) .card-front {
+  flex: 0 1 auto;
 }
 
 .part-of-speech,
@@ -541,7 +763,7 @@ a {
 }
 
 .pronunciation-ipa {
-  font-family: Georgia, serif;
+  font-family: 'Noto Sans IPA', 'Google Sans Flex', system-ui, serif;
   font-size: 1.15rem;
 }
 
@@ -580,34 +802,56 @@ a {
   font-size: 0.88rem;
 }
 
-.pronunciation-source {
-  width: 100%;
-  color: #756c61;
-  font-size: 0.76rem;
-}
-
-.pronunciation-source summary {
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.pronunciation-source p {
-  margin: 6px 0 0;
-}
-
 .reveal-action {
   width: min(320px, 100%);
   justify-self: center;
+  /* 2026-11-12 单屏布局：正面态把 Reveal 钉到视口底缘（与背面态评分
+   * 按钮区同一位置，翻面无跳动）。 */
+  margin-top: auto;
+  flex: 0 0 auto;
 }
 
 .card-back {
-  display: grid;
+  /* 2026-11-12 单屏布局：占卡片剩余空间（flex column），.sense-list
+   * 在其中内滚，.rating-row 钉底 —— 评分按钮恒定可见。 */
+  display: flex;
+  flex-direction: column;
   gap: 22px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sense-list {
   display: grid;
   gap: 18px;
+  /* 2026-11-12 单屏布局：多义项长例句在内框滚动（页面本体不滚）；
+   * flex: 1 + min-height: 0 让它占满 card-back 剩余空间且可收缩。
+   * 细滚动条 + 自动隐藏（overlay 触屏），符合现有 Apple 调性。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110, 91, 68, 0.28) transparent;
+}
+
+.sense-list::-webkit-scrollbar,
+.spelling-prompt::-webkit-scrollbar,
+.spelling-answer-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sense-list::-webkit-scrollbar-thumb,
+.spelling-prompt::-webkit-scrollbar-thumb,
+.spelling-answer-panel::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(110, 91, 68, 0.24);
+}
+
+.sense-list::-webkit-scrollbar-track,
+.spelling-prompt::-webkit-scrollbar-track,
+.spelling-answer-panel::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sense-list::selection,
@@ -755,6 +999,9 @@ a {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  /* 2026-11-12 单屏布局：钉在卡片底缘（= 视口底部）；flex: 0 0 auto
+   * 保证评分按钮区永不参与内滚、恒定可见。 */
+  flex: 0 0 auto;
 }
 
 .rating-button {
@@ -989,6 +1236,10 @@ a {
 
   .study-shell {
     padding: 16px;
+    /* 2026-11-12 单屏布局：手机端同样保留底部安全区（iPhone 小黑条）。
+     * 评分按钮区从「竖排三行」改回三列一行 —— 钉底后一行三键不占高、
+     * 释义区可用空间更大，按钮也更近拇指。 */
+    padding-bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 12px));
   }
 
   .study-card {
@@ -997,10 +1248,6 @@ a {
 
   .study-progress {
     width: min(220px, 52vw);
-  }
-
-  .rating-row {
-    grid-template-columns: 1fr;
   }
 
   .lookup-popover {
@@ -1012,6 +1259,30 @@ a {
   .completion-stats {
     grid-template-columns: 1fr;
   }
+
+  /* 2026-09-08 拼写重设计：≤760px 视口输入与按钮全宽、上下排列。 */
+  .spelling-shell {
+    padding: 16px;
+    /* 2026-11-12 单屏布局：手机端底部安全区（iPhone 小黑条）。 */
+    padding-bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 12px));
+  }
+
+  .spelling-card {
+    padding: 20px;
+  }
+
+  .spelling-input {
+    min-height: 48px;
+    font-size: 1.15rem;
+  }
+
+  .spelling-actions {
+    flex-direction: column;
+  }
+
+  .spelling-actions .primary-action {
+    width: 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1019,6 +1290,17 @@ a {
   .celebration-field::before,
   .celebration-field span {
     animation: none;
+  }
+  .spelling-input.shake,
+  .spelling-feedback,
+  .spelling-answer,
+  .spelling-card.entering,
+  .account-menu-panel.open,
+  .account-menu-panel.closing {
+    animation: none;
+  }
+  button:where(:not(:disabled)):active {
+    transform: none;
   }
 }
 
@@ -1312,6 +1594,30 @@ a {
   background: linear-gradient(150deg, #a8524a 0%, #7c3530 100%);
 }
 
+/* 2026-09-12 (PRD ch.15 + ch.16): palettes for the five new built-in books —
+   托福真经 blue / 六级闪过 purple / 四级闪过 teal / 专四如鱼 amber / 专八如鱼
+   slate. Each is distinct from the green default, the red 红宝书 and from one
+   another (版权硬边界：程序化封面，零图片资源). */
+.bookshelf-cover--blue {
+  background: linear-gradient(150deg, #4a6fa5 0%, #33507c 100%);
+}
+
+.bookshelf-cover--purple {
+  background: linear-gradient(150deg, #7d5a8c 0%, #5a3f68 100%);
+}
+
+.bookshelf-cover--teal {
+  background: linear-gradient(150deg, #4f8f8b 0%, #356663 100%);
+}
+
+.bookshelf-cover--amber {
+  background: linear-gradient(150deg, #a8834a 0%, #7c5c30 100%);
+}
+
+.bookshelf-cover--slate {
+  background: linear-gradient(150deg, #5d6b7d 0%, #414c5c 100%);
+}
+
 .bookshelf-cover-spine {
   position: absolute;
   inset: 0 auto 0 0;
@@ -1423,4 +1729,145 @@ a {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* ---------------------------------------------------------------------------
+v3 P0（2026-09-06）：只读模式非模态引导条 + Today 锁定态（V3-01）。
+--------------------------------------------------------------------------- */
+
+.readonly-notice {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(154, 77, 69, 0.08);
+  border-bottom: 1px solid rgba(154, 77, 69, 0.15);
+  color: #9a4d45;
+  font-size: 0.88rem;
+}
+
+.readonly-notice-lock {
+  display: inline-flex;
+}
+
+.readonly-notice-text {
+  margin: 0;
+}
+
+.readonly-notice-cta {
+  padding: 4px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #9a4d45;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.today-locked strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8b8172;
+}
+
+.today-locked-lock {
+  display: inline-flex;
+}
+
+.today-locked-cta {
+  background: #8b8172;
+}
+
+
+/* ===== Apple-style micro-interactions（设计规格 2026-09-11）=====
+ * 全站按钮按压态 + 拼写页 shake/反馈入场/卡片入场。
+ * 仅 3 个 React class 钩子：.shake / .entering / .open。
+ */
+/* :where() 降特异性——class 级自带 transition 的按钮（书封卡、发音键等）保持原值。 */
+button:where(:not(:disabled)) {
+  transition: transform var(--dur-micro) var(--ease-standard),
+              border-color var(--dur-micro) var(--ease-standard),
+              background-color var(--dur-micro) var(--ease-standard);
+}
+
+button:where(:not(:disabled)):active {
+  transform: scale(0.97);
+}
+
+/* 拼写页：首次答错抖输入框（idle → retry 一次性触发）。 */
+@keyframes spelling-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px); }
+  40%      { transform: translateX(4px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(2px); }
+}
+
+.spelling-input.shake {
+  animation: spelling-shake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* 拼写页：反馈条 / 答案行三态统一 200ms 淡入。 */
+@keyframes feedback-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.spelling-feedback {
+  animation: feedback-in var(--dur-quick) var(--ease-out);
+}
+
+.spelling-answer {
+  animation: feedback-in var(--dur-quick) var(--ease-out);
+}
+
+/* 拼写页：换卡入场（下一词 / 错词再来一组）。 */
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.spelling-card.entering {
+  animation: card-in 240ms var(--ease-out);
+}
+
+/* ICP filing footer — regulatory requirement (fusio.com.cn).
+   In-flow at document bottom; every page shell is min-height:100vh,
+   so it never overlaps content. Only Chinese element in the EN UI. */
+.icp-footer {
+  padding: 10px 16px 14px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #a89f93;
+  background: transparent;
+}
+
+.icp-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.icp-footer a:hover {
+  color: #8a8175;
+  text-decoration: underline;
+}
+
+/* Gap between the ICP and public-security filing links. */
+.icp-footer a + a {
+  margin-left: 14px;
+}
+
+/* Public-security (公安) badge: self-hosted copy of the official emblem. */
+.icp-footer-badge {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -1px;
 }

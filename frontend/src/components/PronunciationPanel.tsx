@@ -4,6 +4,21 @@ import type { Pronunciation } from '../api';
 type PronunciationPanelProps = {
   word: string;
   onLookupPronunciation: (word: string) => Promise<Pronunciation>;
+  /**
+   * P1 auto-play (task 7684163198957702092): when true, automatically play
+   * the dictionary audio once as the card's front becomes ready. Callers
+   * opt in per card (e.g. StudySession passes `!card.isRepeat`). Since
+   * 2026-11-02 the spelling flow also opts in: hearing the word at the
+   * prompt stage is the requested spelling aid (听音拼词).
+   */
+  autoPlay?: boolean;
+  /**
+   * Spelling prompt stage (2026-11-02 拼写页增强): the panel itself is the
+   * spelling aid, so no accessible name may spell the answer out — container
+   * and play button switch to word-free labels. Visual output is unchanged.
+   * Existing callers (StudySession, post-reveal views) keep the default.
+   */
+  concealWord?: boolean;
 };
 
 /**
@@ -29,20 +44,34 @@ function buildIpaFragments(pronunciation: Pronunciation): Array<{ ipa: string; l
 
 export function PronunciationPanel({
   word,
-  onLookupPronunciation
+  onLookupPronunciation,
+  autoPlay = false,
+  concealWord = false
 }: PronunciationPanelProps) {
   const [pronunciation, setPronunciation] = useState<Pronunciation | null>(null);
   const [status, setStatus] = useState<'loading' | 'error' | 'ready'>('loading');
   const audioRef = useRef<HTMLAudioElement>(null);
+  // Per-word guard: each word auto-plays at most once per panel instance, so
+  // re-renders (Reveal / rating / Show more) never retrigger playback.
+  const autoPlayedWordRef = useRef<string | null>(null);
+  // Which word the current `pronunciation` state actually belongs to. Kept as
+  // a ref (not state) so it is updated synchronously: on a card switch the
+  // auto-play effect below runs in the same commit as this lookup effect and
+  // still sees the PREVIOUS word's data; without this gate it would mark the
+  // new word as played against the stale audio element and then never play
+  // the new word once its own data arrives.
+  const loadedWordRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
+    loadedWordRef.current = null;
     setStatus('loading');
     setPronunciation(null);
 
     void onLookupPronunciation(word)
       .then((result) => {
         if (!isCurrent) return;
+        loadedWordRef.current = word;
         setPronunciation(result);
         setStatus('ready');
       })
@@ -56,6 +85,31 @@ export function PronunciationPanel({
     };
   }, [word, onLookupPronunciation]);
 
+  useEffect(() => {
+    // P1 auto-play: fires once per word, only after the <audio> element has
+    // actually rendered (i.e. data ready with an audioUrl). If the lookup
+    // resolved late and the user already moved on, the isCurrent guard in
+    // the lookup effect above kept `pronunciation` null, so this never
+    // plays the wrong word. Any failure (no audio, autoplay blocked by the
+    // browser, network) is silently skipped — no retry, no UI notice.
+    if (!autoPlay || !pronunciation?.audioUrl) {
+      return;
+    }
+    // Stale-data gate: only play when the rendered data was fetched for the
+    // word currently on the card (see loadedWordRef note above).
+    if (loadedWordRef.current !== word) {
+      return;
+    }
+    if (autoPlayedWordRef.current === word) {
+      return;
+    }
+    autoPlayedWordRef.current = word;
+    const playResult = audioRef.current?.play();
+    if (playResult && typeof playResult.catch === 'function') {
+      playResult.catch(() => {});
+    }
+  }, [autoPlay, pronunciation, word]);
+
   if (status !== 'ready' || !pronunciation || pronunciation.status === 'unavailable') {
     // Loading / error / no data: render nothing (no placeholder slot).
     return null;
@@ -67,7 +121,7 @@ export function PronunciationPanel({
   }
 
   return (
-    <div className="pronunciation-panel" aria-label={`Pronunciation of ${word}`}>
+    <div className="pronunciation-panel" aria-label={concealWord ? 'Pronunciation' : `Pronunciation of ${word}`}>
       <span className="pronunciation-ipa">
         {ipaFragments.map((fragment, index) => (
           <span key={fragment.label} className="pronunciation-ipa-item">
@@ -82,7 +136,7 @@ export function PronunciationPanel({
           <button
             className="pronunciation-play"
             type="button"
-            aria-label={`Play ${word} pronunciation`}
+            aria-label={concealWord ? 'Play pronunciation' : `Play ${word} pronunciation`}
             onClick={() => void audioRef.current?.play()}
           >
             {/*
@@ -105,33 +159,13 @@ export function PronunciationPanel({
           </button>
         </>
       ) : null}
-      <details className="pronunciation-source">
-        <summary>Source</summary>
-        <p>
-          <a href={pronunciation.sourceUrl} target="_blank" rel="noreferrer">
-            {pronunciation.sourceUrl.includes('oxfordlearnersdictionaries.com')
-              ? 'Oxford Learner\u2019s Dictionaries'
-              : 'Wiktionary'}
-          </a>
-          {pronunciation.audioSourceUrl ? (
-            <>
-              {' · '}
-              <a href={pronunciation.audioSourceUrl} target="_blank" rel="noreferrer">
-                Wikimedia Commons
-              </a>
-            </>
-          ) : null}
-          {pronunciation.attribution ? ` · ${pronunciation.attribution}` : ''}
-          {pronunciation.license && pronunciation.licenseUrl ? (
-            <>
-              {' · '}
-              <a href={pronunciation.licenseUrl} target="_blank" rel="noreferrer">
-                {pronunciation.license}
-              </a>
-            </>
-          ) : null}
-        </p>
-      </details>
+      {/*
+       * 2026-11-12: the dictionary source line below the card is no longer
+       * rendered (user request — the Source details block used to live here).
+       * The source fields (sourceUrl / audioSourceUrl / attribution /
+       * license) stay in the API payload untouched, so the line can be
+       * restored or relocated later without backend changes.
+       */}
     </div>
   );
 }

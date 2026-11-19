@@ -8,15 +8,29 @@ type SpellingSessionProps = {
   cards: StudyCard[];
   onExit: () => void;
   onLookupPronunciation?: (word: string) => Promise<Pronunciation>;
-  // PRD ch.8: day-level progress anchors — same queue snapshot as card
-  // mode. startIndex offsets by cards already reviewed on the study date;
-  // totalCount is the day queue's size. Both fall back to session-local
-  // values when absent.
-  startIndex?: number;
-  totalCount?: number;
 };
 
-type ResultState = 'idle' | 'correct' | 'incorrect';
+// Bug 7684167107172388020（2026-09-11 用户反馈「拼写右上角 57/55」）：
+// 拼写页进度不再锚定当日队列（dayProgress / PRD ch.8 旧口径）——
+// 当日重复池上线后背完 55 卡进拼写，startIndex(55) 起步，进度从
+// 56/55 起算、恒 >100%。产品口径修正（用户拍板）：拼写页进度 =
+// 拼写会话自身进度（第 X / 共 N，N = 本次拼写卡组数），首轮与
+// retry round 统一口径。
+
+// 拼写界面重设计（2026-09-08 规格需求 B，DP-B2 重试一次口径）：
+//   idle（出题）→ checked（correct | incorrect-first）
+//   → retry（保留输入、提示「再试一次」，可修改后再提交）
+//   → checked（correct | incorrect-final 揭示答案）→ next → idle … → complete
+// 状态语义：
+//   - idle     出题，等待首次提交
+//   - retry    第一次答错：不揭示答案，保留用户输入
+//   - correct  答对（含重试后答对，均计为正确）
+//   - revealed 连续答错两次：已揭示正确答案 + 完整释义
+type ResultState = 'idle' | 'retry' | 'correct' | 'revealed';
+
+// 逐词判定结果：correct = 首答答对；second = 重试后答对（均计为正确，
+// 不进错词列表，用于完成态 SP-09 补充行）；wrong = 连续答错两次。
+type WordOutcome = 'correct' | 'second' | 'wrong';
 
 function normalizeAnswer(value: string): string {
   return value
@@ -29,51 +43,149 @@ function normalizeAnswer(value: string): string {
 export function SpellingSession({
   cards,
   onExit,
-  onLookupPronunciation,
-  startIndex = 0,
-  totalCount
+  onLookupPronunciation
 }: SpellingSessionProps) {
+  // 「错词再来一组」在会话内部重启：sessionCards 仅在首轮取 props.cards，
+  // 之后由 retry round 接管。
+  const [sessionCards, setSessionCards] = useState<StudyCard[]>(() => cards);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answer, setAnswer] = useState('');
   const [result, setResult] = useState<ResultState>('idle');
-  const [showAnswer, setShowAnswer] = useState(false);
+  const [outcomes, setOutcomes] = useState<WordOutcome[]>([]);
+  // Apple 风微效果（设计规格 2026-09-11）：shake 仅在首答错误时触发一次，
+  // animationend 后移除；entering 在换卡时加 240ms 入场过渡。
+  const [shake, setShake] = useState(false);
+  const [entering, setEntering] = useState(true);
 
-  const card = cards[currentIndex];
-  const completedCount = Math.min(currentIndex, cards.length);
-  const denominator = totalCount ?? cards.length;
-  const dayCompletedCount = startIndex + completedCount;
-  const isComplete = cards.length === 0 || currentIndex >= cards.length;
+  const card = sessionCards[currentIndex];
+  // 会话内本地计数：X = 已拼到第几张（1 起），N = 本次拼写卡组数；
+  // 不再锚定 dayProgress，首轮与 retry round 同一口径。
+  const completedCount = Math.min(currentIndex, sessionCards.length);
+  const denominator = sessionCards.length;
+  const currentPosition = currentIndex + 1;
+  const completionPercent = denominator === 0 ? 0 : (completedCount / denominator) * 100;
+  const isComplete = sessionCards.length === 0 || currentIndex >= sessionCards.length;
 
-  if (isComplete || !card) {
-    return (
-      <main className="spelling-shell completion-state" aria-label="Spelling complete">
-        <section className="completion-panel" aria-labelledby="spelling-complete-title">
-          <p className="eyebrow">Spelling complete</p>
-          <h1 id="spelling-complete-title">Spelling pass finished.</h1>
-          <p>{cards.length} words checked. Nice clean finish.</p>
-          <button className="primary-action" type="button" onClick={onExit}>
-            Back home
-          </button>
-        </section>
-      </main>
-    );
+  const correctCount = outcomes.filter((outcome) => outcome === 'correct' || outcome === 'second').length;
+  const secondTryCorrectCount = outcomes.filter((outcome) => outcome === 'second').length;
+  const wrongOutcomes = outcomes.filter((outcome) => outcome === 'wrong').length;
+  const wrongCards = sessionCards.filter((_, index) => outcomes[index] === 'wrong');
+
+  function recordOutcome(outcome: WordOutcome) {
+    setOutcomes((previous) => {
+      const next = [...previous];
+      next[currentIndex] = outcome;
+      return next;
+    });
   }
 
-  const prompt = buildSpellingHint(card);
-  const expectedAnswer = normalizeAnswer(card.word);
-  const isCorrect = result === 'correct';
-
   function handleCheck() {
-    setShowAnswer(false);
-    setResult(normalizeAnswer(answer) === expectedAnswer ? 'correct' : 'incorrect');
+    if (!card) {
+      return;
+    }
+
+    const isNowCorrect = normalizeAnswer(answer) === normalizeAnswer(card.word);
+
+    if (isNowCorrect) {
+      // 重试后答对同样计为正确（DP-B2），不进错词列表。
+      recordOutcome(result === 'retry' ? 'second' : 'correct');
+      setResult('correct');
+      return;
+    }
+
+    if (result === 'idle') {
+      // 第一次答错：不揭示答案，进入重试态（保留输入），并触发一次 shake。
+      setResult('retry');
+      setShake(true);
+      window.setTimeout(() => setShake(false), 400);
+      return;
+    }
+
+    // 第二次仍错：揭示正确答案 + 完整释义。
+    recordOutcome('wrong');
+    setResult('revealed');
   }
 
   function handleNext() {
     setCurrentIndex((index) => index + 1);
     setAnswer('');
     setResult('idle');
-    setShowAnswer(false);
+    setEntering(true);
   }
+
+  function handleRetryWrongWords() {
+    if (wrongCards.length === 0) {
+      return;
+    }
+    setSessionCards(wrongCards);
+    setCurrentIndex(0);
+    setAnswer('');
+    setResult('idle');
+    setOutcomes([]);
+    setEntering(true);
+  }
+
+  if (isComplete || !card) {
+    return (
+      <main className="spelling-shell completion-state" aria-label="Spelling complete">
+        <section className="completion-panel" aria-labelledby="spelling-complete-title">
+          <p className="eyebrow">Spelling complete</p>
+          <h1 id="spelling-complete-title">Practice complete</h1>
+          <p className="spelling-summary-line" data-testid="spelling-summary">
+            {sessionCards.length} words · {correctCount} correct · {wrongOutcomes} missed
+          </p>
+          {wrongCards.length === 0 ? (
+            <p className="spelling-summary-note" data-testid="spelling-summary-note">
+              Every word correct on the first or second try.
+            </p>
+          ) : null}
+          {wrongCards.length > 0 && secondTryCorrectCount > 0 ? (
+            <p className="spelling-summary-note" data-testid="spelling-summary-note">
+              {secondTryCorrectCount} correct on the second try.
+            </p>
+          ) : null}
+          {wrongCards.length > 0 ? (
+            <ul className="spelling-wrong-list" data-testid="spelling-wrong-list">
+              {wrongCards.map((wrongCard) => (
+                <li key={wrongCard.cardId}>
+                  <strong>{wrongCard.word}</strong>
+                  <span> — {buildSpellingHint(wrongCard)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="completion-actions">
+            {wrongCards.length > 0 ? (
+              <button
+                className="primary-action"
+                type="button"
+                onClick={handleRetryWrongWords}
+                data-testid="spelling-retry-wrong"
+              >
+                Practice missed words
+              </button>
+            ) : null}
+            <button
+              className={wrongCards.length > 0 ? 'ghost-button' : 'primary-action'}
+              type="button"
+              onClick={onExit}
+              data-testid="spelling-back-today"
+            >
+              Back to Today
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  const prompt = buildSpellingHint(card);
+  const isCorrect = result === 'correct';
+  const isRevealed = result === 'revealed';
+  const isResolved = isCorrect || isRevealed;
+  const fullDefinition =
+    [card.definition].filter((part) => typeof part === 'string' && part.length > 0).join(' · ') ||
+    '';
 
   return (
     <main className="spelling-shell" aria-label="Spelling practice">
@@ -81,33 +193,61 @@ export function SpellingSession({
         <button className="ghost-button" type="button" onClick={onExit}>
           Exit
         </button>
-        <div className="progress-text">
-          {startIndex + currentIndex + 1} / {denominator}
+        <div className="study-progress">
+          <div className="progress-text">
+            {currentPosition} / {denominator}
+          </div>
+          <div className="progress-bar" role="presentation">
+            <div className="progress-bar-fill" style={{ width: `${completionPercent}%` }} />
+          </div>
         </div>
       </header>
 
-      <section className="spelling-card" aria-labelledby="spelling-title">
+      <section
+        className={`spelling-card${entering ? ' entering' : ''}`}
+        aria-labelledby="spelling-title"
+        onAnimationEnd={() => setEntering(false)}
+      >
         <div className="spelling-prompt">
-          <p className="eyebrow">Definition prompt</p>
-          <h1 id="spelling-title">{prompt}</h1>
-          <p>{card.partOfSpeech}{card.senseLabel ? ` · ${card.senseLabel}` : ''}</p>
+          <p className="eyebrow">Definition</p>
+          {/* DP-B1/F-08：主提示为安全首句、h2 级字号，不再用 h1。 */}
+          <h2 id="spelling-title">{prompt}</h2>
+          <p className="spelling-pos">{card.partOfSpeech}{card.senseLabel ? ` · ${card.senseLabel}` : ''}</p>
+
+          {/*
+           * 2026-11-02 拼写页增强（用户原话：「这里单词拼写的时候我希望有
+           * 音标还有发音的音频，辅助我拼写。」）：出题阶段即提供英美音标 +
+           * 发音播放（听音拼词），进入新题自动播放一次（autoplay 被拦由
+           * PronunciationPanel 静默降级）。concealWord 把答案从所有可访问名
+           * 中隐去（F-01 口径延伸到 aria-label）；无音频的词沿用面板既有
+           * 降级——音标照显、按钮不渲染。面板在答题全程常驻原位，答题后
+           * 不再于结果区重复挂载。
+           */}
+          {onLookupPronunciation ? (
+            <PronunciationPanel
+              word={card.word}
+              onLookupPronunciation={onLookupPronunciation}
+              autoPlay
+              concealWord
+            />
+          ) : null}
         </div>
 
         <div className="spelling-answer-panel">
-          <label htmlFor="spelling-answer">Type the English word</label>
+          <label htmlFor="spelling-answer">Type the word</label>
           <input
             id="spelling-answer"
-            className="spelling-input"
+            className={`spelling-input${shake ? ' shake' : ''}`}
+            onAnimationEnd={() => setShake(false)}
             value={answer}
             onChange={(event) => {
               setAnswer(event.target.value);
-              setResult('idle');
-              setShowAnswer(false);
+              // 重试态下编辑输入不重置状态——否则编辑即可绕过「重试一次」。
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
-                if (isCorrect) {
+                if (isResolved) {
                   handleNext();
                 } else {
                   handleCheck();
@@ -118,23 +258,41 @@ export function SpellingSession({
           />
 
           <div className="spelling-actions">
-            <button className="primary-action" type="button" onClick={isCorrect ? handleNext : handleCheck}>
-              {isCorrect ? 'Next' : 'Check'}
+            <button
+              className="primary-action"
+              type="button"
+              onClick={isResolved ? handleNext : handleCheck}
+            >
+              {isResolved ? 'Next word' : 'Check'}
             </button>
-            {result === 'incorrect' ? (
-              <button className="ghost-button" type="button" onClick={() => setShowAnswer(true)}>
-                Show answer
-              </button>
-            ) : null}
           </div>
 
-          {result === 'correct' ? <p className="spelling-feedback correct">Correct.</p> : null}
-          {result === 'incorrect' ? <p className="spelling-feedback incorrect">Try again.</p> : null}
-          {showAnswer ? <p className="spelling-answer">Answer: {card.word}</p> : null}
-          {showAnswer && onLookupPronunciation ? (
-            <PronunciationPanel word={card.word} onLookupPronunciation={onLookupPronunciation} />
+          {result === 'retry' ? (
+            <p className="spelling-feedback incorrect" data-testid="spelling-retry-hint">
+              Try again
+            </p>
           ) : null}
-          <p className="completed-text">{dayCompletedCount} / {denominator} completed</p>
+          {isCorrect ? <p className="spelling-feedback correct">✓ Correct.</p> : null}
+          {isRevealed ? (
+            <p className="spelling-feedback incorrect">✗ Not quite. The correct answer is below.</p>
+          ) : null}
+
+          {isCorrect ? <p className="spelling-answer" data-testid="spelling-word">{card.word}</p> : null}
+          {isRevealed ? (
+            <p className="spelling-answer" data-testid="spelling-word">Answer: {card.word}</p>
+          ) : null}
+
+          {isResolved && fullDefinition ? (
+            <p className="spelling-full-definition" data-testid="spelling-full-definition">
+              {fullDefinition}
+            </p>
+          ) : null}
+
+          {/*
+           * 发音面板已上移到出题区常驻（2026-11-02 拼写页增强）——答题后
+           * 不再于此处重复渲染，避免同一词双面板与二次查询。
+           */}
+          <p className="completed-text">{completedCount} / {denominator} completed</p>
         </div>
       </section>
     </main>

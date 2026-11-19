@@ -204,3 +204,50 @@ def test_lookup_oxford_word_falls_back_from_british_ise_to_american_ize(monkeypa
         "https://www.oxfordlearnersdictionaries.com/definition/english/jeopardise?q=jeopardise",
         "https://www.oxfordlearnersdictionaries.com/definition/english/jeopardize?q=jeopardize",
     ]
+
+
+def test_lookup_route_returns_empty_data_when_oxford_is_down(monkeypatch):
+    """B2 诚实降级：Oxford 上游不可用（超时/网络错误）= 200 + 空数据，
+    绝不把上游故障当成 5xx 暴露给客户端（QA 第三轮：aboveboard /
+    abash / abnegate / e-mail / human being 502）。"""
+    def broken_fetch(word: str):
+        raise OSError("connection timed out")
+
+    monkeypatch.setattr("app.routes.lookup_oxford_word", broken_fetch)
+    client = TestClient(create_app())
+
+    response = client.get("/api/lookup/oxford?word=aboveboard")
+
+    assert response.status_code == 200
+    assert response.json()["senses"] == []
+
+
+def test_lookup_route_returns_empty_data_when_no_senses(monkeypatch):
+    """B2 诚实降级：合法词 Oxford 查不到释义 = 200 + 空数据，不再 404
+    （QA 第三轮：abeyance 404）。"""
+    from app.models import OxfordLookupResponse
+
+    def empty_fetch(word: str):
+        return OxfordLookupResponse(
+            word=word,
+            sourceUrl="https://www.oxfordlearnersdictionaries.com/definition/english/abeyance?q=abeyance",
+            senses=[],
+        )
+
+    monkeypatch.setattr("app.routes.lookup_oxford_word", empty_fetch)
+    client = TestClient(create_app())
+
+    response = client.get("/api/lookup/oxford?word=abeyance")
+
+    assert response.status_code == 200
+    assert response.json()["senses"] == []
+
+
+def test_lookup_route_keeps_400_for_non_ascii_word():
+    """café / résumé 的 400 是明示的字符集设计约束（QA 确认不改）。"""
+    client = TestClient(create_app())
+
+    response = client.get("/api/lookup/oxford?word=caf%C3%A9")
+
+    assert response.status_code == 400
+    assert "English letters" in response.json()["detail"]

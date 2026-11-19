@@ -98,8 +98,6 @@ function maskHint(word: string): string {
 export function buildSpellingHint(card: StudyCard): string {
   const tokens = answerTokens(card.word);
   const candidates = [
-    card.chineseNote,
-    card.senses[0]?.chineseNote ?? null,
     card.definition,
     card.senses[0]?.definition ?? null
   ];

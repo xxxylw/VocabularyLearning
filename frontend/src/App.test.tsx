@@ -6,6 +6,10 @@ import { App } from './App';
 describe('App', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // P1 2026-09-08 打卡服务端化：handleSessionComplete 会写 localStorage，
+    // 不清理会串测试（下一个用例 mount 会触发 merge 上报、多消费一条
+    // fetch 队列）。
+    window.localStorage.clear();
   });
 
   it('shows an import-needed empty state when today starts with no book words', async () => {
@@ -13,6 +17,12 @@ describe('App', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
+      // P0 2026-09-08: App now fetches /api/study/today/summary on mount
+      // so the Today page can render the correct button set on first
+      // paint (no flicker, no cross-device state loss).
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ totalCards: 0, cards: [] }))
@@ -24,7 +34,8 @@ describe('App', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
-    expect(await screen.findByText('单词书：雅思词汇真经')).toBeInTheDocument();
+    // DP-A6：中文标签行已删除；书名保留在封面卡内。
+    expect(await screen.findByTestId('book-cover-card')).toHaveTextContent('雅思词汇真经');
     await user.click(screen.getByRole('button', { name: /start today cards/i }));
 
     expect(await screen.findByText('No book words imported yet.')).toBeInTheDocument();
@@ -33,18 +44,26 @@ describe('App', () => {
 
   it('starts spelling practice from the completed study session', async () => {
     const user = userEvent.setup();
+    const completedCard = studyCard();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
-        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [studyCard()] }))
+        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
       })
       .mockResolvedValueOnce(pronunciationUnavailableResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
-      });
+      })
+      // handleSessionComplete fires a follow-up summary fetch
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -60,28 +79,78 @@ describe('App', () => {
     expect(screen.getByText('a weather pattern that warms the eastern Pacific Ocean')).toBeInTheDocument();
   });
 
-  it('offers spelling practice when today has no more cards after a completed session', async () => {
+  it('dedupes the spelling card group by cardId and shows session-local progress', async () => {
+    // Bug 7684167107172388020：当日有重复卡（重复池 isRepeat 副本 /
+    // 队列快照重复行）时，拼写卡组按 cardId 保序去重 —— N = distinct
+    // 词数；进度为拼写会话自身进度，恒 ≤ N，不再锚定 dayProgress
+    // （旧口径背完 55 卡后进拼写会显示 56/55、57/55）。
     const user = userEvent.setup();
+    const cardA = studyCard();
+    const cardADuplicate = { ...studyCard(), isRepeat: true };
+    const cardB = {
+      ...studyCard(),
+      cardId: 'card-2',
+      word: 'carbon dioxide',
+      definition: 'a gas produced when carbon burns',
+      chineseNote: null
+    };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
-        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [studyCard()] }))
+        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [cardA] }))
       })
       .mockResolvedValueOnce(pronunciationUnavailableResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
       })
+      // 会话完成后的 summary：completedCards 含 cardA 的重复条目。
+      .mockResolvedValueOnce(completedDaySummaryResponse([cardA, cardADuplicate, cardB]));
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: /start today cards/i }));
+    await user.click(await screen.findByRole('button', { name: /reveal/i }));
+    await user.click(screen.getByRole('button', { name: /got it/i }));
+    await user.click(await screen.findByRole('button', { name: /practice spelling/i }));
+
+    expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
+    // 卡组去重后 N = 2（cardA + cardB），进度从 1 / 2 起算。
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    expect(screen.queryByText(/3 \/ 2/)).not.toBeInTheDocument();
+  });
+
+  it('offers spelling practice when today has no more cards after a completed session', async () => {
+    // P0 2026-09-08: the old flicker path (click Start today cards on
+    // a finished day → empty-state section) is gone. After completion
+    // the page swaps to 「再来一组 / 练习拼写」, so the test now
+    // exercises that flow: complete one card → land back on Today →
+    // click 练习拼写 → spelling view.
+    const user = userEvent.setup();
+    const completedCard = studyCard();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
-        text: () => Promise.resolve(JSON.stringify({ totalCards: 0, cards: [] }))
+        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
       })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse())
       .mockResolvedValueOnce({
         ok: true,
-        text: () => Promise.resolve(JSON.stringify({ totalWords: 10, nextSequenceIndex: 2 }))
-      });
+        text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
+      })
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -89,28 +158,41 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /reveal/i }));
     await user.click(screen.getByRole('button', { name: /got it/i }));
     await user.click(await screen.findByRole('button', { name: /back home/i }));
-    await user.click(screen.getByRole('button', { name: /start today cards/i }));
 
-    expect(await screen.findByText(/today's card queue is clear/i)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /practice spelling now/i }));
+    // Old flicker path is gone — no Start today cards in completed state.
+    expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
+    // New completion-set buttons render; 练习拼写 leads into spelling view.
+    expect(screen.getByTestId('another-group')).toBeInTheDocument();
+    expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();
+    await user.click(screen.getByTestId('practice-spelling-completed'));
 
     expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
   });
 
   it('shows a home spelling button after a completed study session', async () => {
+    // P0 2026-09-08: post-completion, the home spelling entry is the
+    // 「练习拼写」completion-set button (not the old "Practice spelling"
+    // English secondary that lived next to Start today cards).
     const user = userEvent.setup();
+    const completedCard = studyCard();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
-        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [studyCard()] }))
+        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
       })
       .mockResolvedValueOnce(pronunciationUnavailableResponse())
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
-      });
+      })
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -118,35 +200,90 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /reveal/i }));
     await user.click(screen.getByRole('button', { name: /got it/i }));
     await user.click(await screen.findByRole('button', { name: /back home/i }));
-    await user.click(screen.getByRole('button', { name: /^practice spelling$/i }));
+
+    // Click 练习拼写 in the completion set.
+    await user.click(screen.getByTestId('practice-spelling-completed'));
 
     expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
   });
 
   it('resumes today progress from the day queue after re-entering (PRD ch.8)', async () => {
     const user = userEvent.setup();
-    const resumedCard = { ...studyCard(), queuePosition: 11 };
+    const resumedCard = studyCard();
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       .mockResolvedValueOnce({
         ok: true,
         text: () =>
           Promise.resolve(
-            JSON.stringify({ totalCards: 40, reviewedCards: 10, cards: [resumedCard] })
+            JSON.stringify({
+              totalCards: 40,
+              reviewedCards: 10,
+              gotItCards: 10,
+              seenUnmasteredCards: 2,
+              cards: [resumedCard]
+            })
           )
       })
       .mockResolvedValueOnce(pronunciationUnavailableResponse());
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<App />);
+    const { container } = render(<App />);
     await user.click(screen.getByRole('button', { name: /start today cards/i }));
 
-    expect(await screen.findByText('11 / 40')).toBeInTheDocument();
-    expect(screen.getByText('10 / 40 completed')).toBeInTheDocument();
+    // 数字 = completed（Got it 卡数）；进度条两段：深绿 10、浅绿 2。
+    // 进度条下方不再显示 completed 文案（2026-10-30 移除）。
+    expect(await screen.findByText('10 / 40')).toBeInTheDocument();
+    expect(screen.queryByText(/10 \/ 40 completed/)).not.toBeInTheDocument();
     const progress = screen.getByRole('progressbar', { name: /Today completed words/i });
     expect(progress).toHaveAttribute('aria-valuenow', '10');
     expect(progress).toHaveAttribute('aria-valuemax', '40');
+    expect(container.querySelector('.progress-fill-done')).toHaveStyle({ width: '25%' });
+    expect(container.querySelector('.progress-fill-seen')).toHaveStyle({ width: '30%' });
+  });
+
+  it('passes server gotItCards and seenUnmasteredCards counts into the study session (2026-10-30 two-segment bar)', async () => {
+    const user = userEvent.setup();
+    // 重进场景：alpha 评 Maybe 入池、bravo Got it 后离开 —— 重进
+    // 的 session 响应给出 gotItCards=1（bravo）、seenUnmasteredCards=1
+    // （alpha 在池内），两段之和 = positionOffset=2。队首是服务端
+    // 注入的重复副本：数字显示 completed=1 / 5，浅绿段含池内 alpha。
+    const repeatCopy = { ...studyCard(), word: 'alpha', isRepeat: true };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      .mockResolvedValueOnce(checkInsResponse([]))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              totalCards: 5,
+              reviewedCards: 1,
+              positionOffset: 2,
+              gotItCards: 1,
+              seenUnmasteredCards: 1,
+              cards: [repeatCopy]
+            })
+          )
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<App />);
+    await user.click(screen.getByRole('button', { name: /start today cards/i }));
+
+    // 数字 = 服务端 completed 口径（gotItCards=1），不因队首是副
+    // 本而回退或归零；进度条下方无 completed 文案。
+    expect(await screen.findByText('1 / 5')).toBeInTheDocument();
+    expect(screen.queryByText(/1 \/ 5 completed/)).not.toBeInTheDocument();
+    expect(container.querySelector('.progress-fill-done')).toHaveStyle({ width: '20%' });
+    expect(container.querySelector('.progress-fill-seen')).toHaveStyle({ width: '40%' });
   });
   it('switches the current book from the bookshelf and returns to Today (PRD ch.9)', async () => {
     const user = userEvent.setup();
@@ -155,6 +292,10 @@ describe('App', () => {
       .fn()
       // initial current book (default) — cover card aggregates
       .mockResolvedValueOnce(currentBookResponse({ learnedWords: 120, masteredWords: 30 }))
+      // initial summary on mount
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
       // GET /api/books when the cover card opens the bookshelf
       .mockResolvedValueOnce({
         ok: true,
@@ -191,24 +332,28 @@ describe('App', () => {
       .mockResolvedValueOnce({
         ok: true,
         text: () => Promise.resolve(JSON.stringify(switchedBook))
-      });
+      })
+      // refreshTodaySummary fires after the switch
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
 
     // Cover card shows the current book's aggregates from the initial
     // GET /api/books/current response.
-    expect(await screen.findByText('已学 120 / 3383')).toBeInTheDocument();
+    expect(await screen.findByText('120 / 3,383 learned')).toBeInTheDocument();
     await user.click(screen.getByTestId('book-cover-card'));
 
     // Bookshelf: list + current badge + confirm dialog before switching.
-    expect(await screen.findByRole('heading', { name: '选择单词书' })).toBeInTheDocument();
-    expect(screen.getByText('当前')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Choose a book' })).toBeInTheDocument();
+    expect(screen.getByText('Current')).toBeInTheDocument();
     await user.click(screen.getAllByTestId('bookshelf-item')[1]);
     const dialog = await screen.findByTestId('bookshelf-confirm');
-    expect(dialog).toHaveTextContent('切换后将学习《托福核心词汇》，当前书的学习进度会保留。');
+    expect(dialog).toHaveTextContent('You will study “托福核心词汇”. Your progress in the current book is kept.');
 
-    await user.click(screen.getByRole('button', { name: /确认切换/ }));
+    await user.click(screen.getByRole('button', { name: /^Switch$/ }));
 
     // The switch PUT fires with the targeted bookId.
     await waitFor(() => {
@@ -223,11 +368,224 @@ describe('App', () => {
     // TodayView.test.tsx, which keeps this integration test focused on
     // the click → PUT → return-to-Today flow.
     await waitFor(() => {
-      expect(screen.queryByRole('heading', { name: '选择单词书' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Choose a book' })).not.toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /start today cards/i })).toBeInTheDocument();
   });
+
+  it('cross-device: restores the day-completed button set when today summary reports dayCompleted (P0 acceptance #2)', async () => {
+    // Acceptance #2: phone completes → computer refreshes. The page
+    // must render 「再来一组 + 练习拼写」right after the mount-time
+    // summary fetch — no flicker, no start button.
+    const completedCard = studyCard();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      // mount-time summary fetch says day is complete (cross-device state)
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    // Wait for the completion-set banner — once it appears, the Start
+    // button must already be gone. (findBy* awaits the React commit,
+    // so the subsequent queryBy* assertion observes the same render.)
+    expect(await screen.findByTestId('today-day-completed')).toHaveTextContent('All cards done for today');
+    expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('another-group')).toBeInTheDocument();
+    expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();
+  });
+
+  it('swaps Start today cards for 「再来一组 / 练习拼写」after the day queue completes (P0 acceptance #1)', async () => {
+    const user = userEvent.setup();
+    const completedCard = studyCard();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // P1 2026-09-08 打卡服务端化：mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
+      // start the day's first session
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ totalCards: 1, cards: [completedCard] }))
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ cardId: 'card-1' }))
+      })
+      // session-complete summary refresh flips dayCompleted to true
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]));
+      // P1 2026-09-08 打卡服务端化：会话完成后拉一次 GET /api/check-ins。
+    fetchMock.mockResolvedValueOnce(checkInsResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    // Phase 1: not yet completed, Start button shows.
+    expect(await screen.findByRole('button', { name: /start today cards/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /start today cards/i }));
+    // Walk through the single card → session-complete screen.
+    await user.click(await screen.findByRole('button', { name: /reveal/i }));
+    await user.click(screen.getByRole('button', { name: /got it/i }));
+    // Back to Today via the completion screen's "Back home" button.
+    await user.click(await screen.findByRole('button', { name: /back home/i }));
+    // Once the completion-set banner renders, the Start button must
+    // be gone and the new pair must be present.
+    expect(await screen.findByTestId('today-day-completed')).toHaveTextContent('All cards done for today');
+    expect(screen.queryByRole('button', { name: /start today cards/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('another-group')).toBeInTheDocument();
+    expect(screen.getByTestId('practice-spelling-completed')).toBeInTheDocument();
+
+    // Tapping 练习拼写 should land in spelling view, pulling cards
+    // from the server summary.
+    await user.click(screen.getByTestId('practice-spelling-completed'));
+    expect(await screen.findByRole('main', { name: /spelling practice/i })).toBeInTheDocument();
+  });
+
+  it('「再来一组」sends extraNewWords in the today/start request body', async () => {
+    const user = userEvent.setup();
+    const completedCard = studyCard();
+    const extraCard = { ...studyCard(), cardId: 'card-2', word: 'La Nina' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard]))
+      // P1 2026-09-08 打卡服务端化：mount / 会话完成后拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
+      // POST /api/study/today/start with extraNewWords after 再来一组 click
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({ totalCards: 2, reviewedCards: 0, cards: [extraCard] })
+          )
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse())
+      // refreshTodaySummary fires after the start
+      .mockResolvedValueOnce(completedDaySummaryResponse([completedCard, extraCard]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(await screen.findByTestId('another-group'));
+
+    // The POST body for /api/study/today/start must include
+    // extraNewWords equal to the newWordTarget (default 20 here).
+    await waitFor(() => {
+      const startCall = fetchMock.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].startsWith('/api/study/today/start') &&
+          typeof call[1] === 'object' &&
+          (call[1] as RequestInit | undefined)?.method === 'POST'
+      );
+      expect(startCall).toBeDefined();
+      expect(JSON.parse(String((startCall?.[1] as RequestInit).body))).toEqual({
+        dailyNewWordTarget: 20,
+        extraNewWords: 20
+      });
+    });
+  });
+
+  // 当日重复池（task 7684082688076025051）：服务端注入的重复卡
+  // （isRepeat）评分走池端点 /api/study/today/repeat-pool/reviews，
+  // 不触碰 /api/cards/:id/reviews（409 / SM-2 零污染）。
+  it('routes repeat-card ratings to the pool endpoint and clears it with one Got it', async () => {
+    const user = userEvent.setup();
+    const repeatCard = { ...studyCard(), isRepeat: true };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(currentBookResponse())
+      .mockResolvedValueOnce(emptyDaySummaryResponse())
+      // mount 时还会拉一次 GET /api/check-ins。
+      .mockResolvedValueOnce(checkInsResponse([]))
+      // start the day's session — the server-injected repeat card is first.
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(JSON.stringify({ totalCards: 1, reviewedCards: 0, cards: [repeatCard] }))
+      })
+      .mockResolvedValueOnce(pronunciationUnavailableResponse())
+      // 重复卡评分 → 池端点，返回 cleared。
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () =>
+          Promise.resolve(JSON.stringify({ cardId: 'card-1', status: 'cleared', repeatCount: 1 }))
+      })
+      // session-complete summary refresh
+      .mockResolvedValueOnce(completedDaySummaryResponse([repeatCard]))
+      .mockResolvedValueOnce(checkInsResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: /start today cards/i }));
+
+    await user.click(await screen.findByRole('button', { name: /reveal/i }));
+    await user.click(screen.getByRole('button', { name: /got it/i }));
+
+    await waitFor(() => {
+      const poolCall = fetchMock.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0] === '/api/study/today/repeat-pool/reviews'
+      );
+      expect(poolCall).toBeDefined();
+      expect(JSON.parse(String((poolCall?.[1] as RequestInit).body))).toEqual({
+        cardId: 'card-1',
+        rating: 'known'
+      });
+    });
+    // Got it 一次移除：队列清空、会话完成。
+    expect(await screen.findByRole('button', { name: /back home/i })).toBeInTheDocument();
+    const cardReviewCall = fetchMock.mock.calls.find(
+      (call) =>
+        typeof call[0] === 'string' && /\/api\/cards\/.+\/reviews$/.test(call[0])
+    );
+    expect(cardReviewCall).toBeUndefined();
+  });
 });
+
+function emptyDaySummaryResponse() {
+  return {
+    ok: true,
+    text: () =>
+      Promise.resolve(
+        JSON.stringify({
+          studyDate: '2026-09-08',
+          totalCards: 0,
+          reviewedCards: 0,
+          dayCompleted: false,
+          completedCards: []
+        })
+      )
+  };
+}
+
+// P1 2026-09-08 打卡服务端化：GET /api/check-ins 的响应桩。
+function checkInsResponse(records: unknown[]) {
+  return {
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify({ checkIns: records }))
+  };
+}
+
+function completedDaySummaryResponse(cards: unknown[]) {
+  return {
+    ok: true,
+    text: () =>
+      Promise.resolve(
+        JSON.stringify({
+          studyDate: '2026-09-08',
+          totalCards: cards.length,
+          reviewedCards: cards.length,
+          dayCompleted: true,
+          completedCards: cards
+        })
+      )
+  };
+}
 
 function currentBookResponse(overrides: Record<string, unknown> = {}) {
   return {
