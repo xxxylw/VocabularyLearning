@@ -475,26 +475,20 @@ a {
 }
 
 .study-card {
-  /* 2026-11-12 单屏布局：卡片从「内容自高、垂直居中」改为拉伸铺满
-   * shell 的 1fr 行（宽度仍 min(920px, 100%) 居中）—— 只有卡片贴到
-   * 视口底部，卡片底部的 .rating-row / .reveal-action 才能钉在视口
-   * 底缘。内部改为 flex column：.card-back 占剩余空间、.sense-list
-   * 在内框滚动，评分按钮区永不参与滚动。min-height: 0 允许在 grid
-   * 行内收缩（minmax(0,1fr) 的收缩传导），overflow: hidden 只裁剪
-   * 卡内溢出，fixed 定位的查词弹层不受影响。 */
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  justify-content: center;
+  gap: clamp(12px, 3dvh, 26px);
   align-self: stretch;
   min-height: 0;
   width: min(920px, 100%);
-  margin: 24px auto;
+  margin: clamp(8px, 3dvh, 24px) auto;
   overflow: hidden;
   border: 1px solid rgba(110, 91, 68, 0.14);
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(255, 253, 248, 0.9);
-  box-shadow: 0 30px 90px rgba(82, 58, 34, 0.17);
-  padding: clamp(28px, 6vw, 64px);
+  box-shadow: 0 24px 70px rgba(82, 58, 34, 0.14);
+  padding: clamp(12px, min(6vw, 6dvh), 48px);
 }
 
 .spelling-card {
@@ -707,21 +701,10 @@ a {
 }
 
 .card-front {
-  /* 2026-11-12 单屏布局：正面态（无 card-back）flex-grow 占据 Reveal
-   * 之上的全部剩余空间，单词垂直居中在视口中部；背面态（:has 匹配
-   * 到 card-back）退回自然高度，把空间让给会内滚的释义区。不支持
-   * :has 的旧浏览器维持 flex-grow，背面只是单词区偏高，滚动/按钮
-   * 仍正常（优雅降级）。 */
   display: grid;
-  gap: 12px;
-  min-height: 190px;
-  flex: 1 1 auto;
-  align-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
   text-align: center;
-}
-
-.study-card:has(> .card-back) .card-front {
-  flex: 0 1 auto;
 }
 
 .part-of-speech,
@@ -738,7 +721,7 @@ a {
 .card-front h1 {
   margin: 0;
   color: #27231e;
-  font-size: clamp(3rem, 9vw, 7rem);
+  font-size: clamp(2.25rem, min(9vw, 13dvh), 7rem);
   /* P0 fix · recvudlLx3voeu: the headline was `line-height: 1`, which is
      narrower than the typographic ascent+descent of common system fonts
      (Segoe UI ≈1.33, system-ui on many platforms ≥1.2). With
@@ -804,31 +787,26 @@ a {
 
 .reveal-action {
   width: min(320px, 100%);
-  justify-self: center;
-  /* 2026-11-12 单屏布局：正面态把 Reveal 钉到视口底缘（与背面态评分
-   * 按钮区同一位置，翻面无跳动）。 */
-  margin-top: auto;
+  align-self: center;
   flex: 0 0 auto;
 }
 
 .card-back {
-  /* 2026-11-12 单屏布局：占卡片剩余空间（flex column），.sense-list
-   * 在其中内滚，.rating-row 钉底 —— 评分按钮恒定可见。 */
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  flex: 1 1 auto;
+  gap: clamp(10px, 2dvh, 18px);
   min-height: 0;
 }
 
 .sense-list {
   display: grid;
-  gap: 18px;
-  /* 2026-11-12 单屏布局：多义项长例句在内框滚动（页面本体不滚）；
-   * flex: 1 + min-height: 0 让它占满 card-back 剩余空间且可收缩。
-   * 细滚动条 + 自动隐藏（overlay 触屏），符合现有 Apple 调性。 */
-  flex: 1 1 auto;
+  align-content: start;
+  gap: 14px;
   min-height: 0;
+  padding: clamp(12px, 3vw, 22px);
+  border: 1px solid rgba(110, 91, 68, 0.14);
+  border-radius: 10px;
+  background: rgba(243, 231, 214, 0.28);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -998,9 +976,9 @@ a {
 .rating-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  /* 2026-11-12 单屏布局：钉在卡片底缘（= 视口底部）；flex: 0 0 auto
-   * 保证评分按钮区永不参与内滚、恒定可见。 */
+  gap: clamp(6px, 2vw, 12px);
+  width: min(560px, 100%);
+  align-self: center;
   flex: 0 0 auto;
 }
 
@@ -1240,10 +1218,6 @@ a {
      * 评分按钮区从「竖排三行」改回三列一行 —— 钉底后一行三键不占高、
      * 释义区可用空间更大，按钮也更近拇指。 */
     padding-bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 12px));
-  }
-
-  .study-card {
-    padding: 24px;
   }
 
   .study-progress {
