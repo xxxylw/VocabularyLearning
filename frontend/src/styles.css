@@ -555,6 +555,7 @@ a {
    * auto margin 归零、按钮回到输入框正下方，两种形态按钮都首屏可达。 */
   display: flex;
   flex-direction: column;
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 14px;
   flex: 1 1 auto;
@@ -693,9 +694,11 @@ a {
 
 .queue-pill {
   justify-self: start;
+  align-self: flex-start;
+  width: fit-content;
   border: 1px solid rgba(111, 139, 121, 0.25);
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 4px 10px;
   background: rgba(111, 139, 121, 0.1);
   text-transform: capitalize;
 }
@@ -787,7 +790,7 @@ a {
 
 .reveal-action {
   width: min(320px, 100%);
-  align-self: center;
+  margin-inline: auto;
   flex: 0 0 auto;
 }
 
@@ -839,7 +842,8 @@ a {
 
 .sense-card {
   display: grid;
-  gap: 14px;
+  align-content: start;
+  gap: 10px;
   border-bottom: 1px solid rgba(110, 91, 68, 0.12);
   padding-bottom: 18px;
 }
@@ -852,6 +856,7 @@ a {
 .definition-block,
 .example-block {
   display: grid;
+  align-content: start;
   gap: 8px;
 }
 
@@ -1351,7 +1356,7 @@ a {
 .pos-badge {
   display: inline-flex;
   align-items: center;
-  align-self: start;
+  justify-self: start;
   border: 1px solid rgba(72, 111, 131, 0.32);
   border-radius: 999px;
   background: rgba(72, 111, 131, 0.12);
