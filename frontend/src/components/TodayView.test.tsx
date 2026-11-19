@@ -27,7 +27,7 @@ describe('TodayView', () => {
     // The @email prefix and the note sentence share one paragraph, email first.
     const note = email.closest('p');
     expect(note).toHaveTextContent(
-      '@qirui.huang@flexiv.com Life is a journey, and there’s a whole world out there waiting for you to explore.'
+      '@qirui.huang@flexiv.com Life is a journey, and there’s a whole world out there waiting for you to explore. Put what you learn into practice, and have fun!'
     );
   });
 
@@ -37,7 +37,7 @@ describe('TodayView', () => {
     expect(screen.queryByTestId('today-user-email')).not.toBeInTheDocument();
     // The note sentence still renders on its own.
     expect(
-      screen.getByText('Life is a journey, and there’s a whole world out there waiting for you to explore.')
+      screen.getByText('Life is a journey, and there’s a whole world out there waiting for you to explore. Put what you learn into practice, and have fun!')
     ).toBeInTheDocument();
   });
 

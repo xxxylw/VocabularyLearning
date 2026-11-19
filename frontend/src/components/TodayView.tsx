@@ -105,7 +105,7 @@ export function TodayView({
             </span>
           ) : null}
           {userEmail ? ' ' : null}
-          Life is a journey, and there’s a whole world out there waiting for you to explore.
+          Life is a journey, and there’s a whole world out there waiting for you to explore. Put what you learn into practice, and have fun!
         </p>
         {bookTitle && onOpenBookShelf ? (
           // PRD ch.9: programmatic cover card (pure CSS spine style) —
