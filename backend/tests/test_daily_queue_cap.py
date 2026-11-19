@@ -131,7 +131,7 @@ def real_cap_env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_snapshot_caps_reviews_by_urgency_and_defers_overflow(cap_env):
+def test_snapshot_caps_reviews_by_urgency_and_defers_overflow(cap_env, monkeypatch):
     """8 张到期复习 + 上限 5 + 无可用新词：当日队列 = 最过期的 5 张
     复习卡（无新词），其余 3 张当日不入队；复习完这 5 张后，次日队列
     恰为顺延的 3 张。"""
@@ -145,11 +145,13 @@ def test_snapshot_caps_reviews_by_urgency_and_defers_overflow(cap_env):
     _prepare_all(client, 8)
     _mark_due_reviews(words, today)  # words[0] 过期最久，words[7] 最轻
 
+    monkeypatch.setattr("app.services.random.shuffle", list.reverse)
     session = _start(client, today)
     assert session["totalCards"] == 5
     assert [card["queueType"] for card in session["cards"]] == ["review"] * 5
     # 最过期者优先（due_at 升序）：words[0..4] 入队，words[5..7] 顺延。
-    assert [card["word"] for card in session["cards"]] == words[:5]
+    assert [card["word"] for card in session["cards"]] == words[:5][::-1]
+    assert _start(client, today)["cards"] == session["cards"]
     rows = _queue_rows(today)
     assert len(rows) == 5
     assert {row["queue_type"] for row in rows} == {"review"}
@@ -204,7 +206,7 @@ def test_new_word_quota_is_reserved_before_reviews(cap_env):
     types = [card["queueType"] for card in session["cards"]]
     # 复习在前（最过期的 3 张）、新词在尾部 2 张。
     assert types == ["review", "review", "review", "new", "new"]
-    assert [card["word"] for card in session["cards"][:3]] == review_words[:3]
+    assert {card["word"] for card in session["cards"][:3]} == set(review_words[:3])
     assert {card["word"] for card in session["cards"][3:]} <= set(new_words)
 
     rows = _queue_rows(today)
@@ -233,7 +235,7 @@ def test_new_word_quota_not_squeezed_out_by_reviews(real_cap_env):
     # 新词在队列尾部（最后 20 张）。
     assert types[-20:] == ["new"] * 20
     # 复习按 due_at 升序：最过期的 130 张入队。
-    assert [card["word"] for card in session["cards"][:130]] == review_words[:130]
+    assert {card["word"] for card in session["cards"][:130]} == set(review_words[:130])
 
     rows = _queue_rows(today)
     assert len(rows) == 150
@@ -267,7 +269,7 @@ def test_reviews_take_full_cap_when_no_new_words_available(cap_env):
     session = _start(client, today, target=20)
     assert session["totalCards"] == 5
     assert [card["queueType"] for card in session["cards"]] == ["review"] * 5
-    assert [card["word"] for card in session["cards"]] == review_words[:5]
+    assert {card["word"] for card in session["cards"]} == set(review_words[:5])
 
 
 def test_reviews_take_full_cap_when_quota_already_consumed(cap_env):

@@ -953,6 +953,9 @@ def _create_today_queue_snapshot(
             taken_card_ids.add(card.cardId)
             freed -= 1
 
+    # Select the oldest due words first, then persist a shuffled presentation order.
+    random.shuffle(review_cards)
+
     _append_today_queue_rows(
         user_id,
         study_date,

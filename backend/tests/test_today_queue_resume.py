@@ -243,12 +243,9 @@ def test_cross_day_snapshot_voided_no_carry_over_merge(tmp_path, monkeypatch):
     day_two_session = _start(client, day_two, 1)
     assert day_two_session["totalCards"] == 4
     assert day_two_session["reviewedCards"] == 0
-    assert [card["word"] for card in day_two_session["cards"]] == [
-        "charge",
-        "decline",
-        "appeal",
-        "stable",
-    ]
+    words = [card["word"] for card in day_two_session["cards"]]
+    assert set(words[:-1]) == {"charge", "decline", "appeal"}
+    assert words[-1] == "stable"
     assert [card["queueType"] for card in day_two_session["cards"]] == [
         "review",
         "review",

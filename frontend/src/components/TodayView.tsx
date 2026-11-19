@@ -105,7 +105,7 @@ export function TodayView({
             </span>
           ) : null}
           {userEmail ? ' ' : null}
-          A quiet desk, a short queue, and a focused pass through the words waiting for you.
+          Life is a journey, and there’s a whole world out there waiting for you to explore.
         </p>
         {bookTitle && onOpenBookShelf ? (
           // PRD ch.9: programmatic cover card (pure CSS spine style) —
